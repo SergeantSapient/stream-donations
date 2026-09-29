@@ -4,6 +4,7 @@ PLATFORM_LABELS = {
     "youtube": "YouTube",
     "rumble": "Rumble",
     "kick": "Kick",
+    "other": "Other",
 }
 
 KIND_LABELS = {
@@ -19,4 +20,5 @@ KIND_LABELS = {
     "subscription_renewal": "Subscription renewal",
     "gifted_subscriptions": "Gifted subscriptions",
     "kicks": "Kicks",
+    "donation": "Donation",
 }

@@ -8,12 +8,23 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 
+from .goals import (
+    donor_bar_line,
+    donor_leaderboard,
+    format_usd,
+    load_tiers,
+    running_usd,
+    stream_chat_line,
+    tier_breaches,
+    type_breakdown,
+)
 from .kinds import KIND_LABELS, PLATFORM_LABELS
 from .money import CSV_FIELDS, DISPLAY_KIND_SQL, money_text, quote
 from .normalize import Donation
-from .util import csv_safe, utc_now_iso
+from .util import csv_safe, to_utc_iso, utc_now_iso
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS donations (
@@ -156,6 +167,127 @@ class Store:
                 raise
         self._tighten()
         return inserted
+
+    def add_manual_entry(
+        self,
+        *,
+        author_name: object,
+        platform: object,
+        kind: object,
+        amount: object,
+        message: object = "",
+        created_at: object = "",
+    ) -> int:
+        """Store one hand-entered gift. Amount is USD."""
+        author = str(author_name or "").strip()
+        if not author:
+            raise ValueError("Donor name is required.")
+        if len(author) > 200:
+            raise ValueError("Donor name is limited to 200 characters.")
+        platform_id = str(platform or "").strip().lower()
+        if platform_id not in PLATFORM_LABELS:
+            raise ValueError("Platform must be YouTube, Rumble, Kick, or Other.")
+        kind_id = str(kind or "").strip().lower()
+        if kind_id not in {"super_chat", "super_sticker", "membership", "donation"}:
+            raise ValueError("Type must be Super Chat, Super Sticker, Membership, or Donation.")
+        if isinstance(amount, bool) or amount is None or str(amount).strip() == "":
+            raise ValueError("Amount is required.")
+        try:
+            number = round(float(amount), 2)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Amount must be a dollar amount.") from exc
+        if number <= 0 or number > 100000:
+            raise ValueError("Amount must be greater than 0 and at most 100000.")
+        note = str(message or "").strip()
+        if len(note) > 2000:
+            raise ValueError("Message is limited to 2000 characters.")
+        when = to_utc_iso(created_at) if str(created_at or "").strip() else utc_now_iso()
+        if not when:
+            raise ValueError("Time must be a real date.")
+        token = uuid.uuid4().hex
+        donation = Donation(
+            dedupe_key=f"manual:{token}",
+            platform=platform_id,
+            kind=kind_id,
+            external_id=token,
+            channel="",
+            author_name=author,
+            author_id="",
+            message=note,
+            amount_value=number,
+            amount_micros=int(round(number * 1_000_000)),
+            currency="USD",
+            created_at=when,
+            raw={"manual": True},
+        )
+        if self.add_many([donation]) != 1:
+            raise ValueError("Could not store that entry.")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM donations WHERE dedupe_key = ?", (donation.dedupe_key,)
+            ).fetchone()
+        self.log("ledger", "info", f"Manual {kind_id} from {author} for {number:.2f} USD.")
+        return int(row["id"])
+
+    def set_stream_started(self, when: str | None) -> None:
+        if when:
+            self.set_setting("stream_started_at", when)
+        else:
+            self.delete_setting("stream_started_at")
+
+    def stream_report(
+        self,
+        rates: dict[str, float],
+        membership_price: float | None,
+    ) -> dict:
+        started = self.get_setting("stream_started_at")
+        tiers = load_tiers(self.get_setting("goal_tiers"))
+        enabled = self.get_setting("tiers_enabled") == "1"
+        extra = self.get_setting("chat_extra")
+        show = self.get_setting("show_top_donors", "1") != "0"
+        rows = self._stream_rows(started, membership_price, rates)
+        total = running_usd(rows)
+        donors = donor_leaderboard(rows)
+        thanks = tier_breaches(rows, enabled, tiers)
+        last = rows[-1] if rows else None
+        return {
+            "total_usd": total,
+            "count": len(rows),
+            "by_type": type_breakdown(rows),
+            "chat_line": stream_chat_line(total, enabled=enabled, tiers=tiers, extra=extra),
+            "started_at": started or None,
+            "scope": "stream" if started else "ledger",
+            "show_top_donors": show,
+            "tiers_enabled": enabled,
+            "chat_extra": extra,
+            "tiers": [tier.as_dict() for tier in tiers],
+            "donors": donors,
+            "donor_bar": donor_bar_line(donors["rows"]),
+            "thanks": thanks,
+            "last": _last_line(last),
+        }
+
+    def _stream_rows(
+        self,
+        started: str,
+        membership_price: float | None,
+        rates: dict[str, float],
+    ) -> list[dict]:
+        clauses = ["kind != ?"]
+        params: list[object] = ["gift_membership_received"]
+        if started:
+            clauses.append("created_at >= ?")
+            params.append(started)
+        with self._lock:
+            found = self._conn.execute(
+                f"""
+                SELECT * FROM donations
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [self._present(row, membership_price, rates) for row in found]
 
     def clear_donations(self) -> int:
         """Delete every donation. Settings and the ingest log stay."""
@@ -549,6 +681,17 @@ class Store:
         if include_raw:
             payload["raw"] = _raw_object(row["raw_json"])
         return payload
+
+
+def _last_line(row: dict | None) -> str:
+    if not row:
+        return ""
+    who = str(row.get("author_name") or "").strip() or "Someone"
+    amount = row.get("amount_usd")
+    shown = format_usd(float(amount)) if isinstance(amount, (int, float)) else "—"
+    platform = row.get("platform_label") or row.get("platform") or "a platform"
+    kind = row.get("kind_label") or "gift"
+    return f"{who} sent {kind} for {shown} on {platform}."
 
 
 def _raw_object(raw_json: object) -> dict:

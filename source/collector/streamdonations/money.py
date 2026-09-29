@@ -24,6 +24,7 @@ DISPLAY_LABELS = {
     "super_chat": "Super Chat",
     "super_sticker": "Super Sticker",
     "membership": "Membership",
+    "donation": "Donation",
 }
 
 _SUPER_CHAT_KINDS = {"super_chat", "fan_funding", "rant"}
@@ -59,6 +60,7 @@ DISPLAY_KIND_SQL = {
         "'gift_membership_received', 'subscription', 'subscription_renewal', "
         "'gifted_subscriptions'))"
     ),
+    "donation": "(kind = 'donation')",
 }
 
 CSV_FIELDS = [
@@ -103,6 +105,8 @@ def display_label(kind: str, amount_value: object, currency: object) -> str:
         if dollars is None or dollars < KICK_SUPER_CHAT_DOLLARS:
             return DISPLAY_LABELS["super_sticker"]
         return DISPLAY_LABELS["super_chat"]
+    if kind == "donation":
+        return DISPLAY_LABELS["donation"]
     if kind in _MEMBERSHIP_KINDS:
         return DISPLAY_LABELS["membership"]
     if kind == "super_sticker":

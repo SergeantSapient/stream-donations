@@ -11,6 +11,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
+from .goals import dump_tiers, normalize_tiers
 from .kick import KickClient
 from .kick_public import validate_kick_watch
 from .rumble import RumbleClient, validate_rumble_api_url, validate_rumble_watch
@@ -38,6 +39,10 @@ _ALLOWED_SETTINGS = {
     "kick_webhook_port",
     "kick_public_base",
     "membership_price",
+    "tiers_enabled",
+    "show_top_donors",
+    "chat_extra",
+    "goal_tiers",
 }
 
 
@@ -203,6 +208,17 @@ class Service:
                     updates[key] = _bounded_money(text)
                 else:
                     clears.append(key)
+            elif key in {"tiers_enabled", "show_top_donors"}:
+                updates[key] = "1" if _flag(value) else "0"
+            elif key == "chat_extra":
+                text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+                if len(text) > 500:
+                    raise ValueError("Extra chat note is limited to 500 characters.")
+                updates[key] = text
+            elif key == "goal_tiers":
+                if not isinstance(value, list):
+                    raise ValueError("Goal tiers must be a list.")
+                updates[key] = dump_tiers(normalize_tiers(value))
             elif key == "kick_public_base":
                 text = str(value or "").strip()
                 if text and not _valid_public_base(text):
@@ -242,6 +258,12 @@ class Service:
         expired = [key for key, item in self._pending.items() if item.created < cutoff]
         for key in expired:
             del self._pending[key]
+
+
+def _flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _bounded_money(value: str) -> str:

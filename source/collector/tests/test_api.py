@@ -213,6 +213,73 @@ class ApiTests(unittest.TestCase):
             webhook.shutdown()
             webhook.server_close()
 
+    def test_manual_entry_stream_total_and_new_stream(self):
+        status, _headers, body = self._request(
+            "/api/donations",
+            method="POST",
+            body={
+                "author_name": "Ada",
+                "platform": "other",
+                "kind": "donation",
+                "amount": "12.50",
+                "message": "Venmo",
+                "created_at": "2020-01-01T00:00:00Z",
+            },
+        )
+        self.assertEqual(status, 201)
+        saved = json.loads(body)
+        self.assertEqual(saved["kind"], "donation")
+        self.assertEqual(saved["quoted_amount"], 12.5)
+        self.assertEqual(saved["platform"], "other")
+
+        status, _headers, body = self._request("/api/stream")
+        report = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["total_usd"], 12.5)
+        self.assertEqual(report["scope"], "ledger")
+        self.assertEqual(report["donors"]["rows"][0]["donor"], "Ada")
+        self.assertIn("Ada: $12.50", report["donor_bar"])
+
+        status, _headers, body = self._request("/api/settings", method="PUT", body={
+            "tiers_enabled": True,
+            "goal_tiers": [{"enabled": True, "amount": 25, "name": "Bronze", "bonus": ""}],
+            "chat_extra": "",
+            "show_top_donors": True,
+        })
+        self.assertEqual(status, 200)
+        status, _headers, body = self._request("/api/stream")
+        report = json.loads(body)
+        self.assertEqual(report["chat_line"], "$12.50 total for stream. $12.50 from Bronze")
+
+        status, _headers, body = self._request("/api/stream", method="POST", body={"action": "start"})
+        report = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["scope"], "stream")
+        self.assertEqual(report["total_usd"], 0)
+        self.assertEqual(report["count"], 0)
+
+        status, _headers, _body = self._request(
+            "/api/donations",
+            method="POST",
+            body={"author_name": "Ben", "platform": "youtube", "kind": "super_chat", "amount": 5},
+        )
+        self.assertEqual(status, 201)
+        status, _headers, body = self._request("/api/stream")
+        report = json.loads(body)
+        self.assertEqual(report["total_usd"], 5)
+        self.assertEqual(report["donors"]["rows"][0]["donor"], "Ben")
+        status, _headers, body = self._request("/api/donations?platform=other")
+        page = json.loads(body)
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["donations"][0]["author_name"], "Ada")
+
+        missing, _headers, body = self._request(
+            "/api/donations",
+            method="POST",
+            body={"author_name": "", "platform": "other", "kind": "donation", "amount": 1},
+        )
+        self.assertEqual(missing, 400)
+
     def _post_webhook(self, port, body, message_id, timestamp, signature, event_type="kicks.gifted"):
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/kick/webhook",

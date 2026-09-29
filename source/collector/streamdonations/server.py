@@ -15,10 +15,11 @@ from urllib.parse import parse_qs, urlparse
 
 from .fx import rate_status, refresh_rates, usd_rates
 from .kinds import KIND_LABELS, PLATFORM_LABELS
+from .goals import load_tiers
 from .money import DISPLAY_LABELS, parse_membership_price
 from .service import Service
 from .store import Store
-from .util import ApiError, redact
+from .util import ApiError, redact, utc_now_iso
 from .youtube import open_browser
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -141,6 +142,34 @@ class App:
         if path == "/api/settings" and method == "PUT":
             self.service.apply_settings(_object(body))
             return json_response(200, self._public_settings())
+        if path == "/api/stream" and method == "GET":
+            rates, price = self._rates_and_price()
+            return json_response(200, self.store.stream_report(rates, price))
+        if path == "/api/stream" and method == "POST":
+            action = str(_object(body).get("action") or "").strip().lower()
+            if action == "start":
+                self.store.set_stream_started(utc_now_iso())
+                self.store.log("ledger", "info", "Stream total now counts donations from this moment. The ledger was kept.")
+            elif action == "full":
+                self.store.set_stream_started(None)
+                self.store.log("ledger", "info", "Stream total counts the full ledger again.")
+            else:
+                raise ValueError("Stream action must be start or full.")
+            rates, price = self._rates_and_price()
+            return json_response(200, self.store.stream_report(rates, price))
+        if path == "/api/donations" and method == "POST":
+            payload = _object(body)
+            donation_id = self.store.add_manual_entry(
+                author_name=payload.get("author_name"),
+                platform=payload.get("platform"),
+                kind=payload.get("kind"),
+                amount=payload.get("amount"),
+                message=payload.get("message", ""),
+                created_at=payload.get("created_at", ""),
+            )
+            rates, price = self._rates_and_price()
+            donation = self.store.get_donation(donation_id, membership_price=price, rates=rates)
+            return json_response(201, donation or {"id": donation_id})
         if path == "/api/summary" and method == "GET":
             payload = self.store.summary()
             rates, price = self._rates_and_price()
@@ -324,6 +353,11 @@ class App:
             "kick_webhook_port": seconds("kick_webhook_port", "47322"),
             "kick_public_base": self.store.get_setting("kick_public_base"),
             "membership_price": self.store.get_setting("membership_price"),
+            "tiers_enabled": self.store.get_setting("tiers_enabled") == "1",
+            "show_top_donors": self.store.get_setting("show_top_donors", "1") != "0",
+            "chat_extra": self.store.get_setting("chat_extra"),
+            "goal_tiers": [tier.as_dict() for tier in load_tiers(self.store.get_setting("goal_tiers"))],
+            "stream_started_at": self.store.get_setting("stream_started_at") or None,
             "fx": rate_status(self.store),
             "google_redirect_uri": self.google_redirect(),
             "kick_redirect_uri": self.kick_redirect(),

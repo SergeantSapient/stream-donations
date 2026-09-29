@@ -15,7 +15,10 @@ const state = {
     offset: 0,
     limit: 100,
   },
+  stream: null,
 };
+
+const TIER_PLACEHOLDERS = ["Bronze", "Silver", "Gold", "", ""];
 
 const $ = (id) => document.getElementById(id);
 
@@ -90,6 +93,65 @@ function formatWhen(iso) {
 function formatUsd(value) {
   if (value == null || Number.isNaN(Number(value))) return "—";
   return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(Number(value));
+}
+
+function round2(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function formatStreamUsd(value) {
+  const number = round2(value);
+  const sign = number < 0 ? "-" : "";
+  const [whole, frac] = Math.abs(number).toFixed(2).split(".");
+  return `${sign}$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${frac}`;
+}
+
+function oneLine(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function parseAmount(text) {
+  const value = String(text || "").trim();
+  if (!value) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return number;
+}
+
+function namedTiers(tiers) {
+  return (tiers || [])
+    .filter((tier) => tier.enabled && Number(tier.amount) > 0 && oneLine(tier.name))
+    .slice()
+    .sort((a, b) => Number(a.amount) - Number(b.amount));
+}
+
+function streamChatLine(total, report) {
+  let body = `${formatStreamUsd(total)} total for stream.`;
+  if (report && report.tiers_enabled) {
+    const active = namedTiers(report.tiers);
+    if (active.length) {
+      const next = active.find((tier) => total < Number(tier.amount) - 0.01);
+      const bonusOf = (tier) => (oneLine(tier.bonus) ? ` and ${oneLine(tier.bonus)}` : "");
+      if (next) {
+        body += ` ${formatStreamUsd(round2(Number(next.amount) - total))} from ${oneLine(next.name)}${bonusOf(next)}`;
+      } else {
+        const last = active[active.length - 1];
+        body += ` ${formatStreamUsd(round2(total - Number(last.amount)))} over ${oneLine(last.name)}${bonusOf(last)}`;
+      }
+    }
+  }
+  const extra = oneLine(report && report.chat_extra);
+  if (extra) body += ` ${extra}`;
+  return body;
+}
+
+function copyText(text, ok) {
+  const write = navigator.clipboard && navigator.clipboard.writeText(text);
+  if (!write) {
+    toast("Could not copy.", true);
+    return;
+  }
+  write.then(() => toast(ok)).catch(() => toast("Could not copy.", true));
 }
 
 function formatAmount(row) {
@@ -229,15 +291,132 @@ async function openDonation(id) {
 }
 
 async function refresh() {
-  const [summary, status, page] = await Promise.all([
+  const [summary, status, page, stream] = await Promise.all([
     api("/api/summary"),
     api("/api/status"),
     api("/api/donations?" + queryString()),
+    api("/api/stream"),
   ]);
   renderSummary(summary);
   if (summary.fx) renderFx(summary.fx);
   renderStatus(status);
   renderRows(page);
+  renderStream(stream);
+}
+
+function renderStream(report) {
+  state.stream = report;
+  const countLabel = report.count === 1 ? "entry" : "entries";
+  $("stream-summary").textContent = `${report.count} ${countLabel}. ${formatStreamUsd(report.total_usd)} total for stream.`;
+  $("stream-breakdown").textContent = (report.by_type || [])
+    .map((item) => `${item.count} ${item.type} · ${formatStreamUsd(item.usd)}`)
+    .join("  ·  ");
+  $("stream-last").textContent = report.last ? `Last: ${report.last}` : "Last: none";
+  $("stream-scope").textContent = report.scope === "stream"
+    ? `Counting donations since ${formatWhen(report.started_at)}. The ledger below still shows everything.`
+    : "Counting the full ledger. New stream starts the banner and top donors over without deleting rows.";
+  $("full-ledger").hidden = report.scope !== "stream";
+  $("top-donors").hidden = !report.show_top_donors;
+  const board = report.donors || { total: 0, rows: [] };
+  const lead = (board.rows || [])[0];
+  if (!board.total) $("donor-summary").textContent = "No gifts yet";
+  else if (lead) {
+    const more = board.total > board.rows.length ? ` · top ${board.rows.length} of ${board.total}` : "";
+    $("donor-summary").textContent = `${lead.donor} leads at ${formatStreamUsd(lead.usd)}${more}`;
+  } else $("donor-summary").textContent = `${board.total} donors`;
+  $("donor-bar").value = report.donor_bar || "";
+  const list = $("donor-list");
+  list.replaceChildren();
+  (board.rows || []).forEach((donor, index) => {
+    const name = el("div", "donor-name");
+    const gifts = donor.count === 1 ? "gift" : "gifts";
+    name.append(
+      el("p", null, donor.donor),
+      el("p", "donor-meta", `${donor.count} ${gifts} · ${(donor.platforms || []).join(", ")}`),
+    );
+    const item = document.createElement("li");
+    item.append(el("span", "donor-rank", String(index + 1)), name, el("span", "donor-usd", formatStreamUsd(donor.usd)));
+    list.appendChild(item);
+  });
+  const thanks = report.thanks || [];
+  $("tier-thanks").hidden = thanks.length === 0;
+  const thanksList = $("thanks-list");
+  thanksList.replaceChildren();
+  thanks.forEach((item) => {
+    const row = document.createElement("li");
+    const button = el("button", null, "Copy");
+    button.type = "button";
+    button.addEventListener("click", () => copyText(item.line, "Thank you copied."));
+    row.append(el("p", null, item.line), button);
+    thanksList.appendChild(row);
+  });
+  updateStreamPreview();
+}
+
+function updateStreamPreview() {
+  const report = state.stream;
+  if (!report || !$("new-total")) return;
+  const extra = parseAmount($("manual-amount") && $("manual-amount").value);
+  const preview = round2(Number(report.total_usd || 0) + (extra || 0));
+  $("new-total").value = preview.toFixed(2);
+  $("chat-line").value = streamChatLine(preview, report);
+}
+
+function tierField(label, className, value, type, placeholder) {
+  const wrap = el("label", null, label);
+  const input = document.createElement("input");
+  input.className = className;
+  input.type = type;
+  input.value = value;
+  if (placeholder) input.placeholder = placeholder;
+  if (type === "number") {
+    input.min = "0";
+    input.step = "0.01";
+    input.inputMode = "decimal";
+  }
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function renderTierFields(tiers) {
+  const host = $("goal-tiers");
+  if (!host) return;
+  const source = Array.from({ length: 5 }, (_, index) => (tiers && tiers[index]) || {
+    enabled: false,
+    amount: null,
+    name: "",
+    bonus: "",
+  });
+  host.replaceChildren();
+  source.forEach((tier, index) => {
+    const row = el("div", "tier-grid");
+    const toggle = el("label", "check");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "tier-on";
+    box.checked = Boolean(tier.enabled);
+    toggle.append(box, document.createTextNode(` Tier ${index + 1}`));
+    row.append(
+      toggle,
+      tierField("Amount USD", "tier-amount", tier.amount == null ? "" : String(tier.amount), "number", "25.00"),
+      tierField("Name", "tier-name", tier.name || "", "text", TIER_PLACEHOLDERS[index] || "Name"),
+      tierField("Bonus", "tier-bonus", tier.bonus || "", "text", "optional"),
+    );
+    host.appendChild(row);
+  });
+}
+
+function collectTiers() {
+  return [...document.querySelectorAll("#goal-tiers .tier-grid")].map((row) => {
+    const amount = row.querySelector(".tier-amount").value.trim();
+    const number = amount === "" ? null : Number(amount);
+    return {
+      enabled: row.querySelector(".tier-on").checked,
+      amount: number != null && Number.isFinite(number) ? number : null,
+      name: row.querySelector(".tier-name").value,
+      bonus: row.querySelector(".tier-bonus").value,
+    };
+  });
 }
 
 function applySettingsToForm(settings) {
@@ -265,6 +444,10 @@ function applySettingsToForm(settings) {
     ? "Saved. Leave blank to keep it."
     : "Client secret";
   if ($("membership-price")) $("membership-price").value = settings.membership_price || "";
+  if ($("tiers-enabled")) $("tiers-enabled").checked = Boolean(settings.tiers_enabled);
+  if ($("show-top-donors")) $("show-top-donors").checked = settings.show_top_donors !== false;
+  if ($("chat-extra")) $("chat-extra").value = settings.chat_extra || "";
+  renderTierFields(settings.goal_tiers);
   if (settings.fx) renderFx(settings.fx);
 }
 
@@ -325,8 +508,61 @@ function bind() {
   });
   $("settings-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    saveSettings({ membership_price: $("membership-price").value.trim() })
+    saveSettings({
+      membership_price: $("membership-price").value.trim(),
+      tiers_enabled: $("tiers-enabled").checked,
+      show_top_donors: $("show-top-donors").checked,
+      chat_extra: $("chat-extra").value,
+      goal_tiers: collectTiers(),
+    })
       .then(() => refresh())
+      .catch((error) => toast(error.message, true));
+  });
+  $("copy-chat-line").addEventListener("click", () => copyText($("chat-line").value, "Chat line copied."));
+  $("copy-donor-bar").addEventListener("click", () => copyText($("donor-bar").value, "Donor bar copied."));
+  $("manual-amount").addEventListener("input", updateStreamPreview);
+  $("manual-entry").addEventListener("reset", () => setTimeout(updateStreamPreview, 0));
+  $("manual-entry").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const when = $("manual-when").value;
+    const body = {
+      author_name: $("manual-donor").value.trim(),
+      platform: $("manual-platform").value,
+      kind: $("manual-kind").value,
+      amount: $("manual-amount").value.trim(),
+      message: $("manual-message").value.trim(),
+    };
+    if (when) {
+      const parsed = new Date(when);
+      if (Number.isNaN(parsed.getTime())) {
+        toast("That time is not valid.", true);
+        return;
+      }
+      body.created_at = parsed.toISOString();
+    }
+    api("/api/donations", { method: "POST", body: JSON.stringify(body) })
+      .then(() => {
+        $("manual-entry").reset();
+        toast("Added to the ledger.");
+        return refresh();
+      })
+      .catch((error) => toast(error.message, true));
+  });
+  $("new-stream").addEventListener("click", () => {
+    if (!window.confirm("Start a new stream total now? The ledger stays. The banner and top donors count only donations from this moment.")) return;
+    api("/api/stream", { method: "POST", body: JSON.stringify({ action: "start" }) })
+      .then((report) => {
+        renderStream(report);
+        toast("Stream total started.");
+      })
+      .catch((error) => toast(error.message, true));
+  });
+  $("full-ledger").addEventListener("click", () => {
+    api("/api/stream", { method: "POST", body: JSON.stringify({ action: "full" }) })
+      .then((report) => {
+        renderStream(report);
+        toast("Stream total counts the full ledger.");
+      })
       .catch((error) => toast(error.message, true));
   });
   $("youtube-form").addEventListener("submit", (event) => {

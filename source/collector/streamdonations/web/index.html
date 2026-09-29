@@ -25,6 +25,77 @@
 </nav>
 
 <div id="tab-ledger" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-ledger">
+  <section id="stream-banner" class="card stream-banner" aria-live="polite">
+    <div class="spread">
+      <div>
+        <p class="kicker">Stream total</p>
+        <p id="stream-summary" class="figure">$0.00 total for stream.</p>
+      </div>
+      <div class="row">
+        <button type="button" id="copy-chat-line">Copy chat line</button>
+        <button type="button" id="new-stream">New stream</button>
+        <button type="button" id="full-ledger" hidden>Count full ledger</button>
+      </div>
+    </div>
+    <p id="stream-breakdown" class="hint"></p>
+    <div class="manual-grid">
+      <label>New total <input id="new-total" readonly tabindex="-1"></label>
+    </div>
+    <label>Chat line <textarea id="chat-line" readonly rows="2"></textarea></label>
+    <p id="stream-last" class="hint"></p>
+    <p id="stream-scope" class="hint"></p>
+  </section>
+
+  <section id="top-donors" class="card">
+    <div class="spread">
+      <div>
+        <p class="kicker">Top donors</p>
+        <p id="donor-summary" class="figure">No gifts yet</p>
+      </div>
+      <button type="button" id="copy-donor-bar">Copy donor bar</button>
+    </div>
+    <label>Donor bar <textarea id="donor-bar" readonly rows="2"></textarea></label>
+    <ol id="donor-list" class="donor-list"></ol>
+    <div id="tier-thanks" hidden>
+      <p class="kicker">Tier thanks</p>
+      <ul id="thanks-list" class="thanks-list"></ul>
+    </div>
+  </section>
+
+  <form id="manual-entry" class="card">
+    <header>
+      <h2>Manual entry</h2>
+      <p class="endpoint">A miss, or a gift from somewhere else</p>
+    </header>
+    <div class="manual-grid">
+      <label>Donor <input id="manual-donor" autocomplete="off" maxlength="200" placeholder="Name" required></label>
+      <label>Platform
+        <select id="manual-platform">
+          <option value="youtube">YouTube</option>
+          <option value="rumble">Rumble</option>
+          <option value="kick">Kick</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>Type
+        <select id="manual-kind">
+          <option value="super_chat">Super Chat</option>
+          <option value="super_sticker">Super Sticker</option>
+          <option value="membership">Membership</option>
+          <option value="donation">Donation</option>
+        </select>
+      </label>
+      <label>Amount USD <input id="manual-amount" inputmode="decimal" placeholder="0.00" required></label>
+    </div>
+    <label>Message <textarea id="manual-message" rows="2" maxlength="2000" placeholder="Optional"></textarea></label>
+    <label>When <input id="manual-when" type="datetime-local" step="1"></label>
+    <p class="hint">Leave the time empty to stamp it now. Donation on Other is for cash, Venmo, and the like. The amount is dollars, and it is added to the stream total as soon as you save.</p>
+    <div class="row">
+      <button type="submit" class="primary" id="manual-add">Add</button>
+      <button type="reset" id="manual-clear">Clear</button>
+    </div>
+  </form>
+
   <section class="summary" id="summary" aria-live="polite"></section>
   <p class="hint">USD totals: <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
 
@@ -156,6 +227,11 @@
     </header>
     <label>Membership price (USD) <input id="membership-price" type="number" min="0" max="100000" step="0.01" inputmode="decimal" placeholder="4.99"></label>
     <p class="hint">Used when a membership or subscription arrives without a price. YouTube counts “Sent 5 … gift memberships” as five, then multiplies by this price. Kick bundles do the same. A Rumble bundle is this price for the first subscription and $5.00 for each additional one, so five Rumble subs are $24.99 when this price is $4.99. Leave it blank and those amounts stay empty.</p>
+    <label class="check"><input id="tiers-enabled" type="checkbox"> Goal tiers on the stream total</label>
+    <div id="goal-tiers"></div>
+    <label>Extra on chat line <textarea id="chat-extra" rows="2" maxlength="500" placeholder="Optional note appended to the paste"></textarea></label>
+    <label class="check"><input id="show-top-donors" type="checkbox" checked> Show top donors</label>
+    <p class="hint">Up to five goals. The chat line names the next one that still has a name, and how many dollars are left. A cent short of a goal still counts as reached. Turn tiers off when this stream has none.</p>
     <p class="hint">Kick coins convert at 100 coins = $1. Under $5 is a Super Sticker. $5 and above is a Super Chat. Export times use this computer’s time zone. The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</p>
     <div class="row">
       <button type="submit" class="primary">Save</button>
