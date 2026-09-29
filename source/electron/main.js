@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const TOKEN = crypto.randomBytes(32).toString("hex");
@@ -20,16 +21,57 @@ function collectorRoot() {
   return path.resolve(__dirname, "..", "collector");
 }
 
-function dataDir() {
-  if (process.env.STREAM_DONATIONS_DATA) {
-    return process.env.STREAM_DONATIONS_DATA;
+function defaultDataDir() {
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    const base = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    return path.join(base, "stream-donations");
   }
-  return path.resolve(__dirname, "..", "..", "data");
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "stream-donations");
+  }
+  const base = process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  return path.join(base, "stream-donations");
+}
+
+function outsideHome(dir) {
+  const home = path.resolve(os.homedir());
+  const resolved = path.resolve(dir);
+  return resolved !== home && !resolved.startsWith(home + path.sep);
+}
+
+function insideApplicationTree(dir) {
+  let current = path.resolve(dir);
+  for (let i = 0; i < 12; i += 1) {
+    const sourceMarker = path.join(current, "source", "collector", "streamdonations", "youtube.py");
+    const portableMarker = path.join(current, "collector", "streamdonations", "youtube.py");
+    if (fs.existsSync(sourceMarker) || fs.existsSync(portableMarker)) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function dataDir() {
+  const requested = process.env.STREAM_DONATIONS_DATA;
+  if (requested && !outsideHome(requested) && !insideApplicationTree(requested)) {
+    return path.resolve(requested);
+  }
+  return defaultDataDir();
 }
 
 function pythonCommand() {
   if (process.env.STREAM_DONATIONS_PYTHON) {
     return process.env.STREAM_DONATIONS_PYTHON;
+  }
+  const bundled = path.resolve(__dirname, "..", "python", "bin", "python3");
+  if (fs.existsSync(bundled)) {
+    return bundled;
   }
   return "python3";
 }
@@ -163,6 +205,8 @@ async function openWindow(port) {
 
   await window.loadURL(origin + "/");
 }
+
+app.setPath("userData", path.join(dataDir(), "window"));
 
 app.whenReady().then(async () => {
   try {

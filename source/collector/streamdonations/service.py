@@ -20,6 +20,7 @@ from .transport import Transport
 from .util import redact
 from .youtube import YouTubeClient
 from .youtube_public import validate_youtube_watch
+from .youtube_quota import clamp_poll_seconds
 
 _HOST_NAME = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
@@ -172,7 +173,7 @@ class Service:
                 else:
                     clears.append(key)
             elif key in {"youtube_poll_seconds"}:
-                updates[key] = _bounded_int(value, 30, 600, "YouTube poll seconds")
+                updates[key] = _youtube_poll_seconds(value)
             elif key == "rumble_poll_seconds":
                 updates[key] = _bounded_int(value, 5, 120, "Rumble poll seconds")
             elif key == "kick_webhook_port":
@@ -274,6 +275,18 @@ def _bounded_money(value: str) -> str:
     if number < 0 or number > 100000:
         raise ValueError("Membership price must be between 0 and 100000.")
     return f"{number:.2f}"
+
+
+def _youtube_poll_seconds(value: object) -> str:
+    if isinstance(value, bool) or value is None or isinstance(value, float):
+        raise ValueError("YouTube poll seconds must be a whole number.")
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("YouTube poll seconds must be a whole number.") from exc
+    # A saved 30 or 90 second interval is raised, not rejected, so an open
+    # settings form from before this floor still saves the rest of the form.
+    return str(clamp_poll_seconds(number))
 
 
 def _bounded_int(value: object, low: int, high: int, label: str) -> str:

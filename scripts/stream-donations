@@ -1,25 +1,47 @@
 #!/bin/sh
 # Launch the Electron shell. The shell starts the Python collector.
+# This does not install anything and does not ask for root. The ledger and
+# API secrets stay in the home directory, not next to this file.
 set -eu
-ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-ELECTRON="$ROOT/app/node_modules/electron/dist/electron"
-if [ ! -x "$ELECTRON" ]; then
-  echo "Electron is not built. From the project directory, run scripts/build.sh." >&2
+if [ "$(id -u)" -eq 0 ]; then
+  echo "Run Stream Donations as your user, not as root." >&2
   exit 1
 fi
-DATA="${STREAM_DONATIONS_DATA:-$ROOT/../data}"
-mkdir -p "$DATA"
-export STREAM_DONATIONS_DATA="$DATA"
-export STREAM_DONATIONS_COLLECTOR="${STREAM_DONATIONS_COLLECTOR:-$ROOT/collector}"
+ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+if [ -x "$ROOT/electron/electron" ]; then
+  ELECTRON="$ROOT/electron/electron"
+elif [ -x "$ROOT/app/node_modules/electron/dist/electron" ]; then
+  ELECTRON="$ROOT/app/node_modules/electron/dist/electron"
+else
+  echo "Electron is not next to this launcher. From a checkout, run scripts/build.sh." >&2
+  exit 1
+fi
 if [ -z "${STREAM_DONATIONS_PYTHON:-}" ]; then
-  if command -v python3 >/dev/null 2>&1; then
+  if [ -x "$ROOT/python/bin/python3" ]; then
+    STREAM_DONATIONS_PYTHON="$ROOT/python/bin/python3"
+  elif command -v python3 >/dev/null 2>&1; then
     STREAM_DONATIONS_PYTHON=python3
-  elif command -v pyenv >/dev/null 2>&1; then
-    STREAM_DONATIONS_PYTHON=$(pyenv which python)
   else
-    echo "python3 or pyenv is required to run the collector." >&2
+    echo "python3 was not found. The portable Linux package carries one in python/bin." >&2
     exit 1
   fi
   export STREAM_DONATIONS_PYTHON
+fi
+# A path inside this folder, or the old checkout data/ directory, must not
+# win. The collector then uses the home directory.
+LEGACY=""
+if [ -d "$ROOT/../source/collector/streamdonations" ]; then
+  LEGACY=$(CDPATH= cd -- "$ROOT/.." && pwd)/data
+fi
+case "${STREAM_DONATIONS_DATA:-}" in
+  "" ) ;;
+  "$ROOT"|"$ROOT"/*|"$LEGACY"|"$LEGACY"/*)
+    unset STREAM_DONATIONS_DATA
+    ;;
+esac
+# The AppImage mount cannot use Electron's sandbox helper. A normal directory
+# launch keeps the sandbox.
+if [ -n "${APPIMAGE:-}" ]; then
+  exec "$ELECTRON" --no-sandbox "$ROOT/app" "$@"
 fi
 exec "$ELECTRON" "$ROOT/app" "$@"

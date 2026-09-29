@@ -2,7 +2,7 @@
 
 A local Electron app that records donation events from your own YouTube, Rumble, and Kick channels and keeps them in a SQLite ledger you can filter, annotate, mark processed, and export.
 
-The window is only a front end. A Python collector talks to each service and writes `data/donations.db`.
+The window is only a front end. A Python collector talks to each service and writes the ledger in the home directory (`~/.local/share/stream-donations/donations.db` on Linux). The application folder holds no API keys, tokens, or database.
 
 ## Build
 
@@ -21,13 +21,15 @@ The script uses what is already on this machine:
 
 Re-enter the box with `distrobox enter stream-donations`. Remove it with `distrobox rm stream-donations` if you want the next build to create it again.
 
-Nothing is installed with rpm-ostree. After a successful build, start the app with:
+Nothing is installed with rpm-ostree, and the app does not ask for root. After a successful build, start it with:
 
 ```sh
 bin/stream-donations
 ```
 
-The ledger is created at `data/donations.db` (mode 0600). The same database is what the export commands and any SQLite client read.
+A copy you can move to another Linux machine, with Electron and Python beside the launcher, is built with `scripts/package-linux.sh`. That writes `dist/StreamDonations-linux-x64/` and, when the AppImage tool is available, `dist/StreamDonations-x86_64.AppImage`. Windows and macOS are not built here. They should use the same split: a shell, the collector, a private Python, and `user_data_dir()` for the home folder.
+
+The ledger is created at `~/.local/share/stream-donations/donations.db` (mode 0600). On macOS that is `~/Library/Application Support/stream-donations`. On Windows it is `%APPDATA%\stream-donations`. A database left in the old `data/` folder next to this checkout is moved there on the next start. Export commands and any SQLite client read that same file.
 
 To run the collector without Electron, from this directory:
 
@@ -62,7 +64,7 @@ The Google sign-in below is only for your own channel’s Super Chat history fro
 4. Add the redirect URI shown in the app. With the default port it is `http://127.0.0.1:47321/oauth/google/callback`.
 5. Paste the client id and secret into the YouTube card, save, and click Connect.
 
-The app requests only `https://www.googleapis.com/auth/youtube.readonly`. Default quota is 10,000 units per day. `superChatEvents.list` and `liveChatMessages.list` cost 1 unit per call. Live chat is polled only while a broadcast is active, and only as often as YouTube's `pollingIntervalMillis` asks.
+The app requests only `https://www.googleapis.com/auth/youtube.readonly`. The default Data API quota is 10,000 units per day and resets at midnight Pacific Time. `superChatEvents.list`, `liveBroadcasts.list`, and `liveChatMessages.list` cost 1 unit per call. Super Chat history is one page per poll, at least 5 minutes apart, and an unfinished 30-day walk continues from the saved page instead of starting over. Own-channel live chat is polled only while a broadcast is active, and only after YouTube's `pollingIntervalMillis`. Broadcasts are checked every 5 minutes while idle. A `quotaExceeded` response pauses signed-in calls until the next Pacific midnight. Public live chat uses the watch page, not this quota.
 
 ### Rumble
 
@@ -94,7 +96,7 @@ Export CSV uses the same filter and these columns: Date, Time, Donor, Amount, Pl
 From a shell, against the same database:
 
 ```sh
-PYTHONPATH=source/collector python3 -m streamdonations export csv -o data/exports.csv
+PYTHONPATH=source/collector python3 -m streamdonations export csv -o ~/exports.csv
 PYTHONPATH=source/collector python3 -m streamdonations export jsonl --processed 0
 PYTHONPATH=source/collector python3 -m streamdonations poll
 ```
@@ -108,17 +110,16 @@ WHERE processed = 0
 ORDER BY created_at;
 ```
 
-`sqlite3 data/donations.db` runs that query. After you have handled a row outside the app, set `processed` back in the UI or with SQL.
+`sqlite3 ~/.local/share/stream-donations/donations.db` runs that query. After you have handled a row outside the app, set `processed` back in the UI or with SQL.
 
 ## Layout
 
 ```
-source/collector/streamdonations/   Python collector, ledger, and the page the window loads
+source/collector/streamdonations/   Python collector and the page the window loads
 source/electron/                    Electron main process
-bin/stream-donations                Built launcher
-bin/app/                            Electron shell, produced by the Node image
-bin/collector/                      Collector copied into the build
-data/donations.db                   The ledger
+bin/stream-donations                Launcher for a checkout
+dist/StreamDonations-linux-x64/     Portable Linux folder (Electron, Python, collector)
+~/.local/share/stream-donations/    Ledger, tokens, and client secrets (not in the app folder)
 ```
 
 Ports default to 47321 for the UI and 47322 for Kick webhooks. Override the UI port with `STREAM_DONATIONS_PORT`. Tokens and the Rumble URL are stored in the database and are not returned to the page after you save them.

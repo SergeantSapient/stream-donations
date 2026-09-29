@@ -18,9 +18,10 @@ import webbrowser
 
 from .normalize import normalize_live_chat_message, normalize_super_chat_event
 from .store import Store
-from .transport import Transport, api_error_message
+from .transport import HttpResult, Transport, api_error_message
 from .util import ApiError, AuthError, redact
 from .youtube_public import PublicChatFollower
+from .youtube_quota import QuotaPaused, YouTubeQuota, clamp_poll_seconds
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -42,6 +43,7 @@ class YouTubeClient:
         self._chat_tokens: dict[str, str] = {}
         self._live_disabled = False
         self._public = PublicChatFollower(store, self.transport)
+        self._quota = YouTubeQuota(store)
 
     def client_saved(self) -> bool:
         return bool(self.store.get_setting("youtube_client_id") and self.store.get_setting("youtube_client_secret"))
@@ -50,12 +52,18 @@ class YouTubeClient:
         return self.client_saved() and bool(self.store.get_setting("youtube_refresh_token"))
 
     def interval(self) -> float:
-        raw = self.store.get_setting("youtube_poll_seconds", "90")
-        try:
-            seconds = int(raw)
-        except ValueError:
-            seconds = 90
-        return float(min(600, max(30, seconds)))
+        raw = self.store.get_setting("youtube_poll_seconds", "900")
+        seconds = clamp_poll_seconds(raw)
+        if raw != str(seconds):
+            self.store.set_setting("youtube_poll_seconds", str(seconds))
+        return float(seconds)
+
+    def _broadcast_wait(self) -> float:
+        # Both calls cost 1 unit. Five minutes is enough to notice a broadcast
+        # starting. Two minutes while a chat is open notices it ending.
+        if self._chats:
+            return 120.0
+        return 300.0
 
     def authorization_url(self, redirect_uri: str, state: str, challenge: str) -> str:
         query = urllib.parse.urlencode(
@@ -125,6 +133,9 @@ class YouTubeClient:
                 return
             self.store.set_status("youtube", "idle", "Client saved. Connect the YouTube channel to start collecting.")
             return
+        if self._quota.paused():
+            self._report_quota_pause()
+            return
         errors: list[str] = []
         try:
             token = self._access_token()
@@ -139,15 +150,23 @@ class YouTubeClient:
             try:
                 inserted_super = self._poll_super_chats(token)
                 self._next_super = time.monotonic() + self.interval()
+            except QuotaPaused:
+                self._report_quota_pause()
+                return
             except (ApiError, OSError, ValueError) as exc:
+                if self._stop_for_quota(exc):
+                    return
                 errors.append(redact(str(exc)))
-                self._next_super = time.monotonic() + 60
+                self._next_super = time.monotonic() + self.interval()
         if force or now >= self._next_broadcast:
             try:
                 self._chats = self._active_chats(token)
-                self._next_broadcast = time.monotonic() + 45
+                self._next_broadcast = time.monotonic() + self._broadcast_wait()
                 active = {chat["id"] for chat in self._chats}
                 self._chat_tokens = {key: value for key, value in self._chat_tokens.items() if key in active}
+            except QuotaPaused:
+                self._report_quota_pause()
+                return
             except (ApiError, OSError, ValueError) as exc:
                 if _live_streaming_disabled(exc):
                     # The signed-in channel has never enabled live streaming.
@@ -166,13 +185,20 @@ class YouTubeClient:
                             "Super Chat history still syncs, and a public video URL is unaffected.",
                         )
                 else:
+                    if self._stop_for_quota(exc):
+                        return
                     errors.append(redact(str(exc)))
-                    self._next_broadcast = time.monotonic() + 60
+                    self._next_broadcast = time.monotonic() + self._broadcast_wait()
         if self._chats and (force or now >= self._next_chat):
             try:
                 inserted_chat, wait_seconds = self._poll_chats_once(token)
                 self._next_chat = time.monotonic() + wait_seconds
+            except QuotaPaused:
+                self._report_quota_pause()
+                return
             except (ApiError, OSError, ValueError) as exc:
+                if self._stop_for_quota(exc):
+                    return
                 errors.append(redact(str(exc)))
                 self._next_chat = time.monotonic() + 30
         if inserted_super:
@@ -194,6 +220,23 @@ class YouTubeClient:
             )
         else:
             detail = "No active live chat on your channel. Super Chats from the last 30 days still sync."
+        if self._public.detail:
+            detail += " " + self._public.detail
+        if self._public.error:
+            detail += " Public chat: " + self._public.error
+            self.store.set_status("youtube", "error", detail, error=self._public.error)
+            return
+        self.store.set_status("youtube", "ok", detail)
+
+    def _stop_for_quota(self, exc: BaseException) -> bool:
+        if self._quota.paused() or "quota" in str(exc).lower():
+            self._quota.note_exceeded()
+            self._report_quota_pause()
+            return True
+        return False
+
+    def _report_quota_pause(self) -> None:
+        detail = self._quota.status_detail()
         if self._public.detail:
             detail += " " + self._public.detail
         if self._public.error:
@@ -269,52 +312,63 @@ class YouTubeClient:
 
     def _api(self, path: str, query: dict[str, str], token: str):
         url = API_ROOT + path + "?" + urllib.parse.urlencode(query)
-        result = self.transport.request(
-            "GET",
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            allow_hosts=API_HOSTS,
-        )
+        result = self._get(url, token)
         if result.status == 401:
             self.store.delete_setting("youtube_access_token")
             token = self._access_token()
-            result = self.transport.request(
-                "GET",
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                allow_hosts=API_HOSTS,
-            )
+            result = self._get(url, token)
         if result.status >= 400:
+            if _is_quota_response(result):
+                self._quota.note_exceeded()
             raise ApiError(api_error_message(result), status=result.status)
         payload = result.json()
         if not isinstance(payload, dict):
             raise ApiError("YouTube returned a response that was not an object")
         return payload
 
+    def _get(self, url: str, token: str) -> HttpResult:
+        # Count the call before sending it. Google bills a failed request too.
+        self._quota.reserve()
+        return self.transport.request(
+            "GET",
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            allow_hosts=API_HOSTS,
+        )
+
     def _poll_super_chats(self, token: str) -> int:
-        # superChatEvents.list is newest-first. After the first full walk,
-        # stop on the first page that contains nothing new.
+        # Newest-first. The first run walks one page per poll and remembers
+        # the cursor, so a restart does not start the 30-day history over.
+        # After that, only the newest page is read.
         backfill = self.store.get_setting("youtube_superchat_backfill_done") != "1"
-        page = ""
-        inserted = 0
-        for _page_number in range(40):
-            query = {"part": "id,snippet", "maxResults": "50", "hl": "en"}
-            if page:
-                query["pageToken"] = page
-            payload = self._api("/superChatEvents", query, token)
-            donations = []
-            for item in payload.get("items") or []:
-                donation = normalize_super_chat_event(item)
-                if donation is not None:
-                    donations.append(donation)
-            inserted_here = self.store.add_many(donations)
-            inserted += inserted_here
-            page = str(payload.get("nextPageToken") or "")
-            if not page:
-                self.store.set_setting("youtube_superchat_backfill_done", "1")
-                break
-            if not backfill and inserted_here == 0:
-                break
+        query = {"part": "id,snippet", "maxResults": "50", "hl": "en"}
+        page = self.store.get_setting("youtube_superchat_page") if backfill else ""
+        if page:
+            query["pageToken"] = page
+        payload = self._api("/superChatEvents", query, token)
+        donations = []
+        for item in payload.get("items") or []:
+            donation = normalize_super_chat_event(item)
+            if donation is not None:
+                donations.append(donation)
+        inserted = self.store.add_many(donations)
+        next_page = str(payload.get("nextPageToken") or "")
+        walked = 0
+        if backfill:
+            try:
+                walked = int(self.store.get_setting("youtube_superchat_pages") or "0")
+            except ValueError:
+                walked = 0
+            walked += 1
+        # 40 pages is 2,000 events. Past that, keep refreshing the newest page
+        # only. One page per poll, so this walk cannot repeat every minute.
+        if not backfill or not next_page or walked >= 40:
+            self.store.set_setting("youtube_superchat_backfill_done", "1")
+            self.store.delete_setting("youtube_superchat_page")
+            self.store.delete_setting("youtube_superchat_pages")
+        else:
+            self.store.set_setting("youtube_superchat_pages", str(walked))
+            self.store.set_setting("youtube_superchat_page", next_page)
         return inserted
 
     def _active_chats(self, token: str) -> list[dict[str, str]]:
@@ -382,6 +436,12 @@ class YouTubeClient:
 
 def _live_streaming_disabled(exc: BaseException) -> bool:
     return "not enabled for live streaming" in str(exc).lower()
+
+
+def _is_quota_response(result: HttpResult) -> bool:
+    if result.status != 403:
+        return False
+    return "quota" in result.body.decode("utf-8", "replace").lower()
 
 
 def open_browser(url: str) -> bool:

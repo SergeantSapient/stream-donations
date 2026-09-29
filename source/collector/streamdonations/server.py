@@ -21,6 +21,7 @@ from .service import Service
 from .store import Store
 from .util import ApiError, redact, utc_now_iso
 from .youtube import open_browser
+from .youtube_quota import clamp_poll_seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _DONATION_PATH = re.compile(r"/api/donations/(\d+)")
@@ -340,7 +341,7 @@ class App:
             "youtube_client_id": self.store.get_setting("youtube_client_id"),
             "youtube_client_secret_set": bool(self.store.get_setting("youtube_client_secret")),
             "youtube_connected": bool(self.store.get_setting("youtube_refresh_token")),
-            "youtube_poll_seconds": seconds("youtube_poll_seconds", "90"),
+            "youtube_poll_seconds": clamp_poll_seconds(self.store.get_setting("youtube_poll_seconds", "900")),
             "youtube_watch": self.store.get_setting("youtube_watch"),
             "rumble_api_url_set": bool(self.store.get_setting("rumble_api_url")),
             "rumble_watch": self.store.get_setting("rumble_watch"),

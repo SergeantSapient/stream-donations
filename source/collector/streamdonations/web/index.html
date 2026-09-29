@@ -157,8 +157,8 @@
       <p class="hint">Any live stream. Super Chats, stickers, and memberships come from the public chat. You do not need to own the channel or sign in with Google.</p>
       <label>OAuth client id <input id="youtube-client-id" name="youtube_client_id" autocomplete="off" spellcheck="false"></label>
       <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
-      <label>Poll seconds <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="30" max="600" step="1" value="90"></label>
-      <p class="hint">Google sign-in is optional. It only reads your own channel’s Super Chats from the last 30 days. While that Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
+      <label>Super Chat history poll (seconds) <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="300" max="3600" step="60" value="900"></label>
+      <p class="hint">Google sign-in is optional. It only reads your own channel’s Super Chats from the last 30 days. YouTube’s default Data API quota is 10,000 units a day, each history or broadcast check costs 1 unit, and the day resets at midnight Pacific Time. The shortest interval is 5 minutes. If the quota is used up, signed-in calls wait for that reset. Public live chat does not spend this quota. While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
       <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
       <p class="hint">Register this redirect URI on the Google client:</p>
       <input id="youtube-redirect" class="copy" readonly>

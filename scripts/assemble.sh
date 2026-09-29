@@ -5,7 +5,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BIN="$ROOT/bin"
 rm -rf "$BIN/app" "$BIN/collector"
-mkdir -p "$BIN/app" "$BIN/collector" "$ROOT/data" "$ROOT/build"
+mkdir -p "$BIN/app" "$BIN/collector" "$ROOT/build"
 cp "$ROOT/source/electron/package.json" "$BIN/app/package.json"
 cp "$ROOT/source/electron/main.js" "$BIN/app/main.js"
 cp "$ROOT/source/electron/preload.js" "$BIN/app/preload.js"

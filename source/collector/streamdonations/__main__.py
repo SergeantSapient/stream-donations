@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .fx import usd_rates
 from .money import parse_membership_price
+from .paths import DataPathError, resolve_data_dir
 from .server import App, Handler, ThreadingServer
 from .service import Service
 from .store import Store
@@ -21,14 +22,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,256}")
 
 
 def default_data_dir() -> Path:
-    env = os.environ.get("STREAM_DONATIONS_DATA", "").strip()
-    if env:
-        return Path(env).expanduser()
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if parent.name == "stream-donations":
-            return parent / "data"
-    return Path.home() / ".local" / "share" / "stream-donations"
+    return resolve_data_dir()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="Run the local API, UI, and collectors")
-    serve.add_argument("--data-dir", help="Directory for donations.db (default: <project>/data)")
+    serve.add_argument("--data-dir", help="Directory for donations.db (default: the home data directory)")
     serve.add_argument("--port", type=int, help="Loopback UI port (default: 47321)")
 
     export = sub.add_parser("export", help="Write the ledger as CSV or JSONL")
@@ -62,15 +56,17 @@ def main(argv: list[str] | None = None) -> int:
             return _export(args)
         if args.command == "poll":
             return _poll(args)
+    except DataPathError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130
     return 2
 
 
 def _data_dir(args) -> Path:
-    if getattr(args, "data_dir", None):
-        return Path(args.data_dir).expanduser()
-    return default_data_dir()
+    explicit = getattr(args, "data_dir", None) or ""
+    return resolve_data_dir(str(explicit))
 
 
 def _serve(args) -> int:
