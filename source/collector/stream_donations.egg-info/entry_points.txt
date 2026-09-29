@@ -1,0 +1,2 @@
+[console_scripts]
+stream-donations = streamdonations.__main__:main

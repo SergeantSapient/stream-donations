@@ -1,0 +1,11 @@
+{
+  "name": "stream-donations",
+  "productName": "Stream Donations",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local ledger for YouTube, Rumble, and Kick donations.",
+  "main": "main.js",
+  "dependencies": {
+    "electron": "33.4.11"
+  }
+}

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Donations</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="mast">
+  <div>
+    <p class="kicker">YouTube · Rumble · Kick</p>
+    <h1>Stream Donations</h1>
+  </div>
+  <p class="mast-note">A local ledger of Super Chats, Super Stickers, and memberships. Nothing here is sent anywhere except the platform you connect.</p>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button type="button" class="tab is-active" role="tab" id="tab-button-ledger" aria-selected="true" aria-controls="tab-ledger" data-tab="ledger">Ledger</button>
+  <button type="button" class="tab" role="tab" id="tab-button-youtube" aria-selected="false" aria-controls="tab-youtube" data-tab="youtube">YouTube</button>
+  <button type="button" class="tab" role="tab" id="tab-button-rumble" aria-selected="false" aria-controls="tab-rumble" data-tab="rumble">Rumble</button>
+  <button type="button" class="tab" role="tab" id="tab-button-kick" aria-selected="false" aria-controls="tab-kick" data-tab="kick">Kick</button>
+  <button type="button" class="tab" role="tab" id="tab-button-settings" aria-selected="false" aria-controls="tab-settings" data-tab="settings">Settings</button>
+  <button type="button" class="tab" role="tab" id="tab-button-log" aria-selected="false" aria-controls="tab-log" data-tab="log">Log</button>
+</nav>
+
+<div id="tab-ledger" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-ledger">
+  <section class="summary" id="summary" aria-live="polite"></section>
+  <p class="hint">USD totals: <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
+
+  <form id="filters" class="toolbar">
+    <label>Search <input id="search" type="search" placeholder="Name, message, channel, note"></label>
+    <label>Platform <select id="platform"><option value="">All</option></select></label>
+    <label>Type <select id="kind"><option value="">All</option></select></label>
+    <label>State
+      <select id="processed">
+        <option value="">All</option>
+        <option value="0">Waiting</option>
+        <option value="1">Processed</option>
+      </select>
+    </label>
+    <label class="check"><input id="hide-receipts" type="checkbox" checked> Hide individual gift receipts</label>
+    <div class="row">
+      <button type="submit" class="primary">Apply</button>
+      <button type="button" id="poll-now">Poll now</button>
+      <a id="export-csv" class="button" href="/api/export.csv">Export CSV</a>
+      <a id="export-jsonl" class="button" href="/api/export.jsonl">Export JSONL</a>
+      <button type="button" id="mark-loaded">Mark loaded processed</button>
+      <button type="button" id="reset-ledger" class="danger">Reset ledger</button>
+    </div>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Platform</th>
+          <th>Type</th>
+          <th>From</th>
+          <th>Amount</th>
+          <th>Message</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p id="empty" class="empty" hidden>Nothing stored for this filter yet.</p>
+  </div>
+
+  <footer class="pager">
+    <button type="button" id="prev">Previous</button>
+    <p id="page-label"></p>
+    <button type="button" id="next">Next</button>
+    <p id="database" class="database"></p>
+  </footer>
+</div>
+
+<div id="tab-youtube" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-youtube" hidden>
+    <form id="youtube-form" class="card" data-platform="youtube">
+      <header>
+        <h2>YouTube</h2>
+        <p class="endpoint">Public live chat, or your own Super Chat history</p>
+      </header>
+      <label>Public video URL or id <input id="youtube-watch" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…"></label>
+      <p class="hint">Any live stream. Super Chats, stickers, and memberships come from the public chat. You do not need to own the channel or sign in with Google.</p>
+      <label>OAuth client id <input id="youtube-client-id" name="youtube_client_id" autocomplete="off" spellcheck="false"></label>
+      <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
+      <label>Poll seconds <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="30" max="600" step="1" value="90"></label>
+      <p class="hint">Google sign-in is optional. It only reads your own channel’s Super Chats from the last 30 days. While that Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
+      <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
+      <p class="hint">Register this redirect URI on the Google client:</p>
+      <input id="youtube-redirect" class="copy" readonly>
+      <div class="row">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="youtube-connect">Connect</button>
+        <button type="button" id="youtube-disconnect">Disconnect</button>
+      </div>
+      <p id="youtube-status" class="status" data-state="unconfigured">Not started</p>
+      <input id="youtube-url" class="copy" readonly hidden>
+    </form>
+</div>
+
+<div id="tab-rumble" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-rumble" hidden>
+    <form id="rumble-form" class="card" data-platform="rumble">
+      <header>
+        <h2>Rumble</h2>
+        <p class="endpoint">Public chat stream, or the owner API</p>
+      </header>
+      <label>Public video URL or chat id <input id="rumble-watch" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/v… or 446413572"></label>
+      <p class="hint">This is the live chat any viewer can open. You do not need to own the channel. Rants, gifted subs, and new-subscriber notices are stored. Leave this running while the stream is live.</p>
+      <label>Owner API URL, optional <input id="rumble-url" type="password" autocomplete="off" placeholder="Leave blank to keep the saved URL"></label>
+      <label>Poll seconds <input id="rumble-poll" type="number" min="5" max="120" step="1" value="8"></label>
+      <p class="hint">The URL from rumble.com/account/livestream-api only works for a channel you own. It adds subscriber dollar amounts the public chat does not include.</p>
+      <div class="row">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="rumble-clear">Remove URL</button>
+      </div>
+      <p id="rumble-status" class="status" data-state="unconfigured">Not started</p>
+    </form>
+</div>
+
+<div id="tab-kick" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-kick" hidden>
+    <form id="kick-form" class="card" data-platform="kick">
+      <header>
+        <h2>Kick</h2>
+        <p class="endpoint">Public chat, or your own webhooks</p>
+      </header>
+      <label>Public channel <input id="kick-watch" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
+      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below.</p>
+      <label>Client id <input id="kick-client-id" autocomplete="off" spellcheck="false"></label>
+      <label>Client secret <input id="kick-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
+      <label>Listen host <input id="kick-host" autocomplete="off" value="127.0.0.1"></label>
+      <label>Listen port <input id="kick-port" type="number" min="1" max="65535" step="1" value="47322"></label>
+      <label>Public base <input id="kick-public" autocomplete="off" placeholder="https://your-host:47322"></label>
+      <p class="hint">Redirect URI for the Kick app:</p>
+      <input id="kick-redirect" class="copy" readonly>
+      <p class="hint">Webhook URL to enable on the Kick app:</p>
+      <input id="kick-webhook" class="copy" readonly>
+      <div class="row">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="kick-connect">Connect</button>
+        <button type="button" id="kick-subscribe">Subscribe</button>
+        <button type="button" id="kick-disconnect">Disconnect</button>
+      </div>
+      <p id="kick-status" class="status" data-state="unconfigured">Not started</p>
+      <input id="kick-url" class="copy" readonly hidden>
+    </form>
+</div>
+
+<div id="tab-settings" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-settings" hidden>
+  <form id="settings-form" class="card">
+    <header>
+      <h2>Settings</h2>
+      <p class="endpoint">Ledger</p>
+    </header>
+    <label>Membership price (USD) <input id="membership-price" type="number" min="0" max="100000" step="0.01" inputmode="decimal" placeholder="4.99"></label>
+    <p class="hint">Used when a membership or subscription arrives without a price. YouTube counts “Sent 5 … gift memberships” as five, then multiplies by this price. Kick bundles do the same. A Rumble bundle is this price for the first subscription and $5.00 for each additional one, so five Rumble subs are $24.99 when this price is $4.99. Leave it blank and those amounts stay empty.</p>
+    <p class="hint">Kick coins convert at 100 coins = $1. Under $5 is a Super Sticker. $5 and above is a Super Chat. Export times use this computer’s time zone. The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</p>
+    <div class="row">
+      <button type="submit" class="primary">Save</button>
+    </div>
+    <p id="fx-status" class="status">Exchange rates have not been downloaded yet.</p>
+    <div class="row">
+      <button type="button" id="fx-refresh">Update exchange rates</button>
+    </div>
+    <p class="hint">The saved response from open.er-api.com is reused until the last check is more than an hour old. Their open endpoint allows about one request an hour, and the table itself changes about once a day. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
+  </form>
+</div>
+
+<div id="tab-log" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-log" hidden>
+  <pre id="log"></pre>
+</div>
+
+<aside id="drawer" class="drawer" hidden>
+  <div class="row spread">
+    <h2 id="drawer-title">Donation</h2>
+    <button type="button" id="drawer-close">Close</button>
+  </div>
+  <dl id="drawer-facts"></dl>
+  <p id="drawer-message" class="message"></p>
+  <label>Note <textarea id="note" rows="4" maxlength="2000"></textarea></label>
+  <div class="row">
+    <button type="button" id="save-note" class="primary">Save note</button>
+    <button type="button" id="toggle-processed">Mark processed</button>
+  </div>
+  <details>
+    <summary>Raw platform payload</summary>
+    <pre id="raw"></pre>
+  </details>
+</aside>
+
+<p id="toast" class="toast" hidden role="status"></p>
+<script src="/app.js"></script>
+</body>
+</html>

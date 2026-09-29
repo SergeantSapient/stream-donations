@@ -1,0 +1,25 @@
+#!/bin/sh
+# Launch the Electron shell. The shell starts the Python collector.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+ELECTRON="$ROOT/app/node_modules/electron/dist/electron"
+if [ ! -x "$ELECTRON" ]; then
+  echo "Electron is not built. From the project directory, run scripts/build.sh." >&2
+  exit 1
+fi
+DATA="${STREAM_DONATIONS_DATA:-$ROOT/../data}"
+mkdir -p "$DATA"
+export STREAM_DONATIONS_DATA="$DATA"
+export STREAM_DONATIONS_COLLECTOR="${STREAM_DONATIONS_COLLECTOR:-$ROOT/collector}"
+if [ -z "${STREAM_DONATIONS_PYTHON:-}" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    STREAM_DONATIONS_PYTHON=python3
+  elif command -v pyenv >/dev/null 2>&1; then
+    STREAM_DONATIONS_PYTHON=$(pyenv which python)
+  else
+    echo "python3 or pyenv is required to run the collector." >&2
+    exit 1
+  fi
+  export STREAM_DONATIONS_PYTHON
+fi
+exec "$ELECTRON" "$ROOT/app" "$@"

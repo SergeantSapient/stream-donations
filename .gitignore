@@ -1,0 +1,12 @@
+bin/
+data/
+build/
+.venv/
+.pyprefix/
+__pycache__/
+*.pyc
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+session.token
