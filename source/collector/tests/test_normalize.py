@@ -10,6 +10,9 @@ from streamdonations.normalize import (
 )
 from streamdonations.rumble import (
     chat_id_from_html,
+    live_chat_id_from_channel_html,
+    rumble_channel_page_url,
+    validate_rumble_channel,
     donations_from_chat_event,
     embed_to_chat_id,
     validate_rumble_api_url,
@@ -331,6 +334,37 @@ class NormalizeTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             validate_rumble_watch("https://evil.example/watch")
+
+    def test_channel_page_live_badge_is_the_chat_id(self):
+        css = "<style>.videostream__status--live{background:red}</style>"
+        duration = (
+            '<div class="videostream thumbnail__grid--item" data-video-id="111">'
+            '<div class="videostream__badge videostream__status videostream__status--duration">1:00</div></div>'
+        )
+        live = (
+            '<div\nclass="videostream thumbnail__grid--item videostream--featured"\n'
+            'data-video-id="222"\n>'
+            '<div class="thumbnail__thumb thumbnail__thumb--live"></div>'
+            '<div class="videostream__badge videostream__status videostream__status--live">LIVE</div></div>'
+        )
+        self.assertIsNone(live_chat_id_from_channel_html(css + duration))
+        self.assertEqual(live_chat_id_from_channel_html(css + duration + live), "222")
+        second = live.replace("222", "333")
+        with self.assertRaises(ValueError):
+            live_chat_id_from_channel_html(live + second)
+        self.assertEqual(
+            rumble_channel_page_url("https://rumble.com/c/NewsmaxTV/livestreams"),
+            "https://rumble.com/c/NewsmaxTV",
+        )
+        self.assertEqual(validate_rumble_channel("https://www.rumble.com/user/Name"), "https://www.rumble.com/user/Name")
+        for bad in (
+            "446413572",
+            "v7ds6x0",
+            "https://rumble.com/v7fyjui-rt-de-live-tv.html",
+            "https://rumble.com/-livestream-api/get-data?key=abc",
+        ):
+            with self.assertRaises(ValueError):
+                validate_rumble_channel(bad)
 
     def test_rumble_url_must_be_the_livestream_endpoint(self):
         good = "https://rumble.com/-livestream-api/get-data?key=abc"

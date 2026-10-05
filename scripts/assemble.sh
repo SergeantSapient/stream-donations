@@ -9,6 +9,7 @@ mkdir -p "$BIN/app" "$BIN/collector" "$ROOT/build"
 cp "$ROOT/source/electron/package.json" "$BIN/app/package.json"
 cp "$ROOT/source/electron/main.js" "$BIN/app/main.js"
 cp "$ROOT/source/electron/preload.js" "$BIN/app/preload.js"
+cp "$ROOT/source/electron/icon.png" "$BIN/app/icon.png"
 cp -R "$ROOT/source/collector/streamdonations" "$BIN/collector/streamdonations"
 find "$BIN/collector" -type d -name __pycache__ | while read -r dir; do
   rm -rf "$dir"

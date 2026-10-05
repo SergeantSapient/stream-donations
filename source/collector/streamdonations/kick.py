@@ -47,13 +47,13 @@ DONATION_EVENTS = [
 
 
 class KickClient:
-    def __init__(self, store: Store, transport: Transport | None = None):
+    def __init__(self, store: Store, transport: Transport | None = None, chat_feed=None):
         self.store = store
         self.transport = transport or Transport()
         self._auth_lock = threading.Lock()
         self._public_key = EMBEDDED_KICK_PUBLIC_KEY
         self._next_status = 0.0
-        self._public = PublicKickChat(store, self.transport)
+        self._public = PublicKickChat(store, self.transport, chat_feed)
 
     @property
     def public_key(self) -> str:
@@ -109,7 +109,13 @@ class KickClient:
         else:
             self.store.set_status("kick", "unconfigured", "Disconnected.")
 
+    def rest(self) -> None:
+        self._public.rest()
+
     def tick(self, force: bool = False) -> None:
+        if self.store.collection_paused():
+            self.rest()
+            return
         self._public.ensure()
         has_watch = bool(self.store.get_setting("kick_watch"))
         if not self.client_saved():
@@ -178,6 +184,8 @@ class KickClient:
         return "http://" + self.listen_label() + "/kick/webhook"
 
     def refresh_public_key(self) -> None:
+        if self.store.collection_paused():
+            return
         try:
             result = self.transport.request(
                 "GET",
@@ -292,6 +300,9 @@ class KickClient:
             return 401, "signature did not match Kick's public key"
         if not webhook_is_fresh(timestamp):
             return 400, "webhook timestamp is outside the acceptance window"
+        # Acknowledge a valid event without storing it so Kick keeps the subscription.
+        if self.store.collection_paused():
+            return 204, "paused"
         try:
             parsed = json.loads(body.decode("utf-8")) if body else {}
         except (UnicodeDecodeError, json.JSONDecodeError):

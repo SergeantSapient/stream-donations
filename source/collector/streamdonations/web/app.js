@@ -1,5 +1,9 @@
 "use strict";
 
+const PAGE_SIZE = 100;
+const HIGHLIGHT_MS = 60_000;
+const DEFAULT_CURRENCY = "USD";
+
 const state = {
   meta: null,
   settings: null,
@@ -8,15 +12,20 @@ const state = {
   selected: null,
   filters: {
     platform: "",
-    kind: "",
-    processed: "",
     q: "",
     hideReceipts: true,
     offset: 0,
-    limit: 100,
+    limit: PAGE_SIZE,
   },
   stream: null,
+  presets: [],
 };
+
+const highlightTimers = new Map();
+let refreshSerial = 0;
+let streamChain = Promise.resolve();
+let lastTabClick = null;
+let nameDialogRequestedAt = 0;
 
 const TIER_PLACEHOLDERS = ["Bronze", "Silver", "Gold", "", ""];
 
@@ -29,15 +38,66 @@ function el(tag, className, text) {
   return node;
 }
 
-function toast(message, bad) {
+function icon(name) {
+  const paths = {
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path>',
+    x: '<path d="M7 7l10 10M17 7 7 17"></path>',
+    eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="2.5"></circle>',
+    "eye-off": '<path d="M3 4l18 16"></path><path d="M10.6 6.2A11 11 0 0 1 12 6c6.5 0 10 6 10 6a18 18 0 0 1-3.1 3.7"></path><path d="M6.2 6.9C3.6 8.7 2 12 2 12s3.5 6 10 6c1.2 0 2.4-.2 3.5-.6"></path><path d="M9.9 9.9a2.5 2.5 0 0 0 3.2 3.2"></path>',
+    trash: '<path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M7 7l1 12h8l1-12"></path><path d="M10 11v5M14 11v5"></path>',
+    plug: '<path d="M9 7V3.5M15 7V3.5"></path><path d="M7.5 7h9v5a4.5 4.5 0 0 1-9 0V7z"></path><path d="M12 16.5V21"></path>',
+    unplug: '<path d="M9 6V2.5M15 6V2.5"></path><path d="M7.5 6h9v4.2a4.5 4.5 0 0 1-9 0V6z"></path><path d="M12 15v2M12 19.5V22"></path>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "icon");
+  svg.innerHTML = paths[name] || "";
+  return svg;
+}
+
+function closeMenu() {
+  const menu = $("app-menu");
+  const button = $("app-menu-button");
+  if (!menu || !button) return;
+  menu.hidden = true;
+  button.setAttribute("aria-expanded", "false");
+}
+
+// Same cap as settings_file.MAX_BYTES. A larger file is not a settings file.
+const SETTINGS_FILE_MAX_BYTES = 262144;
+
+let pendingUndo = null;
+const deletingManual = new Set();
+
+function toast(message, bad, action) {
   const node = $("toast");
-  node.textContent = message;
-  node.hidden = false;
-  node.classList.toggle("bad", Boolean(bad));
   clearTimeout(toast.timer);
+  node.classList.toggle("bad", Boolean(bad));
+  node.replaceChildren(document.createTextNode(message));
+  node.hidden = false;
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toast-action";
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      clearTimeout(toast.timer);
+      node.hidden = true;
+      action.run();
+    });
+    node.appendChild(button);
+  } else {
+    pendingUndo = null;
+  }
+  const snapshot = action && action.snapshot;
   toast.timer = setTimeout(() => {
     node.hidden = true;
-  }, 4200);
+    if (snapshot && pendingUndo === snapshot) pendingUndo = null;
+  }, action ? 8000 : 4200);
 }
 
 async function api(path, options) {
@@ -69,8 +129,6 @@ function queryString() {
   const params = new URLSearchParams();
   const filters = state.filters;
   if (filters.platform) params.set("platform", filters.platform);
-  if (filters.kind) params.set("kind", filters.kind);
-  if (filters.processed) params.set("processed", filters.processed);
   if (filters.q) params.set("q", filters.q);
   if (filters.hideReceipts) params.append("exclude_kind", "gift_membership_received");
   params.set("limit", String(filters.limit));
@@ -88,6 +146,90 @@ function formatWhen(iso) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function localParts(iso) {
+  if (!iso) return { date: "—", time: "—" };
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return { date: iso, time: "—" };
+  return {
+    date: `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`,
+    time: `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`,
+  };
+}
+
+function donorName(name) {
+  const text = String(name || "").trim().replace(/^@+/, "");
+  return text || "—";
+}
+
+function formatPlain(value) {
+  if (value == null || value === "" || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toFixed(2);
+}
+
+function formatRunning(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0.00";
+  return number.toFixed(2);
+}
+
+function isKickCoins(row) {
+  return row.kind === "kicks" || String(row.currency || "").toUpperCase() === "KICKS";
+}
+
+function ledgerAmount(row) {
+  // Kick stores a coin count. Membership gifts store no amount at all.
+  // Both are priced later, and that price is what the ledger shows.
+  if (row.quoted_amount != null) return formatPlain(row.quoted_amount);
+  if (isKickCoins(row)) return formatPlain(row.amount_usd);
+  return formatPlain(row.amount_value);
+}
+
+function ledgerCurrency(row) {
+  if (row.quoted_amount != null) return row.quoted_currency || "—";
+  if (isKickCoins(row)) return row.amount_usd == null ? "—" : "USD";
+  return row.currency || "—";
+}
+
+function donoAmountBand(usd) {
+  const amount = Number(usd);
+  if (!(amount > 0)) return 0;
+  if (amount >= 100) return 100;
+  if (amount >= 50) return 50;
+  if (amount >= 20) return 20;
+  if (amount >= 10) return 10;
+  if (amount >= 5) return 5;
+  if (amount >= 2) return 2;
+  return 1;
+}
+
+function highlightRemaining(row, now) {
+  const stamp = Date.parse(row.received_at || "");
+  if (!Number.isFinite(stamp)) return 0;
+  const age = now - stamp;
+  if (age < -5000 || age >= HIGHLIGHT_MS) return 0;
+  return HIGHLIGHT_MS - Math.max(0, age);
+}
+
+function syncHighlight(row, now) {
+  const left = highlightRemaining(row, now);
+  const existing = highlightTimers.get(row.id);
+  if (existing) {
+    clearTimeout(existing);
+    highlightTimers.delete(row.id);
+  }
+  if (left <= 0) return false;
+  highlightTimers.set(row.id, setTimeout(() => {
+    highlightTimers.delete(row.id);
+    const node = document.querySelector(`#rows tr[data-id="${row.id}"]`);
+    if (node) node.classList.remove("is-new");
+  }, left));
+  return true;
 }
 
 function formatUsd(value) {
@@ -145,6 +287,48 @@ function streamChatLine(total, report) {
   return body;
 }
 
+function readClipboard() {
+  const desktop = window.desktop;
+  if (desktop && typeof desktop.readClipboard === "function") {
+    try {
+      const text = desktop.readClipboard();
+      if (text && typeof text.then === "function") return text;
+      if (typeof text === "string") return Promise.resolve(text);
+    } catch (_error) {
+      // A plain browser has no desktop bridge.
+    }
+  }
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    return navigator.clipboard.readText();
+  }
+  return Promise.reject(new Error("Could not read the clipboard."));
+}
+
+function applyPaste(parsed) {
+  $("manual-donor").value = parsed.donor || "";
+  if (parsed.platform) $("manual-platform").value = parsed.platform;
+  if (parsed.kind) $("manual-kind").value = parsed.kind;
+  $("manual-message").value = parsed.message || "";
+  $("manual-native").value = parsed.amount || "";
+  selectCurrency(parsed.currency || DEFAULT_CURRENCY);
+  if (parsed.amount_usd) {
+    $("manual-amount").value = parsed.amount_usd;
+    toast("Filled from the clipboard.");
+  } else if (parsed.amount) {
+    $("manual-amount").value = "";
+    toast(`No dollar rate for ${parsed.amount} ${parsed.currency}. Amount and currency were kept.`, true);
+  } else if (parsed.kind === "membership") {
+    $("manual-amount").value = "";
+    const count = Number(parsed.membership_count);
+    const read = count > 0 ? `Read ${count} memberships. ` : "";
+    toast(`${read}This computer has no membership price saved. Set it in Settings and Save.`, true);
+  } else {
+    $("manual-amount").value = "";
+    toast("Filled from the clipboard. The amount was not in the paste.");
+  }
+  updateStreamPreview();
+}
+
 function copyText(text, ok) {
   const write = navigator.clipboard && navigator.clipboard.writeText(text);
   if (!write) {
@@ -172,12 +356,65 @@ function formatAmount(row) {
   return String(amount);
 }
 
-function fillSelect(select, items, allLabel) {
-  const current = select.value;
+function renderCurrencies(currencies) {
+  const select = $("manual-currency");
+  if (!select || !Array.isArray(currencies) || !currencies.length) return;
+  const current = select.value || DEFAULT_CURRENCY;
   select.replaceChildren();
-  select.appendChild(new Option(allLabel, ""));
-  items.forEach((item) => select.appendChild(new Option(item.label, item.id)));
-  select.value = current;
+  currencies.forEach((item) => {
+    if (!item || !item.code) return;
+    const option = document.createElement("option");
+    option.value = item.code;
+    option.textContent = item.name ? item.code + " — " + item.name : item.code;
+    option.defaultSelected = item.code === DEFAULT_CURRENCY;
+    select.appendChild(option);
+  });
+  selectCurrency(current);
+}
+
+function selectCurrency(code) {
+  const select = $("manual-currency");
+  if (!select) return;
+  const wanted = String(code || DEFAULT_CURRENCY).trim().toUpperCase() || DEFAULT_CURRENCY;
+  const known = Array.from(select.options).some((option) => option.value === wanted);
+  select.value = known ? wanted : DEFAULT_CURRENCY;
+}
+
+function renderPlatformPills(platforms) {
+  const host = $("platform-pills");
+  host.replaceChildren();
+  host.appendChild(platformPill("", "All"));
+  platforms.forEach((item) => host.appendChild(platformPill(item.id, item.label)));
+  markPlatformPill(state.filters.platform);
+}
+
+function platformPill(id, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "pill";
+  button.dataset.platform = id;
+  if (id) {
+    const dot = document.createElement("span");
+    dot.className = "dot dot-" + id;
+    dot.setAttribute("aria-hidden", "true");
+    button.appendChild(dot);
+  }
+  button.appendChild(document.createTextNode(label));
+  button.addEventListener("click", () => {
+    state.filters.platform = id;
+    state.filters.offset = 0;
+    markPlatformPill(id);
+    refresh().catch((error) => toast(error.message, true));
+  });
+  return button;
+}
+
+function markPlatformPill(id) {
+  document.querySelectorAll("#platform-pills .pill").forEach((button) => {
+    const selected = button.dataset.platform === id;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
 }
 
 function renderSummary(summary) {
@@ -185,11 +422,9 @@ function renderSummary(summary) {
   host.replaceChildren();
   const cards = [
     ["Total donated", formatUsd(summary.total_usd)],
-    ["Waiting", String(summary.unprocessed)],
     ["Stored", String(summary.total)],
   ];
-  while (cards.length < 4) cards.push(["Platforms", String((summary.by_platform || []).length)]);
-  cards.slice(0, 4).forEach(([label, figure]) => {
+  cards.forEach(([label, figure]) => {
     const card = el("article");
     card.appendChild(el("p", "kicker", label));
     card.appendChild(el("p", "figure", figure));
@@ -210,47 +445,177 @@ function renderStatus(payload) {
   });
   const lines = (payload.log || []).map((row) => `${row.at}  ${row.platform}  ${row.message}`);
   $("log").textContent = lines.join("\n");
+  const verbose = $("verbose-logs");
+  if (verbose && !verbose.dataset.pending) verbose.checked = Boolean(payload.verbose);
+  const logFile = $("log-file");
+  if (logFile && payload.log_file) logFile.textContent = payload.log_file;
 }
 
 function renderRows(page) {
+  const reported = Number(page.total);
+  state.total = Number.isFinite(reported) ? reported : 0;
+  const limit = state.filters.limit;
+  const lastOffset = state.total === 0 ? 0 : Math.floor((state.total - 1) / limit) * limit;
+  if (state.filters.offset > lastOffset) {
+    state.filters.offset = lastOffset;
+    return false;
+  }
   state.rows = page.donations || [];
-  state.total = page.total || 0;
+  const now = Date.now();
   const body = $("rows");
   body.replaceChildren();
   state.rows.forEach((row) => {
     const tr = document.createElement("tr");
-    if (row.processed) tr.classList.add("is-processed");
+    tr.dataset.id = String(row.id);
+    tr.dataset.platform = row.platform || "other";
+    tr.dataset.donoBand = String(donoAmountBand(row.amount_usd));
+    if (syncHighlight(row, now)) tr.classList.add("is-new");
     if (state.selected && state.selected.id === row.id) tr.classList.add("is-selected");
     tr.tabIndex = 0;
-    tr.addEventListener("click", () => openDonation(row.id));
+    if (row.hidden) tr.classList.add("is-hidden");
+    tr.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openDonation(row.id);
+    });
     tr.addEventListener("keydown", (event) => {
+      if (event.target !== tr) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         openDonation(row.id);
       }
     });
-    const when = el("td", "when", formatWhen(row.created_at));
-    when.title = row.created_at || "";
+    const when = localParts(row.created_at);
+    const dateCell = el("td", "num", when.date);
+    const timeCell = el("td", "num", when.time);
+    dateCell.title = row.created_at || "";
+    timeCell.title = row.created_at || "";
+    const donor = donorName(row.author_name);
+    const donorCell = el("td", "donor-cell", donor);
+    if (donor !== "—") donorCell.title = donor;
+    const message = el("td", "message-cell", row.message || "—");
+    if (row.message) message.title = row.message;
     tr.append(
-      when,
+      dateCell,
+      timeCell,
+      donorCell,
+      el("td", "num", ledgerAmount(row)),
       el("td", null, row.platform_label || row.platform),
       el("td", null, row.kind_label || row.kind),
-      el("td", null, row.author_name || "—"),
-      el("td", "amount", formatAmount(row)),
-      el("td", "message-cell", row.message || "—"),
-      el("td", null, row.processed ? "Processed" : "Waiting"),
+      el("td", null, ledgerCurrency(row)),
+      el("td", "num", formatPlain(row.amount_usd)),
+      message,
+      el("td", "num", row.hidden ? "—" : formatRunning(row.running_usd)),
+      rowAction(row),
     );
     body.appendChild(tr);
   });
   $("empty").hidden = state.rows.length !== 0;
-  const start = state.total === 0 ? 0 : state.filters.offset + 1;
-  const end = Math.min(state.filters.offset + state.rows.length, state.total);
-  $("page-label").textContent = `${start}–${end} of ${state.total}`;
-  $("prev").disabled = state.filters.offset <= 0;
-  $("next").disabled = state.filters.offset + state.filters.limit >= state.total;
-  const exportQuery = queryString().replace(/&?limit=\d+/, "").replace(/&?offset=\d+/, "");
+  const pages = state.total === 0 ? 1 : Math.ceil(state.total / limit);
+  const pageNum = state.total === 0 ? 1 : Math.floor(state.filters.offset / limit) + 1;
+  $("page-label").textContent = `Page ${pageNum} of ${pages}`;
+  $("prev").disabled = pageNum <= 1;
+  $("next").disabled = pageNum >= pages;
+  const exportQuery = queryString()
+    .replace(/(^|&)limit=\d+&?/, "$1")
+    .replace(/(^|&)offset=\d+&?/, "$1")
+    .replace(/&$/, "")
+    .replace(/^&/, "");
   $("export-csv").href = "/api/export.csv?" + exportQuery;
   $("export-jsonl").href = "/api/export.jsonl?" + exportQuery;
+  return true;
+}
+
+function rowAction(row) {
+  const cell = el("td", "row-actions");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button row-action";
+  if (row.manual) {
+    button.classList.add("is-delete");
+    button.setAttribute("aria-label", "Delete");
+    button.title = "Delete this manual entry";
+    button.appendChild(icon("trash"));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteManual(row);
+    });
+  } else {
+    const hidden = Boolean(row.hidden);
+    button.setAttribute("aria-label", hidden ? "Count again" : "Hide");
+    button.title = hidden
+      ? "Count this entry again"
+      : "Hide this entry. It stays stored and is left out of totals and exports.";
+    button.appendChild(icon(hidden ? "eye" : "eye-off"));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setEntryHidden(row, !hidden);
+    });
+  }
+  cell.appendChild(button);
+  return cell;
+}
+
+function manualSnapshot(row) {
+  return {
+    id: row.id,
+    dedupe_key: row.dedupe_key,
+    platform: row.platform,
+    kind: row.kind,
+    author_name: row.author_name,
+    message: row.message || "",
+    amount: row.amount_value,
+    currency: row.currency,
+    created_at: row.created_at,
+    received_at: row.received_at,
+    processed: Boolean(row.processed),
+    processed_at: row.processed_at,
+    note: row.note || "",
+  };
+}
+
+function undoManual(snapshot) {
+  if (pendingUndo !== snapshot) return;
+  pendingUndo = null;
+  api("/api/donations/restore", { method: "POST", body: JSON.stringify(snapshot) })
+    .then(() => {
+      toast("Restored that manual entry.");
+      return refresh();
+    })
+    .catch((error) => toast(error.message, true));
+}
+
+function deleteManual(row) {
+  if (deletingManual.has(row.id)) return;
+  const snapshot = manualSnapshot(row);
+  deletingManual.add(row.id);
+  api("/api/donations/" + row.id, { method: "DELETE" })
+    .then(() => {
+      if (state.selected && state.selected.id === row.id) {
+        $("drawer").hidden = true;
+        state.selected = null;
+      }
+      pendingUndo = snapshot;
+      toast("Deleted that manual entry.", false, {
+        label: "Undo",
+        snapshot,
+        run: () => undoManual(snapshot),
+      });
+      return refresh().catch(() => {});
+    })
+    .catch((error) => toast(error.message, true))
+    .finally(() => deletingManual.delete(row.id));
+}
+
+function setEntryHidden(row, hidden) {
+  api("/api/donations/" + row.id, {
+    method: "PATCH",
+    body: JSON.stringify({ hidden: hidden }),
+  })
+    .then(() => {
+      toast(hidden ? "Hidden. Totals and exports leave it out." : "That entry counts again.");
+      return refresh();
+    })
+    .catch((error) => toast(error.message, true));
 }
 
 function fact(dl, label, value) {
@@ -267,7 +632,7 @@ function renderDrawer(donation) {
   fact(facts, "When", donation.created_at);
   fact(facts, "Platform", donation.platform_label);
   fact(facts, "Type", donation.kind_label);
-  fact(facts, "From", donation.author_name);
+  fact(facts, "From", donorName(donation.author_name));
   fact(facts, "Channel", donation.channel);
   fact(facts, "Amount", formatAmount(donation));
   if (donation.amount_usd != null && donation.quoted_currency && donation.quoted_currency !== "USD") {
@@ -278,45 +643,736 @@ function renderDrawer(donation) {
   if (document.activeElement !== $("note")) {
     $("note").value = donation.note || "";
   }
-  $("toggle-processed").textContent = donation.processed ? "Mark waiting" : "Mark processed";
   $("raw").textContent = JSON.stringify(donation.raw, null, 2);
 }
 
 async function openDonation(id) {
   const donation = await api("/api/donations/" + id);
   renderDrawer(donation);
-  document.querySelectorAll("tbody tr").forEach((row, index) => {
-    row.classList.toggle("is-selected", state.rows[index] && state.rows[index].id === id);
+  document.querySelectorAll("#rows tr").forEach((row) => {
+    row.classList.toggle("is-selected", row.dataset.id === String(id));
   });
 }
 
-async function refresh() {
+async function refresh(options) {
+  const serial = ++refreshSerial;
   const [summary, status, page, stream] = await Promise.all([
     api("/api/summary"),
     api("/api/status"),
     api("/api/donations?" + queryString()),
     api("/api/stream"),
   ]);
+  if (serial !== refreshSerial) return;
   renderSummary(summary);
   if (summary.fx) renderFx(summary.fx);
   renderStatus(status);
-  renderRows(page);
+  const painted = renderRows(page);
   renderStream(stream);
+  if (!painted) {
+    await refresh(options);
+    return;
+  }
+  if (options && options.scroll) {
+    const wrap = document.querySelector("#tab-ledger .table-wrap");
+    if (wrap) wrap.scrollIntoView({ block: "start" });
+  }
+}
+
+function enqueueStream(task) {
+  const run = streamChain.then(task, task);
+  streamChain = run.then(() => {}, () => {});
+  return run;
+}
+
+function streamTabSignature(streams) {
+  const tabs = (streams && streams.tabs) || [];
+  return tabs.map((tab) => tab.id + ":" + tab.title + ":" + (tab.paused ? "1" : "0")).join("|") + "#" + ((streams && streams.active_id) || "");
+}
+
+function revealStreamTab(tab) {
+  const scroller = $("stream-tabs");
+  if (!scroller || !tab) return;
+  const tabBox = tab.getBoundingClientRect();
+  const box = scroller.getBoundingClientRect();
+  if (!box.width || !tabBox.width) return;
+  if (tabBox.left < box.left) scroller.scrollLeft -= box.left - tabBox.left;
+  else if (tabBox.right > box.right) scroller.scrollLeft += tabBox.right - box.right;
+}
+
+function updateStreamBumpers() {
+  const scroller = $("stream-tabs");
+  const prev = $("stream-tabs-prev");
+  const next = $("stream-tabs-next");
+  if (!scroller || !prev || !next) return;
+  const overflow = scroller.scrollWidth - scroller.clientWidth > 2;
+  prev.hidden = !overflow;
+  next.hidden = !overflow;
+  if (!overflow) return;
+  prev.disabled = scroller.scrollLeft <= 1;
+  next.disabled = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
+}
+
+function scrollStreamTabs(direction) {
+  const scroller = $("stream-tabs");
+  if (!scroller) return;
+  scroller.scrollBy({
+    left: direction * Math.max(120, Math.round(scroller.clientWidth * 0.8)),
+    behavior: "smooth",
+  });
+}
+
+function armLedgerRename(id) {
+  const now = Date.now();
+  if (now - nameDialogRequestedAt < 700) return;
+  nameDialogRequestedAt = now;
+  openLedgerName(id).catch((error) => toast(error.message, true));
+}
+
+function renderStreamTabs(report) {
+  const scroller = $("stream-tabs");
+  if (!scroller) return;
+  const streams = report.streams || { active_id: "", tabs: [] };
+  const tabs = streams.tabs || [];
+  const signature = streamTabSignature(streams);
+  if (scroller.dataset.signature !== signature) {
+    const returnFocus = scroller.contains(document.activeElement);
+    scroller.dataset.signature = signature;
+    scroller.replaceChildren();
+    const many = tabs.length > 1;
+    tabs.forEach((tab) => {
+      const selected = tab.id === streams.active_id;
+      const item = document.createElement("div");
+      item.className = "stream-tab" + (selected ? " is-active" : "");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "stream-tab-label";
+      button.setAttribute("role", "tab");
+      button.id = "stream-tab-" + tab.id;
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      button.tabIndex = selected ? 0 : -1;
+      button.title = (tab.title || "Stream") + ". Double-click to rename.";
+      button.textContent = tab.title || "Stream";
+      button.addEventListener("click", () => {
+        const now = Date.now();
+        const previous = lastTabClick;
+        lastTabClick = { id: tab.id, at: now };
+        if (previous && previous.id === tab.id && now - previous.at < 500) {
+          armLedgerRename(tab.id);
+          return;
+        }
+        switchStream(tab.id).catch((error) => toast(error.message, true));
+      });
+      button.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        armLedgerRename(tab.id);
+      });
+      item.appendChild(button);
+      const addresses = document.createElement("button");
+      addresses.type = "button";
+      addresses.className = "stream-tab-addresses";
+      addresses.setAttribute("aria-label", "Addresses for " + (tab.title || "Stream"));
+      addresses.title = "Addresses for this ledger";
+      addresses.appendChild(icon("link"));
+      addresses.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openLedgerAddresses(tab.id).catch((error) => toast(error.message, true));
+      });
+      item.appendChild(addresses);
+      const paused = tab.paused !== false;
+      const pause = document.createElement("button");
+      pause.type = "button";
+      pause.className = "stream-tab-pause";
+      pause.setAttribute("aria-pressed", paused ? "true" : "false");
+      pause.setAttribute("aria-label", paused ? "Reconnect" : "Soft disconnect");
+      pause.title = paused
+        ? "Reconnect. This ledger is paused. Sign-in and watch URLs were kept."
+        : "Soft disconnect. Stop this ledger's API requests and live-chat reading without signing out.";
+      pause.appendChild(icon(paused ? "unplug" : "plug"));
+      pause.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const next = pause.getAttribute("aria-pressed") !== "true";
+        toggleLedgerPause(tab.id, next).catch((error) => toast(error.message, true));
+      });
+      item.appendChild(pause);
+      if (many) {
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "stream-tab-close";
+        close.setAttribute("aria-label", "Close " + (tab.title || "Stream"));
+        close.appendChild(icon("x"));
+        close.addEventListener("click", () => {
+          closeStream(tab.id, tab.title).catch((error) => toast(error.message, true));
+        });
+        item.appendChild(close);
+      }
+      scroller.appendChild(item);
+    });
+    const active = scroller.querySelector(".stream-tab.is-active");
+    if (active) revealStreamTab(active);
+    if (returnFocus) {
+      const selected = scroller.querySelector("[aria-selected=true]");
+      if (selected) selected.focus();
+    }
+  }
+  updateStreamBumpers();
+}
+
+async function commitStreamTitle() {
+  const input = $("stream-title");
+  const dialog = $("ledger-name");
+  // The field lives in the name dialog. Other tab actions call this to flush
+  // an edit, and must not rename when that dialog is closed.
+  if (!input || !dialog || !dialog.open) return;
+  const next = input.value.trim();
+  const current = (state.stream && state.stream.title) || "";
+  if (next === current) return;
+  const report = await api("/api/streams", {
+    method: "POST",
+    body: JSON.stringify({ action: "rename", title: next }),
+  });
+  renderStream(report);
+}
+
+async function reloadOpenStream() {
+  applySettingsToForm(await api("/api/settings"));
+  await refresh();
+}
+
+function toggleLedgerPause(id, paused) {
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    const active = state.stream && state.stream.streams && state.stream.streams.active_id;
+    const open = !active || active === id;
+    await api("/api/collection", {
+      method: "POST",
+      body: JSON.stringify({ paused, id }),
+    });
+    if (paused && open) toast("Soft disconnect. This ledger is paused.");
+    else if (!paused && open) toast("Reconnected. This ledger is collecting.");
+    else if (paused) toast("That ledger is paused. It does not collect while it is open.");
+    else toast("That ledger will collect while it is open.");
+    await reloadOpenStream();
+  });
+}
+
+function switchStream(id) {
+  if (state.stream && state.stream.streams && state.stream.streams.active_id === id) {
+    return Promise.resolve();
+  }
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    await api("/api/streams", { method: "POST", body: JSON.stringify({ action: "switch", id }) });
+    await reloadOpenStream();
+  });
+}
+
+function addStream() {
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    await api("/api/streams", { method: "POST", body: JSON.stringify({ action: "add" }) });
+    await reloadOpenStream();
+    await promptLedgerUrls();
+  });
+}
+
+function openLedgerAddresses(id) {
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    const active = state.stream && state.stream.streams && state.stream.streams.active_id;
+    if (id && active && active !== id) {
+      await api("/api/streams", { method: "POST", body: JSON.stringify({ action: "switch", id }) });
+      await reloadOpenStream();
+    }
+    await promptLedgerUrls({ fresh: false });
+  });
+}
+
+function openLedgerName(id) {
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    const active = state.stream && state.stream.streams && state.stream.streams.active_id;
+    if (id && active && active !== id) {
+      await api("/api/streams", { method: "POST", body: JSON.stringify({ action: "switch", id }) });
+      await reloadOpenStream();
+    }
+    await promptLedgerName();
+  });
+}
+
+function promptLedgerName() {
+  const dialog = $("ledger-name");
+  const form = $("ledger-name-form");
+  const cancel = $("ledger-name-cancel");
+  const input = $("stream-title");
+  if (!dialog || !form || !input || typeof dialog.showModal !== "function") {
+    return Promise.resolve();
+  }
+  if (dialog.open) return Promise.resolve();
+  const savedTitle = () => ((state.stream && state.stream.title) || "");
+  input.value = savedTitle();
+  const error = $("ledger-name-error");
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const detach = () => {
+      form.removeEventListener("submit", onSubmit);
+      dialog.removeEventListener("close", onClose);
+      if (cancel) cancel.removeEventListener("click", onCancel);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      detach();
+      input.value = savedTitle();
+      resolve();
+    };
+    const onClose = () => finish();
+    const onCancel = () => {
+      if (!settled) dialog.close();
+    };
+    const onSubmit = (event) => {
+      event.preventDefault();
+      if (settled) return;
+      const saving = form.querySelector("button.primary");
+      if (saving) saving.disabled = true;
+      if (error) {
+        error.hidden = true;
+        error.textContent = "";
+      }
+      commitStreamTitle()
+        .then(() => {
+          if (!settled) dialog.close();
+        })
+        .catch((err) => {
+          if (error) {
+            error.hidden = false;
+            error.textContent = err.message || "Could not save that name.";
+          } else toast(err.message || "Could not save that name.", true);
+        })
+        .finally(() => {
+          if (saving) saving.disabled = false;
+        });
+    };
+    form.addEventListener("submit", onSubmit);
+    dialog.addEventListener("close", onClose);
+    if (cancel) cancel.addEventListener("click", onCancel);
+    dialog.showModal();
+    input.focus();
+    input.select();
+  });
+}
+
+function setSectionExpanded(button, expanded) {
+  const body = document.getElementById(button.getAttribute("aria-controls") || "");
+  const section = button.closest(".card");
+  const name = button.getAttribute("data-section") || "section";
+  const label = (expanded ? "Collapse " : "Expand ") + name;
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  if (body) body.hidden = !expanded;
+  if (section) section.classList.toggle("is-collapsed", !expanded);
+}
+
+function bindSectionToggles() {
+  document.querySelectorAll(".section-toggle").forEach((button) => {
+    button.addEventListener("click", () => {
+      setSectionExpanded(button, button.getAttribute("aria-expanded") !== "true");
+    });
+  });
+}
+
+const LEDGER_ADDRESS_FIELDS = [
+  {
+    followId: "ledger-youtube-follow",
+    inputId: "ledger-youtube",
+    labelId: "ledger-youtube-label",
+    watchKey: "youtube_watch",
+    channelKey: "youtube_channel",
+    followKey: "youtube_follow_live",
+  },
+  {
+    followId: "ledger-rumble-follow",
+    inputId: "ledger-rumble",
+    labelId: "ledger-rumble-label",
+    watchKey: "rumble_watch",
+    channelKey: "rumble_channel",
+    followKey: "rumble_follow_live",
+  },
+];
+
+function ledgerAddressMode(field) {
+  const input = $(field.inputId);
+  const label = $(field.labelId);
+  const follow = $(field.followId);
+  const on = Boolean(follow && follow.checked);
+  if (input) {
+    input.placeholder = on
+      ? input.dataset.channelPlaceholder || ""
+      : input.dataset.videoPlaceholder || "";
+  }
+  if (label && input) {
+    label.textContent = on
+      ? input.dataset.channelLabel || ""
+      : input.dataset.videoLabel || "";
+  }
+}
+
+function fillLedgerAddressFields(settings) {
+  const saved = settings || {};
+  LEDGER_ADDRESS_FIELDS.forEach((field) => {
+    const input = $(field.inputId);
+    const follow = $(field.followId);
+    const on = Boolean(saved[field.followKey]);
+    if (follow) follow.checked = on;
+    if (input) input.value = on ? (saved[field.channelKey] || "") : (saved[field.watchKey] || "");
+    ledgerAddressMode(field);
+  });
+  const kick = $("ledger-kick");
+  if (kick) kick.value = saved.kick_watch || "";
+}
+
+function resetLedgerAddressFields() {
+  LEDGER_ADDRESS_FIELDS.forEach((field) => {
+    const input = $(field.inputId);
+    const follow = $(field.followId);
+    if (input) input.value = "";
+    if (follow) follow.checked = false;
+    ledgerAddressMode(field);
+  });
+  const kick = $("ledger-kick");
+  if (kick) kick.value = "";
+}
+
+function presetPlatforms(preset) {
+  const names = [];
+  if (preset.youtube_channel) names.push("YouTube");
+  if (preset.rumble_channel) names.push("Rumble");
+  if (preset.kick_watch) names.push("Kick");
+  const channels = names.join(", ") || "No channels";
+  return preset.tiers_enabled ? channels + " · goals" : channels;
+}
+
+function renderPresetList(presets) {
+  const list = $("preset-list");
+  const empty = $("preset-empty");
+  if (!list) return;
+  list.replaceChildren();
+  const items = presets || [];
+  if (empty) empty.hidden = items.length > 0;
+  items.forEach((preset) => {
+    const row = el("li");
+    const meta = el("div", "preset-meta");
+    meta.appendChild(el("p", "preset-name", preset.name));
+    meta.appendChild(el("p", "preset-channels", presetPlatforms(preset)));
+    const edit = el("button", null, "Edit");
+    edit.type = "button";
+    edit.setAttribute("aria-label", "Edit " + preset.name);
+    edit.addEventListener("click", () => editPreset(preset));
+    const remove = el("button", null, "Remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove " + preset.name);
+    remove.addEventListener("click", () => deletePreset(preset));
+    const actions = el("div", "preset-actions");
+    actions.append(edit, remove);
+    row.appendChild(meta);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+function refreshPresets() {
+  return api("/api/presets").then((payload) => {
+    state.presets = (payload && payload.presets) || [];
+    renderPresetList(state.presets);
+    return state.presets;
+  });
+}
+
+function savePreset() {
+  const form = $("preset-form");
+  const error = $("preset-error");
+  const saving = form ? form.querySelector("button.primary") : null;
+  if (saving) saving.disabled = true;
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+  const body = {
+    action: "save",
+    name: $("preset-name").value,
+    youtube_channel: $("preset-youtube").value.trim(),
+    rumble_channel: $("preset-rumble").value.trim(),
+    kick_watch: $("preset-kick").value.trim(),
+    tiers_enabled: $("tiers-enabled").checked,
+    goal_tiers: collectTiers(),
+  };
+  api("/api/presets", { method: "POST", body: JSON.stringify(body) })
+    .then((payload) => {
+      state.presets = (payload && payload.presets) || [];
+      renderPresetList(state.presets);
+      if (form) form.reset();
+      renderTierFields([]);
+      toast("Saved streamer preset " + ((payload.preset && payload.preset.name) || body.name) + ".");
+    })
+    .catch((err) => {
+      if (!error) {
+        toast(err.message, true);
+        return;
+      }
+      error.hidden = false;
+      error.textContent = err.message || "Could not save that preset.";
+    })
+    .finally(() => {
+      if (saving) saving.disabled = false;
+    });
+}
+
+function editPreset(preset) {
+  const error = $("preset-error");
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+  $("preset-name").value = preset.name || "";
+  $("preset-youtube").value = preset.youtube_channel || "";
+  $("preset-rumble").value = preset.rumble_channel || "";
+  $("preset-kick").value = preset.kick_watch || "";
+  if ($("tiers-enabled")) $("tiers-enabled").checked = Boolean(preset.tiers_enabled);
+  renderTierFields(preset.goal_tiers);
+  const name = $("preset-name");
+  if (name) name.focus();
+}
+
+function deletePreset(preset) {
+  const sure = window.confirm(
+    "Remove " + preset.name + "? Ledgers you already opened keep their addresses and goals.",
+  );
+  if (!sure) return;
+  api("/api/presets", {
+    method: "POST",
+    body: JSON.stringify({ action: "delete", id: preset.id }),
+  })
+    .then((payload) => {
+      state.presets = (payload && payload.presets) || [];
+      renderPresetList(state.presets);
+      toast("Removed streamer preset " + preset.name + ".");
+    })
+    .catch((err) => toast(err.message, true));
+}
+
+function fillLedgerPresetSelect(presets) {
+  const select = $("ledger-preset");
+  if (!select) return;
+  select.replaceChildren();
+  const none = el("option", null, "None");
+  none.value = "";
+  select.appendChild(none);
+  (presets || []).forEach((preset) => {
+    const option = el("option", null, preset.name);
+    option.value = preset.id;
+    select.appendChild(option);
+  });
+  select.value = "";
+}
+
+function applyLedgerPreset(preset) {
+  LEDGER_ADDRESS_FIELDS.forEach((field) => {
+    const follow = $(field.followId);
+    const input = $(field.inputId);
+    const text = String((preset && preset[field.channelKey]) || "").trim();
+    if (follow) follow.checked = Boolean(text);
+    if (input) input.value = text;
+    ledgerAddressMode(field);
+  });
+  const kick = $("ledger-kick");
+  if (kick) kick.value = String((preset && preset.kick_watch) || "").trim();
+}
+
+function ledgerAddressPayload() {
+  const body = {
+    kick_watch: ($("ledger-kick") && $("ledger-kick").value.trim()) || "",
+  };
+  LEDGER_ADDRESS_FIELDS.forEach((field) => {
+    const input = $(field.inputId);
+    const follow = $(field.followId);
+    const text = input ? input.value.trim() : "";
+    if (follow && follow.checked) {
+      body[field.channelKey] = text;
+      body[field.followKey] = true;
+    } else {
+      body[field.watchKey] = text;
+      body[field.followKey] = false;
+    }
+  });
+  const select = $("ledger-preset");
+  const presetId = select ? select.value : "";
+  const preset = presetId
+    ? (state.presets || []).find((item) => item.id === presetId)
+    : null;
+  if (preset) {
+    body.tiers_enabled = Boolean(preset.tiers_enabled);
+    body.goal_tiers = Array.isArray(preset.goal_tiers) ? preset.goal_tiers : [];
+  }
+  return body;
+}
+
+const LEDGER_URLS_FRESH = "This ledger starts with a blank name and no donations. Each ledger keeps its own YouTube, Rumble, and Kick address. API keys stay shared. For YouTube or Rumble, turn on Follow the live stream and that field asks for a channel URL instead of a video. Kick is already a channel. Leave any of these blank and fill them in later.";
+const LEDGER_URLS_AGAIN = "Each ledger keeps its own YouTube, Rumble, and Kick address. API keys stay shared. For YouTube or Rumble, turn on Follow the live stream and that field asks for a channel URL instead of a video. Kick is already a channel. Leave any of these blank.";
+
+function promptLedgerUrls(options) {
+  const fresh = !options || options.fresh !== false;
+  const dialog = $("ledger-urls");
+  const form = $("ledger-urls-form");
+  const skip = $("ledger-urls-skip");
+  if (!dialog || !form || typeof dialog.showModal !== "function") {
+    toast("New ledger started empty. Add its platform addresses from YouTube, Rumble, or Kick.");
+    return Promise.resolve();
+  }
+  if (dialog.open) return Promise.resolve();
+  const intro = $("ledger-urls-intro");
+  if (intro) intro.textContent = fresh ? LEDGER_URLS_FRESH : LEDGER_URLS_AGAIN;
+  resetLedgerAddressFields();
+  const error = $("ledger-urls-error");
+  error.hidden = true;
+  error.textContent = "";
+  const saved = fresh
+    ? Promise.resolve(null)
+    : api("/api/settings").then((settings) => {
+      applySettingsToForm(settings);
+      return settings;
+    });
+  return saved
+    .then(() => refreshPresets())
+    .catch(() => {
+      state.presets = [];
+      return [];
+    })
+    .then((presets) => {
+      fillLedgerPresetSelect(presets);
+      if (!fresh) fillLedgerAddressFields(state.settings || {});
+      return openLedgerUrlDialog(dialog, form, skip, error);
+    });
+}
+
+function openLedgerUrlDialog(dialog, form, skip, error) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const onToggle = (event) => {
+      const field = LEDGER_ADDRESS_FIELDS.find((item) => item.followId === event.target.id);
+      if (field) ledgerAddressMode(field);
+    };
+    const onPreset = () => {
+      const select = $("ledger-preset");
+      const id = select ? select.value : "";
+      if (!id) {
+        resetLedgerAddressFields();
+        return;
+      }
+      const preset = (state.presets || []).find((item) => item.id === id);
+      if (preset) applyLedgerPreset(preset);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      form.removeEventListener("submit", onSubmit);
+      dialog.removeEventListener("close", onClose);
+      if (skip) skip.removeEventListener("click", onSkip);
+      const select = $("ledger-preset");
+      if (select) select.removeEventListener("change", onPreset);
+      LEDGER_ADDRESS_FIELDS.forEach((field) => {
+        const follow = $(field.followId);
+        if (follow) follow.removeEventListener("change", onToggle);
+      });
+      resolve();
+    };
+    const onClose = () => finish();
+    const onSkip = () => {
+      if (!settled) dialog.close();
+    };
+    const onSubmit = (event) => {
+      event.preventDefault();
+      if (settled) return;
+      const body = ledgerAddressPayload();
+      const saving = form.querySelector("button.primary");
+      if (saving) saving.disabled = true;
+      api("/api/settings", { method: "PUT", body: JSON.stringify(body) })
+        .then((settings) => {
+          applySettingsToForm(settings);
+          if (!settled) dialog.close();
+        })
+        .catch((err) => {
+          error.hidden = false;
+          error.textContent = err.message || "Could not save those addresses.";
+        })
+        .finally(() => {
+          if (saving) saving.disabled = false;
+        });
+    };
+    form.addEventListener("submit", onSubmit);
+    dialog.addEventListener("close", onClose);
+    if (skip) skip.addEventListener("click", onSkip);
+    LEDGER_ADDRESS_FIELDS.forEach((field) => {
+      const follow = $(field.followId);
+      if (follow) follow.addEventListener("change", onToggle);
+    });
+    const select = $("ledger-preset");
+    if (select) select.addEventListener("change", onPreset);
+    dialog.showModal();
+    if (select) select.focus();
+    else {
+      const first = $("ledger-youtube");
+      if (first) first.focus();
+    }
+  });
+}
+
+function closeStream(id, title) {
+  const name = title || "Stream";
+  const sure = window.confirm(
+    "Close " + name + "? This ledger's donations are removed. The other ledgers stay.",
+  );
+  if (!sure) return Promise.resolve();
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    await api("/api/streams", { method: "POST", body: JSON.stringify({ action: "close", id }) });
+    await reloadOpenStream();
+    toast("Closed that ledger. Its donations were removed.");
+  });
 }
 
 function renderStream(report) {
   state.stream = report;
+  renderStreamTabs(report);
+  const title = $("stream-title");
+  const naming = $("ledger-name");
+  if (
+    title
+    && !(naming && naming.open)
+    && document.activeElement !== title
+    && title.value !== (report.title || "")
+  ) {
+    title.value = report.title || "";
+  }
   const countLabel = report.count === 1 ? "entry" : "entries";
-  $("stream-summary").textContent = `${report.count} ${countLabel}. ${formatStreamUsd(report.total_usd)} total for stream.`;
+  const line = streamChatLine(Number(report.total_usd || 0), report);
+  $("stream-summary").textContent = `${report.count} ${countLabel}. ${line}`;
   $("stream-breakdown").textContent = (report.by_type || [])
     .map((item) => `${item.count} ${item.type} · ${formatStreamUsd(item.usd)}`)
     .join("  ·  ");
   $("stream-last").textContent = report.last ? `Last: ${report.last}` : "Last: none";
-  $("stream-scope").textContent = report.scope === "stream"
-    ? `Counting donations since ${formatWhen(report.started_at)}. The ledger below still shows everything.`
-    : "Counting the full ledger. New stream starts the banner and top donors over without deleting rows.";
-  $("full-ledger").hidden = report.scope !== "stream";
+  $("stream-scope").textContent = "Counting every donation on this ledger. Other ledgers are separate.";
   $("top-donors").hidden = !report.show_top_donors;
+  const statusDonors = $("status-donors");
+  const statusDonorLine = $("status-donor-line");
+  if (statusDonors) statusDonors.hidden = !report.show_top_donors;
+  if (statusDonorLine) {
+    statusDonorLine.textContent = report.donor_bar || "";
+    statusDonorLine.title = statusDonorLine.textContent;
+  }
   const board = report.donors || { total: 0, rows: [] };
   const lead = (board.rows || [])[0];
   if (!board.total) $("donor-summary").textContent = "No gifts yet";
@@ -344,12 +1400,25 @@ function renderStream(report) {
   thanksList.replaceChildren();
   thanks.forEach((item) => {
     const row = document.createElement("li");
-    const button = el("button", null, "Copy");
+    const button = document.createElement("button");
     button.type = "button";
+    button.className = "icon-button";
+    button.setAttribute("aria-label", "Copy thank you");
+    button.title = "Copy thank you";
+    button.appendChild(icon("copy"));
     button.addEventListener("click", () => copyText(item.line, "Thank you copied."));
     row.append(el("p", null, item.line), button);
     thanksList.appendChild(row);
   });
+  updateStreamPreview();
+}
+
+function syncManualUsd() {
+  const currency = ($("manual-currency").value || DEFAULT_CURRENCY).trim().toUpperCase();
+  if (!currency || currency === "USD") {
+    const native = $("manual-native").value.trim();
+    if (native) $("manual-amount").value = native;
+  }
   updateStreamPreview();
 }
 
@@ -360,6 +1429,11 @@ function updateStreamPreview() {
   const preview = round2(Number(report.total_usd || 0) + (extra || 0));
   $("new-total").value = preview.toFixed(2);
   $("chat-line").value = streamChatLine(preview, report);
+  const statusTotal = $("status-total-line");
+  if (statusTotal) {
+    statusTotal.textContent = $("chat-line").value;
+    statusTotal.title = statusTotal.textContent;
+  }
 }
 
 function tierField(label, className, value, type, placeholder) {
@@ -419,10 +1493,361 @@ function collectTiers() {
   });
 }
 
+const WATCH_PLATFORMS = ["youtube", "rumble", "kick"];
+const WATCH_OPEN_KEY = "stream-donations-watch-open";
+const WATCH_PLATFORM_KEY = "stream-donations-watch-platform";
+const WATCH_TIMES_KEY = "stream-donations-watch-times";
+const WATCH_RESERVED = ["api", "settings", "dashboard", "browse", "categories", "following"];
+
+const WATCH_CHAT_ICONS = {
+  youtube: "/icons/youtube.svg",
+  rumble: "/icons/rumble.svg",
+  kick: "/icons/kick.svg",
+};
+const WATCH_CHAT_LABELS = {
+  youtube: "YouTube",
+  rumble: "Rumble",
+  kick: "Kick",
+};
+
+let watchBound = false;
+let watchSignature = "";
+let watchSerial = 0;
+let watchChatTimer = 0;
+let watchChatCursor = 0;
+let watchChatGeneration = -1;
+let watchChatLoading = false;
+
+function watchAddressSignature(settings) {
+  const source = settings || {};
+  return [
+    source.youtube_watch || "",
+    source.youtube_channel || "",
+    source.youtube_follow_live ? "1" : "0",
+    source.rumble_watch || "",
+    source.rumble_channel || "",
+    source.rumble_follow_live ? "1" : "0",
+    source.kick_watch || "",
+    source.kick_follow_live ? "1" : "0",
+  ].join("\n");
+}
+
+function selectedWatchPlatform() {
+  const button = document.querySelector("#watch-platforms .pill.is-active");
+  const platform = button && button.getAttribute("data-platform");
+  return WATCH_PLATFORMS.includes(platform) ? platform : "";
+}
+
+function markWatchPlatform(platform) {
+  document.querySelectorAll("#watch-platforms .pill").forEach((button) => {
+    const on = button.getAttribute("data-platform") === platform;
+    button.classList.toggle("is-active", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  try {
+    if (platform) sessionStorage.setItem(WATCH_PLATFORM_KEY, platform);
+    else sessionStorage.removeItem(WATCH_PLATFORM_KEY);
+  } catch (_error) {
+    /* The panel still works if the window cannot store the choice. */
+  }
+}
+
+function watchPlayerUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch (_error) {
+    return "";
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return "";
+  if (url.search || url.hash) return "";
+  const host = url.hostname.toLowerCase();
+  if (host === "www.youtube.com" || host === "www.youtube-nocookie.com") {
+    const match = url.pathname.match(/^\/embed\/([A-Za-z0-9_-]{11})$/);
+    if (!match) return "";
+    return url.origin + "/embed/" + match[1];
+  }
+  if (host === "rumble.com") {
+    const match = url.pathname.match(/^\/embed\/(v[0-9a-z]{4,16})\/$/);
+    if (!match) return "";
+    return "https://rumble.com/embed/" + match[1] + "/";
+  }
+  if (host === "player.kick.com") {
+    const match = url.pathname.match(/^\/([A-Za-z0-9_-]{1,50})$/);
+    if (!match) return "";
+    const slug = match[1].toLowerCase();
+    if (WATCH_RESERVED.includes(slug)) return "";
+    return "https://player.kick.com/" + slug;
+  }
+  return "";
+}
+
+function stopWatchFrame() {
+  watchSerial += 1;
+  const frame = $("watch-frame");
+  if (!frame) return;
+  frame.hidden = true;
+  frame.removeAttribute("src");
+}
+
+function setWatchNote(message) {
+  const note = $("watch-note");
+  if (note) note.textContent = message || "";
+}
+
+function setWatchChatNote(message) {
+  const note = $("watch-chat-note");
+  if (note) note.textContent = message || "";
+}
+
+function startWatchChat() {
+  if (watchChatTimer) return;
+  const tick = () => {
+    if (document.hidden) return;
+    loadWatchChat();
+  };
+  tick();
+  watchChatTimer = window.setInterval(tick, 2000);
+}
+
+function stopWatchChat() {
+  if (!watchChatTimer) return;
+  window.clearInterval(watchChatTimer);
+  watchChatTimer = 0;
+}
+
+function watchTimesOn() {
+  try {
+    return sessionStorage.getItem(WATCH_TIMES_KEY) !== "0";
+  } catch (_error) {
+    return true;
+  }
+}
+
+function setWatchTimes(on) {
+  const list = $("watch-chat-lines");
+  const button = $("watch-chat-times");
+  if (list) list.classList.toggle("is-times", on);
+  if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
+  try {
+    sessionStorage.setItem(WATCH_TIMES_KEY, on ? "1" : "0");
+  } catch (_error) {
+    /* The clocks still show or hide for this view. */
+  }
+}
+
+function appendWatchChatLine(list, line) {
+  const platform = line && line.platform;
+  const icon = WATCH_CHAT_ICONS[platform];
+  if (!icon || !line.text) return;
+  const item = document.createElement("li");
+  const mark = document.createElement("img");
+  mark.className = "watch-chat-mark";
+  mark.src = icon;
+  mark.alt = WATCH_CHAT_LABELS[platform];
+  mark.title = WATCH_CHAT_LABELS[platform];
+  const when = document.createElement("time");
+  when.className = "watch-chat-time";
+  const parts = localParts(line.time);
+  when.dateTime = parts.time === "—" ? "" : String(line.time || "");
+  when.textContent = parts.time === "—" ? "" : parts.time;
+  if (line.time) when.title = line.time;
+  const body = document.createElement("span");
+  const author = document.createElement("span");
+  author.className = "watch-chat-author";
+  author.textContent = line.author || "Someone";
+  const text = document.createElement("span");
+  text.className = "watch-chat-text";
+  text.textContent = line.text;
+  body.append(author, text);
+  item.append(mark, when, body);
+  list.appendChild(item);
+}
+
+function renderWatchChat(result) {
+  const list = $("watch-chat-lines");
+  const scroller = $("watch-chat-scroll");
+  if (!list || !result) return;
+  const generation = Number.isInteger(result.generation) ? result.generation : watchChatGeneration;
+  const replace = generation !== watchChatGeneration;
+  const nearBottom = !scroller
+    || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+  if (replace) {
+    list.replaceChildren();
+    watchChatGeneration = generation;
+  }
+  const lines = Array.isArray(result.lines) ? result.lines : [];
+  lines.forEach((line) => appendWatchChatLine(list, line));
+  while (list.children.length > 200) list.removeChild(list.firstChild);
+  if (Number.isInteger(result.cursor)) watchChatCursor = result.cursor;
+  if (scroller && (replace || nearBottom)) scroller.scrollTop = scroller.scrollHeight;
+  if (result.paused && list.children.length === 0) {
+    setWatchChatNote("Chat is paused with this ledger.");
+  } else if (list.children.length === 0) {
+    setWatchChatNote("Chat from the open ledger shows here.");
+  } else {
+    setWatchChatNote("");
+  }
+}
+
+function loadWatchChat() {
+  if (watchChatLoading) return;
+  const panel = $("watch-panel");
+  if (!panel || panel.classList.contains("is-collapsed") || document.hidden) return;
+  watchChatLoading = true;
+  const generation = watchChatGeneration < 0 ? 0 : watchChatGeneration;
+  const path = "/api/chat?after=" + encodeURIComponent(String(watchChatCursor))
+    + "&generation=" + encodeURIComponent(String(generation));
+  api(path)
+    .then((result) => {
+      const still = $("watch-panel");
+      if (!still || still.classList.contains("is-collapsed")) return;
+      renderWatchChat(result);
+    })
+    .catch(() => {
+      /* The next poll retries. A missed chat line does not change the video. */
+    })
+    .finally(() => {
+      watchChatLoading = false;
+    });
+}
+
+function setWatchOpen(open) {
+  const panel = $("watch-panel");
+  const toggle = $("watch-toggle");
+  const body = $("watch-body");
+  if (!panel || !toggle || !body) return;
+  panel.classList.toggle("is-collapsed", !open);
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.setAttribute("aria-label", open ? "Hide stream" : "Show stream");
+  toggle.title = open ? "Hide stream" : "Show stream";
+  body.hidden = !open;
+  try {
+    sessionStorage.setItem(WATCH_OPEN_KEY, open ? "1" : "0");
+  } catch (_error) {
+    /* The panel still opens. The choice is not kept after a reload. */
+  }
+  if (!open) {
+    stopWatchFrame();
+    stopWatchChat();
+    return;
+  }
+  startWatchChat();
+  const platform = selectedWatchPlatform();
+  if (!platform) {
+    setWatchNote("Choose YouTube, Rumble, or Kick.");
+    return;
+  }
+  loadWatch(platform);
+}
+
+function loadWatch(platform, force) {
+  if (!WATCH_PLATFORMS.includes(platform)) return;
+  const panel = $("watch-panel");
+  if (!panel || panel.classList.contains("is-collapsed")) return;
+  const serial = ++watchSerial;
+  setWatchNote("");
+  api("/api/embed?platform=" + encodeURIComponent(platform))
+    .then((result) => {
+      if (serial !== watchSerial) return;
+      if ($("watch-panel").classList.contains("is-collapsed")) return;
+      const safe = watchPlayerUrl(result && result.url);
+      const frame = $("watch-frame");
+      if (!safe) {
+        if (frame) {
+          frame.hidden = true;
+          frame.removeAttribute("src");
+        }
+        setWatchNote((result && result.message) || "No stream video for that source.");
+        return;
+      }
+      setWatchNote((result && result.message) || "");
+      if (frame) {
+        if (force || frame.getAttribute("src") !== safe) {
+          if (force) frame.removeAttribute("src");
+          frame.src = safe;
+        }
+        frame.hidden = false;
+      }
+    })
+    .catch((error) => {
+      if (serial !== watchSerial) return;
+      stopWatchFrame();
+      setWatchNote(error.message || "Could not load that stream.");
+    });
+}
+
+function chooseWatchPlatform(platform) {
+  if (!WATCH_PLATFORMS.includes(platform)) return;
+  const same = selectedWatchPlatform() === platform;
+  markWatchPlatform(platform);
+  const panel = $("watch-panel");
+  if (!panel || panel.classList.contains("is-collapsed")) {
+    setWatchOpen(true);
+    return;
+  }
+  if (!same) stopWatchFrame();
+  loadWatch(platform, true);
+}
+
+function bindWatch() {
+  let open = false;
+  let platform = "";
+  try {
+    open = sessionStorage.getItem(WATCH_OPEN_KEY) === "1";
+    platform = sessionStorage.getItem(WATCH_PLATFORM_KEY) || "";
+  } catch (_error) {
+    open = false;
+  }
+  if (!WATCH_PLATFORMS.includes(platform)) platform = "";
+  markWatchPlatform(platform);
+  setWatchTimes(watchTimesOn());
+  const times = $("watch-chat-times");
+  if (times) {
+    times.addEventListener("click", () => {
+      setWatchTimes(times.getAttribute("aria-pressed") !== "true");
+    });
+  }
+  const toggle = $("watch-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      setWatchOpen(toggle.getAttribute("aria-expanded") !== "true");
+    });
+  }
+  document.querySelectorAll("#watch-platforms .pill").forEach((button) => {
+    button.addEventListener("click", () => {
+      chooseWatchPlatform(button.getAttribute("data-platform") || "");
+    });
+  });
+  const reload = $("watch-reload");
+  if (reload) {
+    reload.addEventListener("click", () => {
+      const selected = selectedWatchPlatform();
+      if (!selected) {
+        setWatchNote("Choose YouTube, Rumble, or Kick.");
+        return;
+      }
+      if ($("watch-panel").classList.contains("is-collapsed")) {
+        setWatchOpen(true);
+        return;
+      }
+      loadWatch(selected, true);
+    });
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !watchChatTimer) return;
+    loadWatchChat();
+  });
+  setWatchOpen(open);
+  watchBound = true;
+}
+
 function applySettingsToForm(settings) {
   state.settings = settings;
   $("youtube-client-id").value = settings.youtube_client_id || "";
   $("youtube-watch").value = settings.youtube_watch || "";
+  $("youtube-channel").value = settings.youtube_channel || "";
+  $("youtube-follow-live").checked = Boolean(settings.youtube_follow_live);
   $("youtube-poll").value = settings.youtube_poll_seconds;
   $("youtube-redirect").value = settings.google_redirect_uri || "";
   $("youtube-secret").placeholder = settings.youtube_client_secret_set
@@ -430,10 +1855,13 @@ function applySettingsToForm(settings) {
     : "Client secret";
   $("rumble-poll").value = settings.rumble_poll_seconds;
   $("rumble-watch").value = settings.rumble_watch || "";
+  $("rumble-channel").value = settings.rumble_channel || "";
+  $("rumble-follow-live").checked = Boolean(settings.rumble_follow_live);
   $("rumble-url").placeholder = settings.rumble_api_url_set
     ? "Saved. Leave blank to keep it."
     : "https://rumble.com/-livestream-api/get-data?key=…";
   $("kick-watch").value = settings.kick_watch || "";
+  $("kick-follow-live").checked = Boolean(settings.kick_follow_live);
   $("kick-client-id").value = settings.kick_client_id || "";
   $("kick-host").value = settings.kick_webhook_host || "127.0.0.1";
   $("kick-port").value = settings.kick_webhook_port;
@@ -444,11 +1872,16 @@ function applySettingsToForm(settings) {
     ? "Saved. Leave blank to keep it."
     : "Client secret";
   if ($("membership-price")) $("membership-price").value = settings.membership_price || "";
-  if ($("tiers-enabled")) $("tiers-enabled").checked = Boolean(settings.tiers_enabled);
   if ($("show-top-donors")) $("show-top-donors").checked = settings.show_top_donors !== false;
   if ($("chat-extra")) $("chat-extra").value = settings.chat_extra || "";
-  renderTierFields(settings.goal_tiers);
   if (settings.fx) renderFx(settings.fx);
+  const nextSignature = watchAddressSignature(settings);
+  const addressesChanged = watchBound && nextSignature !== watchSignature;
+  watchSignature = nextSignature;
+  if (addressesChanged && $("watch-toggle") && $("watch-toggle").getAttribute("aria-expanded") === "true") {
+    const platform = selectedWatchPlatform();
+    if (platform) loadWatch(platform);
+  }
 }
 
 function renderFx(fx) {
@@ -490,6 +1923,7 @@ function showOpenUrl(input, url, opened) {
 }
 
 function bind() {
+  renderTierFields([]);
   $("fx-refresh").addEventListener("click", () => {
     $("fx-refresh").disabled = true;
     api("/api/rates/refresh", { method: "POST" })
@@ -510,26 +1944,73 @@ function bind() {
     event.preventDefault();
     saveSettings({
       membership_price: $("membership-price").value.trim(),
-      tiers_enabled: $("tiers-enabled").checked,
       show_top_donors: $("show-top-donors").checked,
       chat_extra: $("chat-extra").value,
-      goal_tiers: collectTiers(),
     })
       .then(() => refresh())
       .catch((error) => toast(error.message, true));
   });
-  $("copy-chat-line").addEventListener("click", () => copyText($("chat-line").value, "Chat line copied."));
-  $("copy-donor-bar").addEventListener("click", () => copyText($("donor-bar").value, "Donor bar copied."));
-  $("manual-amount").addEventListener("input", updateStreamPreview);
+  $("settings-import").addEventListener("click", () => {
+    $("settings-import-file").click();
+  });
+  $("settings-import-file").addEventListener("change", () => {
+    const input = $("settings-import-file");
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    if (file.size > SETTINGS_FILE_MAX_BYTES) {
+      toast("That settings file is too large.", true);
+      return;
+    }
+    file.text()
+      .then((text) => api("/api/settings/import", { method: "POST", body: text }))
+      .then((settings) => {
+        applySettingsToForm(settings);
+        const ignored = (settings.settings_import && settings.settings_import.ignored) || [];
+        const skipped = ignored.length
+          ? ` Skipped ${ignored.length} unused setting${ignored.length === 1 ? "" : "s"}.`
+          : "";
+        toast(`Imported.${skipped}`);
+        return refresh();
+      })
+      .catch((error) => toast(error.message, true));
+  });
+  $("copy-chat-line").addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
+  $("copy-donor-bar").addEventListener("click", () => copyText($("donor-bar").value, "Top donors copied."));
+  const statusCopyTotal = $("status-copy-total");
+  if (statusCopyTotal) {
+    statusCopyTotal.addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
+  }
+  const statusCopyDonors = $("status-copy-donors");
+  if (statusCopyDonors) {
+    statusCopyDonors.addEventListener("click", () => copyText($("donor-bar").value, "Top donors copied."));
+  }
+  $("manual-native").addEventListener("input", syncManualUsd);
+  $("manual-currency").addEventListener("change", syncManualUsd);
+  $("manual-amount").addEventListener("input", () => {
+    const currency = ($("manual-currency").value || DEFAULT_CURRENCY).trim().toUpperCase();
+    if (currency === DEFAULT_CURRENCY) $("manual-native").value = $("manual-amount").value;
+    updateStreamPreview();
+  });
   $("manual-entry").addEventListener("reset", () => setTimeout(updateStreamPreview, 0));
   $("manual-entry").addEventListener("submit", (event) => {
     event.preventDefault();
     const when = $("manual-when").value;
+    const currency = ($("manual-currency").value || DEFAULT_CURRENCY).trim().toUpperCase() || DEFAULT_CURRENCY;
+    const native = $("manual-native").value.trim();
+    const dollars = $("manual-amount").value.trim();
+    const amount = native || (currency === "USD" ? dollars : "");
+    if (!amount) {
+      toast("Enter the amount.", true);
+      return;
+    }
     const body = {
       author_name: $("manual-donor").value.trim(),
       platform: $("manual-platform").value,
       kind: $("manual-kind").value,
-      amount: $("manual-amount").value.trim(),
+      amount,
+      currency,
+      // Hidden while collapsed. The pasted currency and message are still stored.
       message: $("manual-message").value.trim(),
     };
     if (when) {
@@ -543,33 +2024,68 @@ function bind() {
     api("/api/donations", { method: "POST", body: JSON.stringify(body) })
       .then(() => {
         $("manual-entry").reset();
+        state.filters.offset = 0;
         toast("Added to the ledger.");
-        return refresh();
+        return refresh({ scroll: true });
       })
       .catch((error) => toast(error.message, true));
   });
-  $("new-stream").addEventListener("click", () => {
-    if (!window.confirm("Start a new stream total now? The ledger stays. The banner and top donors count only donations from this moment.")) return;
-    api("/api/stream", { method: "POST", body: JSON.stringify({ action: "start" }) })
-      .then((report) => {
-        renderStream(report);
-        toast("Stream total started.");
+  $("manual-paste").addEventListener("click", () => {
+    const button = $("manual-paste");
+    button.disabled = true;
+    readClipboard()
+      .then((text) => {
+        if (!String(text || "").trim()) {
+          toast("Clipboard is empty.", true);
+          return null;
+        }
+        return api("/api/paste", { method: "POST", body: JSON.stringify({ text }) });
       })
-      .catch((error) => toast(error.message, true));
-  });
-  $("full-ledger").addEventListener("click", () => {
-    api("/api/stream", { method: "POST", body: JSON.stringify({ action: "full" }) })
-      .then((report) => {
-        renderStream(report);
-        toast("Stream total counts the full ledger.");
+      .then((parsed) => {
+        if (parsed) applyPaste(parsed);
       })
-      .catch((error) => toast(error.message, true));
+      .catch((error) => toast(error.message || "Could not read the clipboard.", true))
+      .finally(() => {
+        button.disabled = false;
+      });
   });
+  bindSectionToggles();
+  $("stream-tab-add").addEventListener("click", () => {
+    addStream().catch((error) => toast(error.message, true));
+  });
+  $("stream-tabs-prev").addEventListener("click", () => scrollStreamTabs(-1));
+  $("stream-tabs-next").addEventListener("click", () => scrollStreamTabs(1));
+  const scroller = $("stream-tabs");
+  scroller.addEventListener("scroll", updateStreamBumpers, { passive: true });
+  scroller.addEventListener("wheel", (event) => {
+    if (scroller.scrollWidth - scroller.clientWidth <= 2) return;
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (!delta) return;
+    event.preventDefault();
+    scroller.scrollLeft += delta;
+  }, { passive: false });
+  scroller.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    const tabs = [...scroller.querySelectorAll("[role=tab]")];
+    const index = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    if (index < 0) return;
+    const next = index + (event.key === "ArrowRight" ? 1 : -1);
+    if (next < 0 || next >= tabs.length) return;
+    event.preventDefault();
+    tabs[next].click();
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => updateStreamBumpers());
+    observer.observe(scroller);
+  }
+  window.addEventListener("resize", updateStreamBumpers);
   $("youtube-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const body = {
       youtube_client_id: $("youtube-client-id").value.trim(),
       youtube_watch: $("youtube-watch").value.trim(),
+      youtube_channel: $("youtube-channel").value.trim(),
+      youtube_follow_live: $("youtube-follow-live").checked,
       youtube_poll_seconds: Number($("youtube-poll").value),
     };
     if ($("youtube-secret").value) body.youtube_client_secret = $("youtube-secret").value;
@@ -593,6 +2109,8 @@ function bind() {
     const body = {
       rumble_poll_seconds: Number($("rumble-poll").value),
       rumble_watch: $("rumble-watch").value.trim(),
+      rumble_channel: $("rumble-channel").value.trim(),
+      rumble_follow_live: $("rumble-follow-live").checked,
     };
     if ($("rumble-url").value) body.rumble_api_url = $("rumble-url").value.trim();
     $("rumble-url").value = "";
@@ -606,6 +2124,7 @@ function bind() {
     event.preventDefault();
     const body = {
       kick_watch: $("kick-watch").value.trim(),
+      kick_follow_live: $("kick-follow-live").checked,
       kick_client_id: $("kick-client-id").value.trim(),
       kick_webhook_host: $("kick-host").value.trim(),
       kick_webhook_port: Number($("kick-port").value),
@@ -633,6 +2152,31 @@ function bind() {
       .catch((error) => toast(error.message, true));
   });
 
+  const verboseLogs = $("verbose-logs");
+  if (verboseLogs) {
+    verboseLogs.addEventListener("change", () => {
+      const enabled = verboseLogs.checked;
+      verboseLogs.dataset.pending = "1";
+      api("/api/log", { method: "PUT", body: JSON.stringify({ verbose: enabled }) })
+        .then((view) => {
+          verboseLogs.checked = Boolean(view && view.verbose);
+          if (view && view.log_file && $("log-file")) $("log-file").textContent = view.log_file;
+          return refresh().catch((error) => toast(error.message, true));
+        })
+        .catch((error) => {
+          verboseLogs.checked = !enabled;
+          toast(error.message, true);
+        })
+        .finally(() => {
+          delete verboseLogs.dataset.pending;
+        });
+    });
+  }
+  $("hide-receipts").addEventListener("change", () => {
+    readFilters();
+    state.filters.offset = 0;
+    refresh().catch((error) => toast(error.message, true));
+  });
   $("filters").addEventListener("submit", (event) => {
     event.preventDefault();
     readFilters();
@@ -650,18 +2194,56 @@ function bind() {
   $("poll-now").addEventListener("click", () => {
     api("/api/poll", { method: "POST" })
       .then((result) => {
-        if (result.errors && result.errors.length) toast(result.errors.join(" "), true);
+        if (result.paused) toast("Collection is paused. Reconnect to send requests again.");
+        else if (result.errors && result.errors.length) toast(result.errors.join(" "), true);
         else toast("Polled.");
         return refresh();
       })
       .catch((error) => toast(error.message, true));
   });
-  document.querySelectorAll(".tab").forEach((button) => {
-    button.addEventListener("click", () => showTab(button.dataset.tab));
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    button.addEventListener("click", () => openSheet(button.dataset.tab));
+  });
+  const logButton = $("log-button");
+  if (logButton) logButton.addEventListener("click", () => openSheet("log"));
+  const presetForm = $("preset-form");
+  if (presetForm) {
+    presetForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      savePreset();
+    });
+  }
+  document.querySelectorAll("dialog.sheet").forEach((dialog) => {
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      const note = $("toast");
+      if (note && note.parentElement === dialog) document.body.appendChild(note);
+      if (dialog.id === "tab-log" && logButton) logButton.setAttribute("aria-expanded", "false");
+    });
+    dialog.querySelectorAll(".sheet-close").forEach((button) => {
+      button.addEventListener("click", () => dialog.close());
+    });
+  });
+  $("app-menu-button").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = $("app-menu");
+    const open = menu.hidden;
+    menu.hidden = !open;
+    $("app-menu-button").setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.addEventListener("click", (event) => {
+    if ($("app-menu").hidden) return;
+    if (event.target.closest(".menu-wrap")) return;
+    closeMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMenu();
   });
   $("reset-ledger").addEventListener("click", () => {
     const sure = window.confirm(
-      "Delete every stored donation? Platform settings and the log stay. This cannot be undone.",
+      "Delete every donation on this ledger? Other ledgers stay. Platform settings and the log stay. This cannot be undone.",
     );
     if (!sure) return;
     api("/api/ledger/reset", { method: "POST" })
@@ -674,29 +2256,15 @@ function bind() {
       })
       .catch((error) => toast(error.message, true));
   });
-  $("mark-loaded").addEventListener("click", () => {
-    const ids = state.rows.filter((row) => !row.processed).map((row) => row.id);
-    if (!ids.length) {
-      toast("Nothing waiting in the loaded rows.");
-      return;
-    }
-    api("/api/donations/bulk", {
-      method: "POST",
-      body: JSON.stringify({ ids, processed: true }),
-    })
-      .then(() => refresh())
-      .then(() => toast("Marked loaded rows processed."))
-      .catch((error) => toast(error.message, true));
-  });
   $("prev").addEventListener("click", () => {
+    if (state.filters.offset <= 0) return;
     state.filters.offset = Math.max(0, state.filters.offset - state.filters.limit);
     refresh().catch((error) => toast(error.message, true));
   });
   $("next").addEventListener("click", () => {
-    if (state.filters.offset + state.filters.limit < state.total) {
-      state.filters.offset += state.filters.limit;
-      refresh().catch((error) => toast(error.message, true));
-    }
+    if (state.filters.offset + state.filters.limit >= state.total) return;
+    state.filters.offset += state.filters.limit;
+    refresh().catch((error) => toast(error.message, true));
   });
   $("drawer-close").addEventListener("click", () => {
     $("drawer").hidden = true;
@@ -715,44 +2283,272 @@ function bind() {
       })
       .catch((error) => toast(error.message, true));
   });
-  $("toggle-processed").addEventListener("click", () => {
-    if (!state.selected) return;
-    api("/api/donations/" + state.selected.id, {
-      method: "PATCH",
-      body: JSON.stringify({ processed: !state.selected.processed }),
-    })
-      .then((donation) => {
-        renderDrawer(donation);
-        return refresh();
-      })
-      .catch((error) => toast(error.message, true));
+  bindWatch();
+  bindGiveaway();
+}
+
+let giveawayPoll = 0;
+let giveawayState = null;
+
+function giveawayKeywordText() {
+  const field = $("giveaway-keyword");
+  return field ? field.value.trim().replace(/\s+/g, " ") : "";
+}
+
+function renderGiveaway(state) {
+  giveawayState = state || null;
+  const running = Boolean(state && state.running);
+  const closed = Boolean(state && state.closed);
+  const keyword = $("giveaway-keyword");
+  const minutes = $("giveaway-minutes");
+  const toggle = $("giveaway-toggle");
+  if (keyword) keyword.disabled = running;
+  if (minutes) minutes.disabled = running;
+  if (running && keyword && document.activeElement !== keyword) keyword.value = state.keyword || "";
+  if (running && minutes && document.activeElement !== minutes) {
+    minutes.value = state.seconds ? String(Math.round(state.seconds / 60)) : "";
+  }
+  if (toggle) {
+    toggle.textContent = running ? "Stop" : "Start";
+    toggle.setAttribute("aria-label", running ? "Stop giveaway" : "Start giveaway");
+  }
+  const status = $("giveaway-status");
+  if (status) {
+    if (running && Number.isInteger(state.remaining)) {
+      const m = Math.floor(state.remaining / 60);
+      const s = String(state.remaining % 60).padStart(2, "0");
+      status.textContent = `Listening. ${m}:${s} left.`;
+    } else if (running) {
+      status.textContent = "Listening until you stop it.";
+    } else if (closed && !(state.winner && state.winner.author)) {
+      status.textContent = "Drawing closed. No entries.";
+    } else if (closed) {
+      status.textContent = "Drawing closed.";
+    } else {
+      status.textContent = "Not started.";
+    }
+  }
+  const counts = $("giveaway-counts");
+  if (counts) {
+    if (running || closed) {
+      const n = Number(state.entries) || 0;
+      const platforms = state.platforms || {};
+      const label = closed ? (n === 1 ? "entry left" : "entries left") : (n === 1 ? "entry" : "entries");
+      counts.textContent = `${n} ${label}. YouTube ${platforms.youtube || 0}. Rumble ${platforms.rumble || 0}. Kick ${platforms.kick || 0}.`;
+    } else {
+      counts.textContent = "";
+    }
+  }
+  const winner = $("giveaway-winner");
+  if (winner) winner.textContent = state && state.winner_announce ? state.winner_announce : "";
+  const winnersLabel = $("giveaway-winners-label");
+  const winners = $("giveaway-winners");
+  const drawn = state && Array.isArray(state.winners) ? state.winners : [];
+  if (winnersLabel) winnersLabel.textContent = drawn.length ? "Winners" : "";
+  if (winners) {
+    winners.replaceChildren();
+    drawn.forEach((row) => {
+      const item = document.createElement("li");
+      const platform = WATCH_CHAT_LABELS[row.platform] || "";
+      item.textContent = platform ? `${row.author} on ${platform}` : String(row.author || "");
+      winners.appendChild(item);
+    });
+  }
+  const copyKeyword = $("giveaway-copy-keyword");
+  if (copyKeyword) {
+    const typed = giveawayKeywordText();
+    copyKeyword.disabled = !(state && state.announce) && !typed;
+  }
+  const copyWinner = $("giveaway-copy-winner");
+  if (copyWinner) copyWinner.disabled = !(state && state.winner_announce);
+  const redraw = $("giveaway-redraw");
+  if (redraw) redraw.disabled = !(closed && Number(state && state.entries) > 0);
+  renderStatusEphemeral();
+  ensureGiveawayPoll();
+}
+
+function giveawayTimerLive() {
+  const state = giveawayState;
+  return Boolean(state && state.running && Number.isInteger(state.remaining));
+}
+
+function giveawayTimerLabel() {
+  const state = giveawayState;
+  if (!giveawayTimerLive()) return "";
+  const m = Math.floor(state.remaining / 60);
+  const s = String(state.remaining % 60).padStart(2, "0");
+  return `Giveaway ${m}:${s}`;
+}
+
+function ephemeralStatusItems() {
+  // Later features append their own short status here. An empty list hides the slot.
+  const items = [];
+  const giveaway = giveawayTimerLabel();
+  if (giveaway) items.push(giveaway);
+  return items;
+}
+
+function renderStatusEphemeral() {
+  const slot = $("status-ephemeral");
+  if (!slot) return;
+  slot.replaceChildren();
+  ephemeralStatusItems().forEach((text) => {
+    const item = document.createElement("p");
+    item.className = "status-ephemeral-item";
+    item.textContent = text;
+    slot.appendChild(item);
   });
 }
 
-function showTab(name) {
-  document.querySelectorAll(".tab").forEach((button) => {
-    const selected = button.dataset.tab === name;
-    button.classList.toggle("is-active", selected);
-    button.setAttribute("aria-selected", selected ? "true" : "false");
+function loadGiveaway() {
+  return api("/api/giveaway").then(renderGiveaway);
+}
+
+function ensureGiveawayPoll() {
+  const dialog = $("tab-giveaway");
+  const dialogOpen = Boolean(dialog && dialog.open);
+  if (dialogOpen || giveawayTimerLive()) startGiveawayPoll();
+  else stopGiveawayPoll();
+}
+
+function startGiveawayPoll() {
+  if (giveawayPoll) return;
+  const tick = () => {
+    if (document.hidden) return;
+    const dialog = $("tab-giveaway");
+    const dialogOpen = Boolean(dialog && dialog.open);
+    if (!dialogOpen && !giveawayTimerLive()) {
+      stopGiveawayPoll();
+      return;
+    }
+    loadGiveaway().catch(() => {});
+  };
+  tick();
+  giveawayPoll = window.setInterval(tick, 1000);
+}
+
+function stopGiveawayPoll() {
+  if (!giveawayPoll) return;
+  window.clearInterval(giveawayPoll);
+  giveawayPoll = 0;
+}
+
+function giveawayKeywordAnnounce() {
+  const state = giveawayState;
+  if (state && state.announce && (state.running || state.closed)) return state.announce;
+  const typed = giveawayKeywordText();
+  return typed ? `Type ${typed} in chat to enter the giveaway.` : "";
+}
+
+function bindGiveaway() {
+  const dialog = $("tab-giveaway");
+  if (dialog) dialog.addEventListener("close", ensureGiveawayPoll);
+  loadGiveaway().catch(() => {});
+  const form = $("giveaway-form");
+  if (form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const toggle = $("giveaway-toggle");
+      if (toggle && toggle.textContent !== "Stop") toggle.click();
+    });
+  }
+  const keyword = $("giveaway-keyword");
+  if (keyword) {
+    keyword.addEventListener("input", () => {
+      const button = $("giveaway-copy-keyword");
+      if (!button) return;
+      const state = giveawayState;
+      button.disabled = !(state && state.announce) && !giveawayKeywordText();
+    });
+  }
+  const toggle = $("giveaway-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      const running = toggle.textContent === "Stop";
+      const task = running
+        ? api("/api/giveaway", { method: "POST", body: JSON.stringify({ action: "stop" }) })
+        : api("/api/giveaway", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "start",
+            keyword: giveawayKeywordText(),
+            seconds: giveawaySeconds(),
+          }),
+        });
+      task.then(renderGiveaway).catch((error) => toast(error.message, true));
+    });
+  }
+  const copyKeyword = $("giveaway-copy-keyword");
+  if (copyKeyword) {
+    copyKeyword.addEventListener("click", () => {
+      const text = giveawayKeywordAnnounce();
+      if (!text) {
+        toast("Enter a keyword first.", true);
+        return;
+      }
+      copyText(text, "Keyword announcement copied.");
+    });
+  }
+  const copyWinner = $("giveaway-copy-winner");
+  if (copyWinner) {
+    copyWinner.addEventListener("click", () => {
+      const text = giveawayState && giveawayState.winner_announce;
+      if (!text) return;
+      copyText(text, "Winner copied.");
+    });
+  }
+  const redraw = $("giveaway-redraw");
+  if (redraw) {
+    redraw.addEventListener("click", () => {
+      api("/api/giveaway", { method: "POST", body: JSON.stringify({ action: "redraw" }) })
+        .then(renderGiveaway)
+        .catch((error) => toast(error.message, true));
+    });
+  }
+}
+
+function giveawaySeconds() {
+  const field = $("giveaway-minutes");
+  const raw = field ? field.value.trim() : "";
+  if (!raw) return 0;
+  const minutes = Number(raw);
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+    throw new Error("Timer must be a whole number of minutes, up to 24 hours.");
+  }
+  return minutes * 60;
+}
+
+function openSheet(name) {
+  const dialog = document.getElementById("tab-" + name);
+  if (!dialog || dialog.tagName !== "DIALOG" || typeof dialog.showModal !== "function") return;
+  closeMenu();
+  document.querySelectorAll("dialog.sheet").forEach((other) => {
+    if (other !== dialog && other.open) other.close();
   });
-  document.querySelectorAll(".tab-panel").forEach((panel) => {
-    panel.hidden = panel.id !== "tab-" + name;
-  });
+  if (!dialog.open) dialog.showModal();
+  const note = $("toast");
+  if (note) dialog.appendChild(note);
+  const logButton = $("log-button");
+  if (logButton) logButton.setAttribute("aria-expanded", name === "log" ? "true" : "false");
+  if (name === "streamers") {
+    refreshPresets().catch((error) => toast(error.message, true));
+  }
+  if (name === "giveaway") startGiveawayPoll();
+  const field = dialog.querySelector("input, select, textarea");
+  if (field) field.focus();
 }
 
 function readFilters() {
-  state.filters.platform = $("platform").value;
-  state.filters.kind = $("kind").value;
-  state.filters.processed = $("processed").value;
   state.filters.q = $("search").value.trim();
   state.filters.hideReceipts = $("hide-receipts").checked;
 }
 
 async function boot() {
   state.meta = await api("/api/meta");
-  fillSelect($("platform"), state.meta.platforms, "All");
-  fillSelect($("kind"), state.meta.kinds, "All");
+  renderPlatformPills(state.meta.platforms);
+  renderCurrencies(state.meta.currencies);
   $("database").textContent = state.meta.database;
+  if (state.meta.log_file && $("log-file")) $("log-file").textContent = state.meta.log_file;
   applySettingsToForm(await api("/api/settings"));
   bind();
   await refresh();

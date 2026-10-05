@@ -7,66 +7,135 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<div class="app-shell">
+<div class="app-body">
+<aside id="watch-panel" class="watch-panel is-collapsed" aria-label="Stream">
+  <button type="button" id="watch-toggle" class="watch-rail" aria-expanded="false" aria-controls="watch-body" aria-label="Show stream" title="Show stream">Stream</button>
+  <div id="watch-body" class="watch-body" hidden>
+    <div class="watch-toolbar">
+      <div id="watch-platforms" class="watch-platforms" role="group" aria-label="Stream source">
+        <button type="button" class="pill" data-platform="youtube" aria-pressed="false">YouTube</button>
+        <button type="button" class="pill" data-platform="rumble" aria-pressed="false">Rumble</button>
+        <button type="button" class="pill" data-platform="kick" aria-pressed="false">Kick</button>
+      </div>
+      <button type="button" id="watch-reload" class="icon-button" aria-label="Reload stream" title="Reload stream">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
+      </button>
+    </div>
+    <div class="watch-stage">
+      <iframe id="watch-frame" title="Stream video" hidden referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <p id="watch-note" class="watch-note" aria-live="polite"></p>
+    </div>
+    <div class="watch-chat">
+      <div class="watch-chat-head">
+        <p id="watch-chat-note" class="watch-chat-note">Chat from the open ledger shows here.</p>
+        <div class="watch-chat-tools">
+          <button type="button" id="watch-chat-times" class="icon-button watch-chat-times" aria-pressed="true" aria-label="Timestamps" title="Timestamps"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4.5l2.5 1.5"></path></svg></button>
+          <button type="button" id="watch-giveaway" class="icon-button" data-tab="giveaway" aria-haspopup="dialog" aria-controls="tab-giveaway" aria-label="Giveaway" title="Giveaway"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14.2 9H20l-4.6 3.4L17.2 18 12 14.8 6.8 18l1.8-5.6L4 9h5.8L12 3.5z"></path></svg></button>
+        </div>
+      </div>
+      <div id="watch-chat-scroll" class="watch-chat-scroll">
+        <ol id="watch-chat-lines" class="watch-chat-lines is-times" aria-label="Chat"></ol>
+      </div>
+    </div>
+  </div>
+</aside>
+<div class="app-main">
 <header class="mast">
-  <div>
+  <div class="mast-title">
     <p class="kicker">YouTube · Rumble · Kick</p>
     <h1>Stream Donations</h1>
   </div>
   <p class="mast-note">A local ledger of Super Chats, Super Stickers, and memberships. Nothing here is sent anywhere except the platform you connect.</p>
+  <div class="mast-actions">
+    <button type="button" id="log-button" class="icon-button" aria-label="Log" title="Log" aria-haspopup="dialog" aria-controls="tab-log" aria-expanded="false">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8M8 12h8M8 16h5"></path><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+    </button>
+    <div class="menu-wrap">
+    <button type="button" id="app-menu-button" class="icon-button" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+    </button>
+    <div id="app-menu" class="dropdown" role="menu" aria-label="Platforms, streamers, and settings" hidden>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-youtube" data-tab="youtube" aria-haspopup="dialog" aria-controls="tab-youtube"><span class="dot dot-youtube" aria-hidden="true"></span>YouTube</button>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-rumble" data-tab="rumble" aria-haspopup="dialog" aria-controls="tab-rumble"><span class="dot dot-rumble" aria-hidden="true"></span>Rumble</button>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-kick" data-tab="kick" aria-haspopup="dialog" aria-controls="tab-kick"><span class="dot dot-kick" aria-hidden="true"></span>Kick</button>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-streamers" data-tab="streamers" aria-haspopup="dialog" aria-controls="tab-streamers"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"></circle><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0"></path></svg>Streamers</button>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-settings" data-tab="settings" aria-haspopup="dialog" aria-controls="tab-settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path></svg>Settings</button>
+    </div>
+    </div>
+  </div>
 </header>
 
-<nav class="tabs" role="tablist" aria-label="Sections">
-  <button type="button" class="tab is-active" role="tab" id="tab-button-ledger" aria-selected="true" aria-controls="tab-ledger" data-tab="ledger">Ledger</button>
-  <button type="button" class="tab" role="tab" id="tab-button-youtube" aria-selected="false" aria-controls="tab-youtube" data-tab="youtube">YouTube</button>
-  <button type="button" class="tab" role="tab" id="tab-button-rumble" aria-selected="false" aria-controls="tab-rumble" data-tab="rumble">Rumble</button>
-  <button type="button" class="tab" role="tab" id="tab-button-kick" aria-selected="false" aria-controls="tab-kick" data-tab="kick">Kick</button>
-  <button type="button" class="tab" role="tab" id="tab-button-settings" aria-selected="false" aria-controls="tab-settings" data-tab="settings">Settings</button>
-  <button type="button" class="tab" role="tab" id="tab-button-log" aria-selected="false" aria-controls="tab-log" data-tab="log">Log</button>
-</nav>
-
-<div id="tab-ledger" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-ledger">
-  <section id="stream-banner" class="card stream-banner" aria-live="polite">
-    <div class="spread">
-      <div>
+<div id="tab-ledger" class="tab-panel">
+  <div class="stream-tab-bar">
+    <button type="button" id="stream-tabs-prev" class="icon-button" aria-label="Earlier ledgers" title="Earlier ledgers" hidden>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5 9 12l5.5 5.5"></path></svg>
+    </button>
+    <div id="stream-tabs" class="stream-tab-scroller" role="tablist" aria-label="Ledgers"></div>
+    <button type="button" id="stream-tabs-next" class="icon-button" aria-label="Later ledgers" title="Later ledgers" hidden>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5 15 12l-5.5 5.5"></path></svg>
+    </button>
+    <button type="button" id="stream-tab-add" class="icon-button" aria-label="New ledger" title="New ledger">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+    </button>
+  </div>
+  <section id="stream-banner" class="card stream-banner is-collapsed" aria-live="polite">
+    <div class="section-head">
+      <div class="section-head-main">
         <p class="kicker">Stream total</p>
         <p id="stream-summary" class="figure">$0.00 total for stream.</p>
       </div>
-      <div class="row">
-        <button type="button" id="copy-chat-line">Copy chat line</button>
-        <button type="button" id="new-stream">New stream</button>
-        <button type="button" id="full-ledger" hidden>Count full ledger</button>
+      <div class="section-actions">
+        <button type="button" id="copy-chat-line" class="icon-button" aria-label="Copy stream total" title="Copy stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+        <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="stream-banner-body" data-section="stream total" aria-label="Expand stream total" title="Expand stream total">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+        </button>
       </div>
     </div>
-    <p id="stream-breakdown" class="hint"></p>
-    <div class="manual-grid">
-      <label>New total <input id="new-total" readonly tabindex="-1"></label>
+    <div id="stream-banner-body" class="section-body" hidden>
+      <p id="stream-breakdown" class="hint"></p>
+      <div class="manual-grid">
+        <label>New total <input id="new-total" readonly tabindex="-1"></label>
+      </div>
+      <label>Chat line <textarea id="chat-line" readonly rows="2"></textarea></label>
+      <p id="stream-last" class="hint"></p>
+      <p id="stream-scope" class="hint"></p>
     </div>
-    <label>Chat line <textarea id="chat-line" readonly rows="2"></textarea></label>
-    <p id="stream-last" class="hint"></p>
-    <p id="stream-scope" class="hint"></p>
   </section>
 
-  <section id="top-donors" class="card">
-    <div class="spread">
-      <div>
+  <section id="top-donors" class="card is-collapsed">
+    <div class="section-head">
+      <div class="section-head-main">
         <p class="kicker">Top donors</p>
         <p id="donor-summary" class="figure">No gifts yet</p>
       </div>
-      <button type="button" id="copy-donor-bar">Copy donor bar</button>
+      <div class="section-actions">
+        <button type="button" id="copy-donor-bar" class="icon-button" aria-label="Copy top 3 donors" title="Copy top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+        <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="top-donors-body" data-section="top donors" aria-label="Expand top donors" title="Expand top donors">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+        </button>
+      </div>
     </div>
-    <label>Donor bar <textarea id="donor-bar" readonly rows="2"></textarea></label>
-    <ol id="donor-list" class="donor-list"></ol>
-    <div id="tier-thanks" hidden>
-      <p class="kicker">Tier thanks</p>
-      <ul id="thanks-list" class="thanks-list"></ul>
+    <div id="top-donors-body" class="section-body" hidden>
+      <label>Donor bar <textarea id="donor-bar" readonly rows="2"></textarea></label>
+      <ol id="donor-list" class="donor-list"></ol>
+      <div id="tier-thanks" hidden>
+        <p class="kicker">Tier thanks</p>
+        <ul id="thanks-list" class="thanks-list"></ul>
+      </div>
     </div>
   </section>
 
-  <form id="manual-entry" class="card">
-    <header>
-      <h2>Manual entry</h2>
-      <p class="endpoint">A miss, or a gift from somewhere else</p>
-    </header>
+  <form id="manual-entry" class="card is-collapsed">
+    <div class="section-head">
+      <header>
+        <h2>Manual entry</h2>
+        <p class="endpoint">A miss, or a gift from somewhere else</p>
+      </header>
+      <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="manual-entry-body" data-section="manual entry" aria-label="Expand manual entry" title="Expand manual entry">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+      </button>
+    </div>
     <div class="manual-grid">
       <label>Donor <input id="manual-donor" autocomplete="off" maxlength="200" placeholder="Name" required></label>
       <label>Platform
@@ -85,13 +154,27 @@
           <option value="donation">Donation</option>
         </select>
       </label>
-      <label>Amount USD <input id="manual-amount" inputmode="decimal" placeholder="0.00" required></label>
+      <label class="manual-native">Amount <input id="manual-native" inputmode="decimal" placeholder="0.00" autocomplete="off"></label>
+      <label class="manual-currency">Currency
+        <select id="manual-currency">
+          <option value="USD" selected>USD — United States Dollar</option>
+        </select>
+      </label>
+      <label class="manual-usd">Amount USD <input id="manual-amount" inputmode="decimal" placeholder="0.00"></label>
     </div>
-    <label>Message <textarea id="manual-message" rows="2" maxlength="2000" placeholder="Optional"></textarea></label>
-    <label>When <input id="manual-when" type="datetime-local" step="1"></label>
-    <p class="hint">Leave the time empty to stamp it now. Donation on Other is for cash, Venmo, and the like. The amount is dollars, and it is added to the stream total as soon as you save.</p>
+    <div id="manual-entry-body" class="section-body" hidden>
+      <label>Message <textarea id="manual-message" rows="2" maxlength="2000" placeholder="Optional"></textarea></label>
+      <label>When <input id="manual-when" type="datetime-local" step="1"></label>
+      <p class="hint">Paste fills the amount, the currency, the dollar value, and the message, and leaves the time alone. The ledger keeps that amount, currency, and message. The collapsed row only shows the dollar value. Leave the time empty to stamp it now. Donation on Other is for cash, Venmo, and the like. It is added to the open ledger as soon as you save.</p>
+    </div>
     <div class="row">
-      <button type="submit" class="primary" id="manual-add">Add</button>
+      <button type="submit" class="primary icon-button" id="manual-add" aria-label="Add" title="Add">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      </button>
+      <button type="button" id="manual-paste" title="Paste a live-chat donation">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3.5" width="8" height="4" rx="1"></rect><path d="M8 6H6.5A1.5 1.5 0 0 0 5 7.5v11A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 17.5 6H16"></path><path d="M9 12h6M9 16h4"></path></svg>
+        Paste
+      </button>
       <button type="reset" id="manual-clear">Clear</button>
     </div>
   </form>
@@ -100,23 +183,20 @@
   <p class="hint">USD totals: <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
 
   <form id="filters" class="toolbar">
-    <label>Search <input id="search" type="search" placeholder="Name, message, channel, note"></label>
-    <label>Platform <select id="platform"><option value="">All</option></select></label>
-    <label>Type <select id="kind"><option value="">All</option></select></label>
-    <label>State
-      <select id="processed">
-        <option value="">All</option>
-        <option value="0">Waiting</option>
-        <option value="1">Processed</option>
-      </select>
-    </label>
+    <div class="ledger-filters">
+      <div id="platform-pills" class="platform-pills" role="group" aria-label="Platform filter"></div>
+      <label class="search-label">Search
+        <input id="search" type="search" placeholder="@donor  $4.99  #chat  !message" spellcheck="false" autocomplete="off">
+      </label>
+    </div>
+    <p class="hint">@donor, $4.99 for an exact amount in the original currency or USD, #chat #sticker #member, and !message. Other words search the whole row.</p>
     <label class="check"><input id="hide-receipts" type="checkbox" checked> Hide individual gift receipts</label>
+    <p class="hint">Hover an automatic entry and use the eye to hide it. It stays in the ledger, in gray italics, and drops out of totals, the running amount, top donors, and exports until you count it again. Hover a manual entry to delete it. The notice that follows can undo that delete. Reset ledger removes automatic entries on this ledger. Other ledgers stay.</p>
     <div class="row">
       <button type="submit" class="primary">Apply</button>
       <button type="button" id="poll-now">Poll now</button>
       <a id="export-csv" class="button" href="/api/export.csv">Export CSV</a>
       <a id="export-jsonl" class="button" href="/api/export.jsonl">Export JSONL</a>
-      <button type="button" id="mark-loaded">Mark loaded processed</button>
       <button type="button" id="reset-ledger" class="danger">Reset ledger</button>
     </div>
   </form>
@@ -125,13 +205,17 @@
     <table>
       <thead>
         <tr>
-          <th>When</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Donor</th>
+          <th>Amount</th>
           <th>Platform</th>
           <th>Type</th>
-          <th>From</th>
-          <th>Amount</th>
+          <th>Currency</th>
+          <th>USD</th>
           <th>Message</th>
-          <th>State</th>
+          <th>Running</th>
+          <th class="row-actions"></th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -141,20 +225,40 @@
 
   <footer class="pager">
     <button type="button" id="prev">Previous</button>
-    <p id="page-label"></p>
+    <p id="page-label" class="page-label">Page 1 of 1</p>
     <button type="button" id="next">Next</button>
     <p id="database" class="database"></p>
   </footer>
 </div>
+</div>
+</div>
+<footer id="app-status" class="status-bar" aria-label="Status">
+  <div class="status-slot" id="status-total">
+    <p id="status-total-line" class="status-line">$0.00 total for stream.</p>
+    <button type="button" id="status-copy-total" class="icon-button" aria-label="Copy stream total" title="Copy stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+  </div>
+  <div class="status-slot" id="status-donors">
+    <p id="status-donor-line" class="status-line"></p>
+    <button type="button" id="status-copy-donors" class="icon-button" aria-label="Copy top 3 donors" title="Copy top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+  </div>
+  <div id="status-ephemeral" class="status-ephemeral" aria-live="polite"></div>
+</footer>
+</div>
 
-<div id="tab-youtube" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-youtube" hidden>
+<dialog id="tab-youtube" class="sheet" data-platform="youtube" aria-labelledby="youtube-title">
     <form id="youtube-form" class="card" data-platform="youtube">
-      <header>
-        <h2>YouTube</h2>
-        <p class="endpoint">Public live chat, or your own Super Chat history</p>
+      <header class="sheet-head">
+        <div>
+          <h2 id="youtube-title">YouTube</h2>
+          <p class="endpoint">Public live chat, or your own Super Chat history</p>
+        </div>
+        <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
       <label>Public video URL or id <input id="youtube-watch" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…"></label>
-      <p class="hint">Any live stream. Super Chats, stickers, and memberships come from the public chat. You do not need to own the channel or sign in with Google.</p>
+      <p class="hint">Any live stream. Super Chats, stickers, and memberships come from the public chat. You do not need to own the channel or sign in with Google. This address belongs to the open ledger. The client id and secret are shared.</p>
+      <label class="check"><input id="youtube-follow-live" type="checkbox"> Follow the live stream</label>
+      <label>Channel URL <input id="youtube-channel" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"></label>
+      <p class="hint">When this is on, that channel's live page is checked. If a broadcast is live, its public chat is read, and the video URL above is kept but not used. If the channel is offline, chat waits. This does not use YouTube's Data API quota. The channel address belongs to the open ledger.</p>
       <label>OAuth client id <input id="youtube-client-id" name="youtube_client_id" autocomplete="off" spellcheck="false"></label>
       <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Super Chat history poll (seconds) <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="300" max="3600" step="60" value="900"></label>
@@ -170,16 +274,22 @@
       <p id="youtube-status" class="status" data-state="unconfigured">Not started</p>
       <input id="youtube-url" class="copy" readonly hidden>
     </form>
-</div>
+</dialog>
 
-<div id="tab-rumble" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-rumble" hidden>
+<dialog id="tab-rumble" class="sheet" data-platform="rumble" aria-labelledby="rumble-title">
     <form id="rumble-form" class="card" data-platform="rumble">
-      <header>
-        <h2>Rumble</h2>
-        <p class="endpoint">Public chat stream, or the owner API</p>
+      <header class="sheet-head">
+        <div>
+          <h2 id="rumble-title">Rumble</h2>
+          <p class="endpoint">Public chat stream, or the owner API</p>
+        </div>
+        <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
       <label>Public video URL or chat id <input id="rumble-watch" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/v… or 446413572"></label>
-      <p class="hint">This is the live chat any viewer can open. You do not need to own the channel. Rants, gifted subs, and new-subscriber notices are stored. Leave this running while the stream is live.</p>
+      <p class="hint">This is the live chat any viewer can open. You do not need to own the channel. Rants, gifted subs, and new-subscriber notices are stored. Leave this running while the stream is live. This address belongs to the open ledger. The owner API URL is shared.</p>
+      <label class="check"><input id="rumble-follow-live" type="checkbox"> Follow the live stream</label>
+      <label>Channel URL <input id="rumble-channel" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/c/channel"></label>
+      <p class="hint">When this is on, the channel page is checked. If it shows one live video, that video's public chat is read, and the video URL above is kept but not used. The owner API URL is not a channel address. If the page does not show a live video, chat waits. This address belongs to the open ledger.</p>
       <label>Owner API URL, optional <input id="rumble-url" type="password" autocomplete="off" placeholder="Leave blank to keep the saved URL"></label>
       <label>Poll seconds <input id="rumble-poll" type="number" min="5" max="120" step="1" value="8"></label>
       <p class="hint">The URL from rumble.com/account/livestream-api only works for a channel you own. It adds subscriber dollar amounts the public chat does not include.</p>
@@ -189,16 +299,21 @@
       </div>
       <p id="rumble-status" class="status" data-state="unconfigured">Not started</p>
     </form>
-</div>
+</dialog>
 
-<div id="tab-kick" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-kick" hidden>
+<dialog id="tab-kick" class="sheet" data-platform="kick" aria-labelledby="kick-title">
     <form id="kick-form" class="card" data-platform="kick">
-      <header>
-        <h2>Kick</h2>
-        <p class="endpoint">Public chat, or your own webhooks</p>
+      <header class="sheet-head">
+        <div>
+          <h2 id="kick-title">Kick</h2>
+          <p class="endpoint">Public chat, or your own webhooks</p>
+        </div>
+        <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
       <label>Public channel <input id="kick-watch" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
-      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below.</p>
+      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below. This address belongs to the open ledger. The client id and secret are shared.</p>
+      <label class="check"><input id="kick-follow-live" type="checkbox"> Show whether this channel is live</label>
+      <p class="hint">Chat is read either way. When this is on, the status also says whether a broadcast is live. That does not change the chat. This belongs to the open ledger.</p>
       <label>Client id <input id="kick-client-id" autocomplete="off" spellcheck="false"></label>
       <label>Client secret <input id="kick-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Listen host <input id="kick-host" autocomplete="off" value="127.0.0.1"></label>
@@ -217,48 +332,126 @@
       <p id="kick-status" class="status" data-state="unconfigured">Not started</p>
       <input id="kick-url" class="copy" readonly hidden>
     </form>
-</div>
+</dialog>
 
-<div id="tab-settings" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-settings" hidden>
-  <form id="settings-form" class="card">
-    <header>
-      <h2>Settings</h2>
-      <p class="endpoint">Ledger</p>
+<dialog id="tab-streamers" class="sheet" aria-labelledby="streamers-title">
+  <div class="sheet-body">
+    <header class="sheet-head">
+      <div>
+        <h2 id="streamers-title">Streamer presets</h2>
+        <p class="endpoint">Channel addresses and goals to reuse</p>
+      </div>
+      <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <label>Membership price (USD) <input id="membership-price" type="number" min="0" max="100000" step="0.01" inputmode="decimal" placeholder="4.99"></label>
+    <p class="hint">Save a streamer's channels and goal tiers. Choosing that preset and saving the ledger's addresses writes those goals onto that ledger. Saving the preset itself does not change the ledger that is open. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels and goals.</p>
+    <form id="preset-form">
+      <label>Name <input id="preset-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
+      <label>YouTube channel URL <input id="preset-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"></label>
+      <label>Rumble channel URL <input id="preset-rumble" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/c/channel"></label>
+      <label>Kick channel URL <input id="preset-kick" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
+      <label class="check"><input id="tiers-enabled" type="checkbox"> Goal tiers on the stream total</label>
+      <div id="goal-tiers"></div>
+      <p class="hint">Up to five goals. The chat line names the next one that still has a name, and how many dollars are left. A cent short of a goal still counts as reached. Turn tiers off when this streamer has none. Goals alone do not save a preset; add at least one channel.</p>
+      <p id="preset-error" class="hint" hidden></p>
+      <div class="row">
+        <button type="submit" class="primary">Save preset</button>
+      </div>
+    </form>
+    <p class="endpoint">Saved</p>
+    <p id="preset-empty" class="hint">No streamer presets yet.</p>
+    <ul id="preset-list" class="preset-list"></ul>
+  </div>
+</dialog>
+
+<dialog id="tab-giveaway" class="sheet" aria-labelledby="giveaway-title">
+  <form id="giveaway-form" class="card">
+    <header class="sheet-head">
+      <div>
+        <h2 id="giveaway-title">Giveaway</h2>
+        <p class="endpoint">Keyword drawing</p>
+      </div>
+      <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </header>
+    <p class="hint">Nothing is typed into chat. People enter by sending the keyword themselves. The message must be that keyword alone, and case does not matter. The same person counts once on each platform, so the same name on another platform is another entry. Repeats from the same person on the same platform are ignored. Closing this prompt does not stop a drawing that is already running.</p>
+    <label>Keyword <input id="giveaway-keyword" autocomplete="off" maxlength="80" spellcheck="false" placeholder="#giveaway"></label>
+    <label>Timer (minutes) <input id="giveaway-minutes" type="number" min="0" max="1440" step="1" inputmode="numeric" placeholder="No timer"></label>
+    <p class="hint">Leave the timer blank to run until Stop. Only chat collected for the open ledger after Start is counted. A paused ledger is not reading chat. A drawn winner leaves the pool. Redraw picks the next person from whoever is left, and every winner stays in the list.</p>
+    <div class="row">
+      <button type="button" id="giveaway-toggle" class="primary">Start</button>
+      <button type="button" id="giveaway-copy-keyword" class="icon-button" aria-label="Copy keyword announcement" title="Copy keyword announcement" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+    </div>
+    <p id="giveaway-status" class="status">Not started.</p>
+    <p id="giveaway-counts" class="giveaway-counts"></p>
+    <p id="giveaway-winner" class="giveaway-winner"></p>
+    <p id="giveaway-winners-label" class="giveaway-winners-label"></p>
+    <ol id="giveaway-winners" class="giveaway-winners"></ol>
+    <div class="row">
+      <button type="button" id="giveaway-redraw" disabled>Redraw</button>
+      <button type="button" id="giveaway-copy-winner" class="icon-button" aria-label="Copy winner" title="Copy winner" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tab-settings" class="sheet" aria-labelledby="settings-title">
+  <form id="settings-form" class="card">
+    <header class="sheet-head">
+      <div>
+        <h2 id="settings-title">Settings</h2>
+        <p class="endpoint">Ledger</p>
+      </div>
+      <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </header>
+    <p class="hint">Membership price, the extra chat note, and top donors belong to the open ledger. A new ledger copies those, starts with a blank name, and has no donations. Each ledger has its own YouTube, Rumble, and Kick address. Follow live, when you turn it on, stays with that ledger too. API keys and exchange rates stay shared. Save before changing ledgers, or unsaved edits here are dropped.</p>
+    <label>Membership price (USD) <input id="membership-price" type="number" min="0" max="100000" step="0.01" inputmode="decimal" placeholder="Not set"></label>
     <p class="hint">Used when a membership or subscription arrives without a price. YouTube counts “Sent 5 … gift memberships” as five, then multiplies by this price. Kick bundles do the same. A Rumble bundle is this price for the first subscription and $5.00 for each additional one, so five Rumble subs are $24.99 when this price is $4.99. Leave it blank and those amounts stay empty.</p>
-    <label class="check"><input id="tiers-enabled" type="checkbox"> Goal tiers on the stream total</label>
-    <div id="goal-tiers"></div>
     <label>Extra on chat line <textarea id="chat-extra" rows="2" maxlength="500" placeholder="Optional note appended to the paste"></textarea></label>
     <label class="check"><input id="show-top-donors" type="checkbox" checked> Show top donors</label>
-    <p class="hint">Up to five goals. The chat line names the next one that still has a name, and how many dollars are left. A cent short of a goal still counts as reached. Turn tiers off when this stream has none.</p>
     <p class="hint">Kick coins convert at 100 coins = $1. Under $5 is a Super Sticker. $5 and above is a Super Chat. Export times use this computer’s time zone. The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</p>
     <div class="row">
       <button type="submit" class="primary">Save</button>
     </div>
+    <div class="row">
+      <a id="settings-export" class="button" href="/api/settings/export" download="stream-donations-settings.json">Export settings</a>
+      <button type="button" id="settings-import">Import settings</button>
+      <input id="settings-import-file" type="file" accept="application/json,.json" hidden>
+    </div>
+    <p class="hint">The file is this ledger only: membership price, the extra chat note, and top donors. API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first. A newer file still applies the settings this version understands. Settings the file leaves out stay as they are.</p>
     <p id="fx-status" class="status">Exchange rates have not been downloaded yet.</p>
     <div class="row">
       <button type="button" id="fx-refresh">Update exchange rates</button>
     </div>
     <p class="hint">The saved response from open.er-api.com is reused until the last check is more than an hour old. Their open endpoint allows about one request an hour, and the table itself changes about once a day. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
   </form>
-</div>
+</dialog>
 
-<div id="tab-log" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-log" hidden>
-  <pre id="log"></pre>
-</div>
+<dialog id="tab-log" class="sheet" aria-labelledby="log-title">
+  <div class="sheet-body">
+    <header class="sheet-head">
+      <div>
+        <h2 id="log-title">Log</h2>
+        <p class="endpoint">Newest lines</p>
+      </div>
+      <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </header>
+    <label class="check"><input id="verbose-logs" type="checkbox"> Verbose logs</label>
+    <p class="hint">When this is on, each new ledger entry adds a shortened copy of the API or page payload that created it. Photos, tracking fields, and secrets are left out. This list shows the latest 100 lines. The file keeps every line, with no length limit, until you delete it. Deleting it starts a new file at the next line.</p>
+    <pre id="log"></pre>
+    <footer class="pager">
+      <p id="log-file" class="database"></p>
+    </footer>
+  </div>
+</dialog>
 
 <aside id="drawer" class="drawer" hidden>
   <div class="row spread">
     <h2 id="drawer-title">Donation</h2>
-    <button type="button" id="drawer-close">Close</button>
+    <button type="button" id="drawer-close" class="icon-button" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
   </div>
   <dl id="drawer-facts"></dl>
   <p id="drawer-message" class="message"></p>
   <label>Note <textarea id="note" rows="4" maxlength="2000"></textarea></label>
   <div class="row">
     <button type="button" id="save-note" class="primary">Save note</button>
-    <button type="button" id="toggle-processed">Mark processed</button>
   </div>
   <details>
     <summary>Raw platform payload</summary>
@@ -266,7 +459,39 @@
   </details>
 </aside>
 
-<p id="toast" class="toast" hidden role="status"></p>
+<dialog id="ledger-urls" class="ledger-urls" aria-labelledby="ledger-urls-title">
+  <form id="ledger-urls-form">
+    <h2 id="ledger-urls-title">Addresses for this ledger</h2>
+    <p id="ledger-urls-intro" class="hint">This ledger starts with a blank name and no donations. Each ledger keeps its own YouTube, Rumble, and Kick address. API keys stay shared. For YouTube or Rumble, turn on Follow the live stream and that field asks for a channel URL instead of a video. Kick is already a channel. Leave any of these blank and fill them in later.</p>
+    <label>Streamer preset <select id="ledger-preset"><option value="">None</option></select></label>
+    <p class="hint">Choosing a preset fills the channel fields. None clears them. Save presets from Streamers in the menu.</p>
+    <label class="check"><input id="ledger-youtube-follow" type="checkbox" aria-controls="ledger-youtube"> Follow the YouTube live stream</label>
+    <label><span id="ledger-youtube-label">YouTube public video URL or id</span> <input id="ledger-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…" data-video-label="YouTube public video URL or id" data-channel-label="YouTube channel URL" data-video-placeholder="https://www.youtube.com/watch?v=…" data-channel-placeholder="https://www.youtube.com/@channel"></label>
+    <label class="check"><input id="ledger-rumble-follow" type="checkbox" aria-controls="ledger-rumble"> Follow the Rumble live stream</label>
+    <label><span id="ledger-rumble-label">Rumble public video URL or chat id</span> <input id="ledger-rumble" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/v… or 446413572" data-video-label="Rumble public video URL or chat id" data-channel-label="Rumble channel URL" data-video-placeholder="https://rumble.com/v… or 446413572" data-channel-placeholder="https://rumble.com/c/channel"></label>
+    <label>Kick public channel <input id="ledger-kick" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
+    <p id="ledger-urls-error" class="hint" hidden></p>
+    <div class="row">
+      <button type="button" id="ledger-urls-skip">Skip</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="ledger-name" class="ledger-urls" aria-labelledby="ledger-name-title">
+  <form id="ledger-name-form">
+    <h2 id="ledger-name-title">Name</h2>
+    <label>Name <input id="stream-title" maxlength="80" placeholder="Stream" autocomplete="off" spellcheck="false"></label>
+    <p class="hint">Shown on this ledger's tab. A blank name is shown as Stream.</p>
+    <p id="ledger-name-error" class="hint" hidden></p>
+    <div class="row">
+      <button type="button" id="ledger-name-cancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden role="status"></div>
 <script src="/app.js"></script>
 </body>
 </html>

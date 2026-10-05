@@ -13,11 +13,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .currencies import SUPPORTED_CURRENCIES
+from .embed import FRAME_SRC, player_for_ledger
 from .fx import rate_status, refresh_rates, usd_rates
 from .kinds import KIND_LABELS, PLATFORM_LABELS
 from .goals import load_tiers
 from .money import DISPLAY_LABELS, parse_membership_price
+from .paste import paste_for_form
 from .service import Service
+from .settings_file import export_settings, parse_settings_file
 from .store import Store
 from .util import ApiError, redact, utc_now_iso
 from .youtube import open_browser
@@ -25,6 +29,11 @@ from .youtube_quota import clamp_poll_seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _DONATION_PATH = re.compile(r"/api/donations/(\d+)")
+_ICON_FILES = {
+    "/icons/youtube.svg": "icons/youtube.svg",
+    "/icons/rumble.svg": "icons/rumble.svg",
+    "/icons/kick.svg": "icons/kick.svg",
+}
 
 
 @dataclass
@@ -61,6 +70,8 @@ class App:
         self._webhook_thread = None
 
     def start(self) -> None:
+        # Default is paused. Write that before the collector loops read the flag.
+        self.store.stream_tabs()
         self.service.start()
         self.restart_webhook()
 
@@ -120,6 +131,8 @@ class App:
                 return self._file("app.js", "text/javascript; charset=utf-8")
             if method == "GET" and path == "/styles.css":
                 return self._file("styles.css", "text/css; charset=utf-8")
+            if method == "GET" and path in _ICON_FILES:
+                return self._file(_ICON_FILES[path], "image/svg+xml")
             if path.startswith("/api/"):
                 return self._api(method, path, query, body)
             return json_response(404, {"error": "Not found"})
@@ -137,12 +150,103 @@ class App:
         if path == "/api/meta" and method == "GET":
             return json_response(200, self._meta())
         if path == "/api/status" and method == "GET":
-            return json_response(200, {"platforms": self.store.status(), "log": self.store.recent_log()})
+            return json_response(200, {
+                "paused": self.service.paused(),
+                "platforms": self.store.status(),
+                **self._log_view(),
+            })
+        if path == "/api/log" and method == "PUT":
+            body_object = _object(body)
+            if not isinstance(body_object.get("verbose"), bool):
+                raise ValueError("Verbose must be true or false.")
+            enabled = body_object["verbose"]
+            self.store.set_verbose_logs(enabled)
+            if enabled:
+                self.store.log(
+                    "ledger",
+                    "info",
+                    "Verbose logging is on. New ledger entries include a compacted payload.",
+                )
+            else:
+                self.store.log("ledger", "info", "Verbose logging is off.")
+            return json_response(200, self._log_view())
         if path == "/api/settings" and method == "GET":
             return json_response(200, self._public_settings())
         if path == "/api/settings" and method == "PUT":
             self.service.apply_settings(_object(body))
             return json_response(200, self._public_settings())
+        if path == "/api/settings/export" and method == "GET":
+            exported = export_settings(self._public_settings())
+            return Response(
+                200,
+                exported,
+                "application/json; charset=utf-8",
+                [("Content-Disposition", 'attachment; filename="stream-donations-settings.json"')],
+            )
+        if path == "/api/settings/import" and method == "POST":
+            imported = parse_settings_file(body)
+            if imported.settings:
+                self.service.apply_settings(imported.settings)
+            payload = self._public_settings()
+            payload["settings_import"] = {
+                "ignored": list(imported.ignored),
+                "version": imported.version,
+            }
+            self.store.log("ledger", "info", "Imported settings for the open stream tab.")
+            return json_response(200, payload)
+        if path == "/api/presets" and method == "GET":
+            return json_response(200, {"presets": self.store.streamer_presets()})
+        if path == "/api/presets" and method == "POST":
+            payload = _object(body)
+            action = str(payload.get("action") or "").strip().lower()
+            if action == "save":
+                saved = self.store.save_streamer_preset(
+                    payload.get("name"),
+                    payload.get("youtube_channel"),
+                    payload.get("rumble_channel"),
+                    payload.get("kick_watch"),
+                    payload.get("tiers_enabled", False),
+                    payload.get("goal_tiers"),
+                )
+                self.store.log("ledger", "info", f"Saved streamer preset {saved['name']}.")
+                return json_response(200, {
+                    "preset": saved,
+                    "presets": self.store.streamer_presets(),
+                })
+            if action == "delete":
+                name = self.store.delete_streamer_preset(payload.get("id"))
+                self.store.log("ledger", "info", f"Removed streamer preset {name}.")
+                return json_response(200, {"presets": self.store.streamer_presets()})
+            raise ValueError("Streamer preset action must be save or delete.")
+        if path == "/api/embed" and method == "GET":
+            platform = _one(query, "platform").strip().lower()
+            if platform not in {"youtube", "rumble", "kick"}:
+                raise ValueError("Stream source must be YouTube, Rumble, or Kick.")
+            # Player URL for the open ledger's iframe. Not written to the log.
+            return json_response(200, self._player(platform))
+        if path == "/api/chat" and method == "GET":
+            # Lines already read for the open ledger. Not written to the log.
+            return json_response(200, self.service.chat.since(
+                _whole_number(query, "after"),
+                _whole_number(query, "generation"),
+                self.service.paused(),
+            ))
+        if path == "/api/giveaway" and method == "GET":
+            return json_response(200, self.service.giveaway.status())
+        if path == "/api/giveaway" and method == "POST":
+            payload = _object(body)
+            action = str(payload.get("action") or "").strip().lower()
+            if action == "start":
+                # Keyword and winner stay out of the log. The drawing is not saved.
+                return json_response(200, self.service.giveaway.start(
+                    payload.get("keyword"),
+                    payload.get("seconds", 0),
+                ))
+            if action == "stop":
+                return json_response(200, self.service.giveaway.stop())
+            if action == "redraw":
+                return json_response(200, self.service.giveaway.redraw())
+            raise ValueError("Giveaway action must be start, stop, or redraw.")
         if path == "/api/stream" and method == "GET":
             rates, price = self._rates_and_price()
             return json_response(200, self.store.stream_report(rates, price))
@@ -150,14 +254,37 @@ class App:
             action = str(_object(body).get("action") or "").strip().lower()
             if action == "start":
                 self.store.set_stream_started(utc_now_iso())
-                self.store.log("ledger", "info", "Stream total now counts donations from this moment. The ledger was kept.")
+                self.store.log("ledger", "info", "This ledger's count starts now. Donations stay.")
             elif action == "full":
                 self.store.set_stream_started(None)
-                self.store.log("ledger", "info", "Stream total counts the full ledger again.")
+                self.store.log("ledger", "info", "This ledger's count covers every donation on it.")
             else:
                 raise ValueError("Stream action must be start or full.")
             rates, price = self._rates_and_price()
             return json_response(200, self.store.stream_report(rates, price))
+        if path == "/api/streams" and method == "POST":
+            payload = _object(body)
+            action = str(payload.get("action") or "").strip().lower()
+            if action == "add":
+                self.store.add_stream()
+                self.store.log("ledger", "info", "Opened a new ledger. Its title and donations start empty.")
+            elif action == "switch":
+                self.store.switch_stream(payload.get("id"))
+            elif action == "close":
+                self.store.close_stream(payload.get("id"))
+                self.store.log("ledger", "info", "Closed a ledger. Its donations were removed.")
+            elif action == "rename":
+                self.store.rename_stream(payload.get("title"))
+            else:
+                raise ValueError("Stream tab action must be add, switch, close, or rename.")
+            if action in {"add", "switch", "close"}:
+                self.service.follow_open_ledger()
+            rates, price = self._rates_and_price()
+            return json_response(200, self.store.stream_report(rates, price))
+        if path == "/api/paste" and method == "POST":
+            payload = _object(body)
+            rates, price = self._rates_and_price()
+            return json_response(200, paste_for_form(payload.get("text"), price, rates))
         if path == "/api/donations" and method == "POST":
             payload = _object(body)
             donation_id = self.store.add_manual_entry(
@@ -165,9 +292,16 @@ class App:
                 platform=payload.get("platform"),
                 kind=payload.get("kind"),
                 amount=payload.get("amount"),
+                currency=payload.get("currency", "USD"),
                 message=payload.get("message", ""),
                 created_at=payload.get("created_at", ""),
             )
+            rates, price = self._rates_and_price()
+            donation = self.store.get_donation(donation_id, membership_price=price, rates=rates)
+            return json_response(201, donation or {"id": donation_id})
+        if path == "/api/donations/restore" and method == "POST":
+            payload = _object(body)
+            donation_id = self.store.restore_manual_entry(payload)
             rates, price = self._rates_and_price()
             donation = self.store.get_donation(donation_id, membership_price=price, rates=rates)
             return json_response(201, donation or {"id": donation_id})
@@ -181,10 +315,16 @@ class App:
             return json_response(200, refresh_rates(self.store))
         if path == "/api/ledger/reset" and method == "POST":
             removed = self.store.clear_donations()
-            self.store.log("ledger", "info", f"Ledger reset. Removed {removed} donation(s). Settings were kept.")
+            self.store.log(
+                "ledger",
+                "info",
+                f"This ledger was reset. Removed {removed} donation(s). Other ledgers and settings were kept.",
+            )
             return json_response(200, {"removed": removed})
         if path == "/api/donations" and method == "GET":
             filters = _donation_filters(query)
+            # Hidden rows stay on the ledger. Totals and exports leave them out.
+            filters["include_hidden"] = True
             rates, price = self._rates_and_price()
             rows, total = self.store.list_donations(**filters, membership_price=price, rates=rates)
             return json_response(200, {"donations": rows, "total": total, "limit": filters["limit"], "offset": filters["offset"]})
@@ -206,6 +346,7 @@ class App:
             return json_response(200, donation)
         if match and method == "PATCH":
             payload = _object(body)
+            donation_id = int(match.group(1))
             processed = payload.get("processed", None)
             note = payload.get("note", None)
             if processed is not None and not isinstance(processed, bool):
@@ -215,12 +356,24 @@ class App:
                     raise ValueError("note must be text.")
                 if len(note) > 2000:
                     raise ValueError("note is limited to 2000 characters.")
-            updated = self.store.update_donation(int(match.group(1)), processed=processed, note=note)
-            if updated is None:
-                return json_response(404, {"error": "Donation not found"})
+            if "hidden" in payload:
+                if not isinstance(payload["hidden"], bool):
+                    raise ValueError("hidden must be true or false.")
+                updated = self.store.set_entry_hidden(donation_id, payload["hidden"])
+                if updated is None:
+                    return json_response(404, {"error": "Donation not found"})
+            if processed is not None or note is not None or "hidden" not in payload:
+                updated = self.store.update_donation(donation_id, processed=processed, note=note)
+                if updated is None:
+                    return json_response(404, {"error": "Donation not found"})
             rates, price = self._rates_and_price()
-            updated = self.store.get_donation(int(match.group(1)), membership_price=price, rates=rates)
+            updated = self.store.get_donation(donation_id, membership_price=price, rates=rates)
             return json_response(200, updated)
+        if match and method == "DELETE":
+            donation_id = int(match.group(1))
+            if not self.store.delete_manual_entry(donation_id):
+                return json_response(404, {"error": "Donation not found"})
+            return json_response(200, {"removed": donation_id})
         if path == "/api/export.csv" and method == "GET":
             rates, price = self._rates_and_price()
             text = self.store.export_csv(rates=rates, membership_price=price, **_export_filters(query))
@@ -238,9 +391,33 @@ class App:
                 "application/x-ndjson; charset=utf-8",
                 [("Content-Disposition", 'attachment; filename="donations.jsonl"')],
             )
+        if path == "/api/collection" and method == "POST":
+            payload = _object(body)
+            if not isinstance(payload.get("paused"), bool):
+                raise ValueError("paused must be true or false.")
+            raw_id = payload.get("id")
+            tab_id = raw_id if isinstance(raw_id, str) else None
+            self.service.set_paused(payload["paused"], tab_id)
+            return json_response(200, {
+                "paused": self.service.paused(),
+                "platforms": self.store.status(),
+                "streams": self.store.stream_tabs(),
+            })
         if path == "/api/poll" and method == "POST":
+            if self.service.paused():
+                return json_response(200, {
+                    "ok": False,
+                    "paused": True,
+                    "errors": ["Collection is paused. Reconnect to send requests again."],
+                    "platforms": self.store.status(),
+                })
             errors = self.service.poll_now()
-            return json_response(200, {"ok": not errors, "errors": errors, "platforms": self.store.status()})
+            return json_response(200, {
+                "ok": not errors,
+                "paused": self.service.paused(),
+                "errors": errors,
+                "platforms": self.store.status(),
+            })
         if path == "/api/oauth/youtube/start" and method == "POST":
             url = self.service.begin_oauth("youtube", self.google_redirect())
             return json_response(200, {"url": url, "opened": open_browser(url)})
@@ -254,6 +431,8 @@ class App:
             self.service.kick.disconnect()
             return json_response(200, self._public_settings())
         if path == "/api/kick/subscribe" and method == "POST":
+            if self.service.paused():
+                raise ValueError("Collection is paused. Reconnect before subscribing.")
             payload = self.service.kick.subscribe()
             self.service.kick.tick(force=True)
             return json_response(200, {"result": payload, "platforms": self.store.status()})
@@ -318,9 +497,11 @@ class App:
     def _meta(self) -> dict:
         return {
             "platforms": [{"id": key, "label": value} for key, value in PLATFORM_LABELS.items()],
+            "currencies": [{"code": code, "name": name} for code, name in SUPPORTED_CURRENCIES],
             "kinds": [{"id": key, "label": value} for key, value in DISPLAY_LABELS.items()],
             "default_exclude_kinds": ["gift_membership_received"],
             "database": str(self.store.path),
+            "log_file": str(self.store.log_path()),
             "google_redirect_uri": self.google_redirect(),
             "kick_redirect_uri": self.kick_redirect(),
             "kick_webhook_hint": self.service.kick.webhook_hint(),
@@ -328,6 +509,13 @@ class App:
                 "youtube": "https://www.googleapis.com/auth/youtube.readonly",
                 "kick": "user:read channel:read events:subscribe kicks:read",
             },
+        }
+
+    def _log_view(self) -> dict:
+        return {
+            "verbose": self.store.verbose_logs(),
+            "log_file": str(self.store.log_path()),
+            "log": self.store.recent_log(),
         }
 
     def _public_settings(self) -> dict:
@@ -343,10 +531,15 @@ class App:
             "youtube_connected": bool(self.store.get_setting("youtube_refresh_token")),
             "youtube_poll_seconds": clamp_poll_seconds(self.store.get_setting("youtube_poll_seconds", "900")),
             "youtube_watch": self.store.get_setting("youtube_watch"),
+            "youtube_channel": self.store.get_setting("youtube_channel"),
+            "youtube_follow_live": self.store.get_setting("youtube_follow_live") == "1",
             "rumble_api_url_set": bool(self.store.get_setting("rumble_api_url")),
             "rumble_watch": self.store.get_setting("rumble_watch"),
+            "rumble_channel": self.store.get_setting("rumble_channel"),
+            "rumble_follow_live": self.store.get_setting("rumble_follow_live") == "1",
             "rumble_poll_seconds": seconds("rumble_poll_seconds", "8"),
             "kick_watch": self.store.get_setting("kick_watch"),
+            "kick_follow_live": self.store.get_setting("kick_follow_live") == "1",
             "kick_client_id": self.store.get_setting("kick_client_id"),
             "kick_client_secret_set": bool(self.store.get_setting("kick_client_secret")),
             "kick_connected": bool(self.store.get_setting("kick_refresh_token")),
@@ -359,12 +552,34 @@ class App:
             "chat_extra": self.store.get_setting("chat_extra"),
             "goal_tiers": [tier.as_dict() for tier in load_tiers(self.store.get_setting("goal_tiers"))],
             "stream_started_at": self.store.get_setting("stream_started_at") or None,
+            "stream_title": self.store.get_setting("stream_title"),
             "fx": rate_status(self.store),
             "google_redirect_uri": self.google_redirect(),
             "kick_redirect_uri": self.kick_redirect(),
             "kick_webhook_hint": self.service.kick.webhook_hint(),
         }
 
+
+    def _player(self, platform: str) -> dict:
+        """Embed URL from the open ledger. Pause does not block this."""
+        youtube = self.service.youtube
+        rumble = self.service.rumble
+        return player_for_ledger(
+            platform,
+            {
+                "youtube_watch": self.store.get_setting("youtube_watch"),
+                "youtube_channel": self.store.get_setting("youtube_channel"),
+                "youtube_follow_live": self.store.get_setting("youtube_follow_live"),
+                "rumble_watch": self.store.get_setting("rumble_watch"),
+                "rumble_channel": self.store.get_setting("rumble_channel"),
+                "rumble_follow_live": self.store.get_setting("rumble_follow_live"),
+                "kick_watch": self.store.get_setting("kick_watch"),
+            },
+            youtube_video=youtube.public_video_id,
+            youtube_live=youtube.public_live_video_id,
+            rumble_chat=rumble.resolve_chat_id,
+            rumble_live=rumble.resolve_live_channel,
+        )
 
     def _rates_and_price(self) -> tuple[dict[str, float], float | None]:
         return usd_rates(self.store), parse_membership_price(self.store.get_setting("membership_price"))
@@ -385,6 +600,13 @@ def _object(body: bytes) -> dict:
 def _one(query: dict[str, list[str]], name: str, default: str = "") -> str:
     values = query.get(name) or []
     return values[0] if values else default
+
+
+def _whole_number(query: dict[str, list[str]], name: str) -> int:
+    raw = _one(query, name, "0").strip()
+    if not raw.isdigit() or len(raw) > 12:
+        raise ValueError(f"{name} must be a whole number.")
+    return int(raw)
 
 
 def _donation_filters(query: dict[str, list[str]]) -> dict:
@@ -412,6 +634,7 @@ def _donation_filters(query: dict[str, list[str]]) -> dict:
         "processed": processed,
         "query": _one(query, "q"),
         "exclude_kinds": exclude,
+        "include_hidden": _one(query, "include_hidden") in {"1", "true"},
         "limit": limit,
         "offset": offset,
     }
@@ -421,6 +644,7 @@ def _export_filters(query: dict[str, list[str]]) -> dict:
     filters = _donation_filters(query)
     filters.pop("limit", None)
     filters.pop("offset", None)
+    filters.pop("include_hidden", None)
     return filters
 
 
@@ -428,7 +652,9 @@ _SECURITY_HEADERS = [
     (
         "Content-Security-Policy",
         "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'; "
-        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "connect-src 'self'; frame-src "
+        + " ".join(FRAME_SRC)
+        + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     ),
     ("Referrer-Policy", "no-referrer"),
     ("X-Content-Type-Options", "nosniff"),
@@ -451,6 +677,9 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch()
 
     def do_PATCH(self) -> None:
+        self._dispatch()
+
+    def do_DELETE(self) -> None:
         self._dispatch()
 
     def log_message(self, fmt: str, *args) -> None:

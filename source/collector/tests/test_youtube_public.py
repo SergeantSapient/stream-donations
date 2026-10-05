@@ -4,10 +4,14 @@ import unittest
 
 from streamdonations.youtube_public import (
     donations_from_live_chat_actions,
+    live_video_from_channel_html,
     parse_display_amount,
     session_from_live_chat_html,
+    validate_youtube_channel,
     validate_youtube_watch,
+    video_id_from_html,
     video_id_from_target,
+    youtube_channel_live_url,
 )
 
 
@@ -106,10 +110,76 @@ class PublicYouTubeTests(unittest.TestCase):
         self.assertEqual(donations[3].author_name, "Patron")
         self.assertEqual(donations[3].message, "Gifted 3 memberships")
 
+    def test_anniversary_header_is_a_milestone_even_without_a_comment(self):
+        donations = donations_from_live_chat_actions(
+            [
+                {
+                    "addChatItemAction": {
+                        "item": {
+                            "liveChatMembershipItemRenderer": {
+                                "id": "anniv-1",
+                                "authorName": {"simpleText": "@CFH"},
+                                "headerPrimaryText": {"runs": [{"text": "Member for 2 months"}]},
+                                "headerSubtext": {"simpleText": "Smashers"},
+                            }
+                        }
+                    }
+                }
+            ]
+        )
+        self.assertEqual(len(donations), 1)
+        self.assertEqual(donations[0].kind, "member_milestone")
+        self.assertEqual(donations[0].message, "Member for 2 months · Smashers")
+        self.assertIsNone(donations[0].amount_value)
+
     def test_amount_formats(self):
         self.assertEqual(parse_display_amount("$5.00"), (5.0, "USD"))
         self.assertEqual(parse_display_amount("€2,50"), (2.5, "EUR"))
         self.assertEqual(parse_display_amount("¥1,000"), (1000.0, "JPY"))
+        self.assertEqual(parse_display_amount("₱50.00"), (50.0, "PHP"))
+        self.assertEqual(parse_display_amount("PHP 50.00"), (50.0, "PHP"))
+
+    def test_peso_display_is_php_and_micros_win(self):
+        shown = donations_from_live_chat_actions(
+            [
+                {
+                    "addChatItemAction": {
+                        "item": {
+                            "liveChatPaidMessageRenderer": {
+                                "id": "peso-1",
+                                "timestampUsec": "1700000000000000",
+                                "authorName": {"simpleText": "kayeend"},
+                                "purchaseAmountText": {"simpleText": "₱50.00"},
+                                "message": {"simpleText": "juuuuuuuuuuuuicy tip"},
+                            }
+                        }
+                    }
+                }
+            ]
+        )
+        self.assertEqual(shown[0].amount_value, 50.0)
+        self.assertEqual(shown[0].currency, "PHP")
+        exact = donations_from_live_chat_actions(
+            [
+                {
+                    "addChatItemAction": {
+                        "item": {
+                            "liveChatPaidMessageRenderer": {
+                                "id": "peso-2",
+                                "authorName": {"simpleText": "kayeend"},
+                                "purchaseAmountText": {"simpleText": "$0.80"},
+                                "amountMicros": "50000000",
+                                "currency": "PHP",
+                                "message": {"simpleText": "juuuuuuuuuuuuicy tip"},
+                            }
+                        }
+                    }
+                }
+            ]
+        )
+        self.assertEqual(exact[0].amount_value, 50.0)
+        self.assertEqual(exact[0].currency, "PHP")
+        self.assertEqual(exact[0].amount_micros, 50_000_000)
 
     def test_live_chat_page_session_and_video_id(self):
         session = session_from_live_chat_html(CHAT_HTML)
@@ -128,6 +198,45 @@ class PublicYouTubeTests(unittest.TestCase):
             validate_youtube_watch("https://evil.example/watch?v=dQw4w9WgXcQ")
         with self.assertRaises(ValueError):
             session_from_live_chat_html("<html>consent.youtube.com</html>")
+
+    def test_channel_live_page_uses_the_broadcast_that_is_on_now(self):
+        live = """
+        <link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
+        <script>"videoDetails":{"videoId":"abcdefghijk","title":"Desk","lengthSeconds":"0","isLive":true}</script>
+        "liveBroadcastDetails":{"isLiveNow":true,"startTimestamp":"2026-10-01T17:00:26+00:00"}
+        "videoId":"zzzzzzzzzzz"
+        """
+        self.assertEqual(live_video_from_channel_html(live), "abcdefghijk")
+        offline = """
+        <link rel="canonical" href="https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA">
+        "videoId":"abcdefghijk"
+        """
+        self.assertIsNone(live_video_from_channel_html(offline))
+        self.assertEqual(video_id_from_html(offline), "abcdefghijk")
+        ended = """
+        <link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
+        "videoDetails":{"videoId":"abcdefghijk","title":"Desk","isLive":false}
+        "isLiveNow":true
+        """
+        self.assertIsNone(live_video_from_channel_html(ended))
+        self.assertEqual(
+            youtube_channel_live_url("https://www.youtube.com/@NASA/streams"),
+            "https://www.youtube.com/@NASA/live",
+        )
+        self.assertEqual(
+            youtube_channel_live_url("https://m.youtube.com/channel/UCLA_DiR1FfKNvjuUpBHmylQ/live"),
+            "https://www.youtube.com/channel/UCLA_DiR1FfKNvjuUpBHmylQ/live",
+        )
+        self.assertEqual(validate_youtube_channel("https://www.youtube.com/@nasa"), "https://www.youtube.com/@nasa")
+        for bad in (
+            "abcdefghijk",
+            "https://youtu.be/abcdefghijk",
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            "https://www.youtube.com/live/abcdefghijk",
+            "https://www.youtube.com/@nasa/playlist",
+        ):
+            with self.assertRaises(ValueError):
+                validate_youtube_channel(bad)
 
 
 if __name__ == "__main__":

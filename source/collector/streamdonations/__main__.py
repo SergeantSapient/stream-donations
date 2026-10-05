@@ -89,6 +89,7 @@ def _serve(args) -> int:
         print("Port must be between 0 and 65535.", file=sys.stderr)
         return 2
     store = Store(_data_dir(args) / "donations.db")
+    store.enable_system_notifications()
     app = App(store, token, port or 47321)
     try:
         server = ThreadingServer(("127.0.0.1", port), Handler)
@@ -152,6 +153,7 @@ def _export(args) -> int:
 
 def _poll(args) -> int:
     store = Store(_data_dir(args) / "donations.db")
+    store.enable_system_notifications()
     try:
         errors = Service(store).poll_now()
     finally:

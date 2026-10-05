@@ -19,6 +19,8 @@ import threading
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
+from .chat_feed import chat_time, offer_chat, remember_chat
+from .money import is_anniversary_text, parse_display_amount, youtube_paid_amount
 from .normalize import Donation
 from .store import Store
 from .transport import Transport, api_error_message
@@ -36,19 +38,6 @@ YT_HEADERS = {
     "Cookie": "SOCS=CAI; CONSENT=YES+cb",
 }
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-_CURRENCY_PREFIXES = (
-    ("US$", "USD"),
-    ("CA$", "CAD"),
-    ("A$", "AUD"),
-    ("NZ$", "NZD"),
-    ("HK$", "HKD"),
-    ("R$", "BRL"),
-    ("€", "EUR"),
-    ("£", "GBP"),
-    ("¥", "JPY"),
-    ("₹", "INR"),
-    ("$", "USD"),
-)
 
 
 def validate_youtube_watch(value: str) -> str:
@@ -98,6 +87,97 @@ def video_id_from_html(html: str) -> str | None:
     return None
 
 
+# Tabs YouTube puts on a channel URL. None of these is a video id.
+_CHANNEL_TABS = {
+    "about",
+    "channels",
+    "community",
+    "featured",
+    "live",
+    "playlists",
+    "posts",
+    "releases",
+    "search",
+    "shorts",
+    "streams",
+    "videos",
+}
+_CHANNEL_ROOTS = {"channel", "c", "user"}
+
+
+def validate_youtube_channel(value: str) -> str:
+    """A channel URL. A watch link or video id stays in the video field."""
+    text = (value or "").strip()
+    if _VIDEO_ID_RE.fullmatch(text):
+        raise ValueError(
+            "Paste a channel URL, such as https://www.youtube.com/@channel. A video id belongs in the video field."
+        )
+    checked = validate_youtube_watch(text)
+    parsed = urlparse(checked)
+    host = (parsed.hostname or "").lower().removeprefix("www.").removeprefix("m.")
+    if host == "youtu.be" or video_id_from_target(checked):
+        raise ValueError(
+            "That is a video link. Paste the channel URL, or turn off follow live and use the video field."
+        )
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts:
+        raise ValueError("Paste a channel URL, such as https://www.youtube.com/@channel.")
+    if parts[0].startswith("@"):
+        if not _channel_segment(parts[0][1:]):
+            raise ValueError("That YouTube channel address is not valid.")
+        extra = parts[1:]
+    elif parts[0] in _CHANNEL_ROOTS and len(parts) >= 2 and _channel_segment(parts[1]):
+        extra = parts[2:]
+    else:
+        raise ValueError("Paste a channel URL, such as https://www.youtube.com/@channel or a /channel/UC… link.")
+    if len(extra) > 1 or (extra and extra[0].lower() not in _CHANNEL_TABS):
+        raise ValueError("Paste the channel URL, not a video or playlist.")
+    return checked
+
+
+def youtube_channel_live_url(value: str) -> str:
+    """The public /live page for a channel. The app already fetches YouTube HTML."""
+    text = validate_youtube_channel(value)
+    parts = [part for part in urlparse(text).path.split("/") if part]
+    if parts[-1].lower() in _CHANNEL_TABS:
+        parts = parts[:-1]
+    return "https://www.youtube.com/" + "/".join(parts) + "/live"
+
+
+def live_video_from_channel_html(html: str) -> str | None:
+    """Video id only when this /live page is the broadcast that is on now.
+
+    A channel page lists many videos. The canonical watch link plus a live-now
+    marker is the current broadcast. A loose videoId is not.
+    """
+    if "consent.youtube.com" in html and "ytInitialData" not in html:
+        raise ValueError("YouTube returned a consent page instead of the channel.")
+    canon = re.search(
+        r'<link rel="canonical" href="https://(?:www\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]{11})(?:&[^"]*)?"',
+        html,
+    )
+    if not canon or '"isLiveNow":true' not in html:
+        return None
+    video_id = canon.group(1)
+    details = re.search(r'"videoDetails":\{"videoId":"([A-Za-z0-9_-]{11})"', html)
+    if details is None:
+        return video_id
+    if details.group(1) != video_id:
+        return None
+    window = html[details.end():details.end() + 2500]
+    live_at = window.find('"isLive":true')
+    offline_at = window.find('"isLive":false')
+    if live_at < 0 or (offline_at >= 0 and offline_at < live_at):
+        return None
+    return video_id
+
+
+def _channel_segment(value: str) -> bool:
+    if not value or value in {".", ".."} or len(value) > 80:
+        return False
+    return all(char.isalnum() or char in "._-" for char in value)
+
+
 def session_from_live_chat_html(html: str) -> dict:
     """Pull the innertube key, client context, and first continuation."""
     if "consent.youtube.com" in html and "ytInitialData" not in html:
@@ -128,6 +208,36 @@ def session_from_live_chat_html(html: str) -> dict:
         "channel": channel,
         "actions": _initial_actions(initial) if isinstance(initial, dict) else [],
     }
+
+
+def chat_lines_from_live_chat_actions(actions: object) -> list[dict]:
+    """Viewer text already inside a live-chat poll. Paid notes are included. Nothing is fetched."""
+    if not isinstance(actions, list):
+        return []
+    found: list[dict] = []
+    seen: set[str] = set()
+    for action in actions:
+        for item in _action_items(action):
+            renderer = item.get("liveChatTextMessageRenderer") or item.get("liveChatPaidMessageRenderer")
+            if not isinstance(renderer, dict):
+                continue
+            text = " ".join(yt_text(renderer.get("message")).split())
+            if not text:
+                continue
+            author = " ".join(yt_text(renderer.get("authorName")).split())
+            key = str(renderer.get("id") or "")
+            if not key:
+                key = stable_key("youtube:chat:", [author, text])
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "key": key,
+                "author": author,
+                "text": text,
+                "time": chat_time(renderer.get("timestampUsec")),
+            })
+    return found
 
 
 def donations_from_live_chat_actions(actions: object, channel: str = "") -> list[Donation]:
@@ -183,8 +293,7 @@ def _item_donation(item: dict, channel: str) -> Donation | None:
 def _paid(renderer: dict, kind: str, channel: str) -> Donation | None:
     if not isinstance(renderer, dict):
         return None
-    display = yt_text(renderer.get("purchaseAmountText"))
-    amount, currency = parse_display_amount(display)
+    amount, currency = youtube_paid_amount(renderer)
     if kind == "super_sticker":
         sticker = renderer.get("sticker") if isinstance(renderer.get("sticker"), dict) else {}
         label = ""
@@ -202,10 +311,15 @@ def _paid(renderer: dict, kind: str, channel: str) -> Donation | None:
 def _membership(renderer: dict, channel: str) -> Donation | None:
     if not isinstance(renderer, dict):
         return None
-    header = yt_text(renderer.get("headerSubtext"))
+    primary = yt_text(renderer.get("headerPrimaryText"))
+    subtext = yt_text(renderer.get("headerSubtext"))
     comment = yt_text(renderer.get("message"))
-    kind = "member_milestone" if re.search(r"\d+\s+months?", header, re.IGNORECASE) else "membership"
-    message = " · ".join(part for part in (header, comment) if part)
+    kind = (
+        "member_milestone"
+        if is_anniversary_text(primary) or is_anniversary_text(subtext)
+        else "membership"
+    )
+    message = " · ".join(part for part in (primary, subtext, comment) if part)
     return _row(renderer, kind, channel, message, None, None)
 
 
@@ -273,44 +387,6 @@ def yt_text(node: object) -> str:
     if isinstance(runs, list):
         return "".join(str(run.get("text") or "") if isinstance(run, dict) else str(run) for run in runs)
     return ""
-
-
-def parse_display_amount(text: str) -> tuple[float | None, str | None]:
-    if not text:
-        return None, None
-    currency = None
-    for code in re.findall(r"\b[A-Z]{3}\b", text):
-        currency = code
-        break
-    stripped = text
-    if currency is None:
-        for prefix, code in _CURRENCY_PREFIXES:
-            if prefix in stripped:
-                currency = code
-                stripped = stripped.replace(prefix, "", 1)
-                break
-    match = re.search(r"\d[\d.,]*", stripped)
-    if not match:
-        return None, currency
-    return _parse_number(match.group(0)), currency
-
-
-def _parse_number(raw: str) -> float | None:
-    if "," in raw and "." in raw:
-        if raw.rfind(",") > raw.rfind("."):
-            raw = raw.replace(".", "").replace(",", ".")
-        else:
-            raw = raw.replace(",", "")
-    elif "," in raw:
-        fraction = raw.split(",")[-1]
-        if len(fraction) == 2 and raw.count(",") == 1:
-            raw = raw.replace(",", ".")
-        else:
-            raw = raw.replace(",", "")
-    try:
-        return float(raw)
-    except ValueError:
-        return None
 
 
 def _usec_to_iso(value: object) -> str:
@@ -389,17 +465,40 @@ def _first(pattern: str, html: str) -> str:
 class PublicChatFollower:
     """Reads one public live chat until the watched URL changes."""
 
-    def __init__(self, store: Store, transport: Transport):
+    def __init__(self, store: Store, transport: Transport, chat_feed=None):
         self.store = store
         self.transport = transport
+        self._chat_feed = chat_feed
+        self._chat_for = ""
         self.detail = ""
         self.error = ""
+        self.level = ""
         self._target = ""
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    def rest(self) -> None:
+        """Stop reading chat. The saved watch URL stays in settings."""
+        self._stop.set()
+        self._target = ""
+        self.detail = ""
+        self.error = ""
+        self.level = ""
+        thread = self._thread
+        if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=2)
+
+    def source(self) -> str:
+        """What to read now. Follow-live ignores a saved video URL until it is off."""
+        if self.store.get_setting("youtube_follow_live") == "1":
+            channel = self.store.get_setting("youtube_channel").strip()
+            return f"live\n{channel}" if channel else ""
+        watch = self.store.get_setting("youtube_watch").strip()
+        return f"watch\n{watch}" if watch else ""
+
     def ensure(self) -> None:
-        target = self.store.get_setting("youtube_watch")
+        target = self.source()
+        self._chat_for = remember_chat(self._chat_feed, "youtube", self._chat_for, target)
         if target == self._target and (not target or (self._thread and self._thread.is_alive())):
             return
         self._stop.set()
@@ -407,6 +506,7 @@ class PublicChatFollower:
         self._target = target
         self.detail = ""
         self.error = ""
+        self.level = ""
         if not target:
             return
         stop = self._stop
@@ -416,40 +516,74 @@ class PublicChatFollower:
         self._thread.start()
 
     def _loop(self, target: str, stop: threading.Event) -> None:
-        while not stop.is_set():
+        mode, source = target.split("\n", 1)
+        while not stop.is_set() and not self.store.collection_paused():
             try:
-                video_id = self._resolve(target)
+                if mode == "live":
+                    video_id = self._resolve_live_channel(source)
+                    if not video_id:
+                        if not self._live(stop):
+                            return
+                        self._set_idle("That channel is not live. Chat waits until a broadcast is live.")
+                        stop.wait(30)
+                        continue
+                else:
+                    video_id = self._resolve(source)
+                if not self._live(stop):
+                    return
                 session = self._bootstrap(video_id)
+                if not self._live(stop):
+                    return
                 channel = str(session.get("channel") or "")
-                self._store(session.get("actions") or [], channel)
+                self._store(session.get("actions") or [], channel, stop)
                 continuation = str(session["continuation"])
                 timeout_ms = int(session.get("timeout_ms") or 5000)
+                if not self._live(stop):
+                    return
                 self.error = ""
+                self.level = "ok"
                 self.detail = (
                     f"Public chat for {video_id}"
                     + (f" ({channel})" if channel else "")
                     + ". Super Chats here do not need you to own the channel or sign in with Google."
                 )
                 self.store.set_status("youtube", "ok", self.detail)
-                while not stop.is_set() and continuation:
+                while self._live(stop) and continuation:
                     stop.wait(max(1.0, min(timeout_ms / 1000, 20.0)))
-                    if stop.is_set():
+                    if not self._live(stop):
                         return
                     continuation, timeout_ms, actions, ended = self._poll(session, continuation)
-                    self._store(actions, channel)
+                    if not self._live(stop):
+                        return
+                    self._store(actions, channel, stop)
+                    if not self._live(stop):
+                        return
                     if ended:
-                        self.detail = f"{video_id} has no live chat right now."
-                        self.store.set_status("youtube", "idle", self.detail)
+                        if not self._live(stop):
+                            return
+                        self._set_idle(f"{video_id} has no live chat right now.")
                         stop.wait(30)
                         break
             except TimeoutError:
                 continue
             except Exception as exc:
+                if not self._live(stop):
+                    return
                 self.error = redact(str(exc))
                 self.detail = ""
+                self.level = "error"
                 self.store.log("youtube", "error", self.error)
                 self.store.set_status("youtube", "error", self.error, error=self.error)
                 stop.wait(15)
+
+    def _live(self, stop: threading.Event) -> bool:
+        return not stop.is_set() and not self.store.collection_paused()
+
+    def _set_idle(self, detail: str) -> None:
+        self.error = ""
+        self.level = "idle"
+        self.detail = detail
+        self.store.set_status("youtube", "idle", detail)
 
     def _resolve(self, target: str) -> str:
         text = validate_youtube_watch(target)
@@ -461,6 +595,10 @@ class PublicChatFollower:
         if not video_id:
             raise ValueError("Could not find a YouTube video id at that address. Paste a watch URL or the 11-character id.")
         return video_id
+
+    def _resolve_live_channel(self, channel: str) -> str | None:
+        page = self._get(youtube_channel_live_url(channel))
+        return live_video_from_channel_html(page)
 
     def _bootstrap(self, video_id: str) -> dict:
         html = self._get(f"https://www.youtube.com/live_chat?is_popout=1&v={video_id}")
@@ -500,7 +638,10 @@ class PublicChatFollower:
             raise ApiError(api_error_message(result), status=result.status)
         return result.body.decode("utf-8", "replace")
 
-    def _store(self, actions: object, channel: str) -> None:
+    def _store(self, actions: object, channel: str, stop: threading.Event) -> None:
+        if not self._live(stop):
+            return
+        offer_chat(self._chat_feed, "youtube", chat_lines_from_live_chat_actions(actions))
         inserted = self.store.add_many(donations_from_live_chat_actions(actions, channel))
         if inserted:
             self.store.log("youtube", "info", f"Stored {inserted} event(s) from the public YouTube chat.")

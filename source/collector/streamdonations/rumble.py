@@ -22,6 +22,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+from .chat_feed import chat_time, offer_chat, remember_chat
 from .normalize import Donation, rumble_donations
 from .store import Store
 from .transport import RUMBLE_UA, Transport, api_error_message
@@ -86,6 +87,72 @@ def embed_to_chat_id(embed_body: str) -> str:
     return str(int(token, 36))
 
 
+_RUMBLE_CHANNEL_TABS = {"about", "clips", "live", "livestreams", "shorts", "videos"}
+
+
+def validate_rumble_channel(value: str) -> str:
+    """A channel page. A video URL, embed id, or the owner API URL is not one."""
+    text = (value or "").strip()
+    if re.fullmatch(r"\d{3,20}", text) or re.fullmatch(r"v[0-9a-z]{4,16}", text):
+        raise ValueError(
+            "That is a video id. Paste a channel URL, such as https://rumble.com/c/channel, "
+            "or turn off follow live and use the video field."
+        )
+    parsed = urlparse(text)
+    if parsed.scheme != "https":
+        raise ValueError("A Rumble channel link must start with https://")
+    if parsed.username or parsed.password:
+        raise ValueError("Rumble channel link must not include a username or password")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host_allowed(host, RUMBLE_HOSTS):
+        raise ValueError("Rumble channel link host must be rumble.com")
+    if parsed.port not in (None, 443):
+        raise ValueError("Rumble channel link must use port 443")
+    parts = [part for part in parsed.path.split("/") if part]
+    if parts and (parts[0].startswith("-") or parsed.path.startswith("/-livestream-api/")):
+        raise ValueError(
+            "The owner API URL is not a channel address. Paste a channel URL such as https://rumble.com/c/channel."
+        )
+    if len(parts) < 2 or parts[0] not in {"c", "user"}:
+        raise ValueError("Paste a Rumble channel URL, such as https://rumble.com/c/channel.")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,80}", parts[1]):
+        raise ValueError("That Rumble channel address is not valid.")
+    if len(parts) > 3 or (len(parts) == 3 and parts[2].lower() not in _RUMBLE_CHANNEL_TABS):
+        raise ValueError("Paste the channel URL, not a video. A video URL stays in the video field.")
+    return text
+
+
+def rumble_channel_page_url(value: str) -> str:
+    """The channel root. The livestreams tab is filled in by script and lists no video."""
+    text = validate_rumble_channel(value)
+    parts = [part for part in urlparse(text).path.split("/") if part]
+    if parts[-1].lower() in _RUMBLE_CHANNEL_TABS:
+        parts = parts[:-1]
+    return "https://rumble.com/" + "/".join(parts)
+
+
+def live_chat_id_from_channel_html(html: str) -> str | None:
+    """Numeric chat id of the one video whose badge says it is live.
+
+    A channel page's other videos are not the chat to read. The stylesheet
+    defines the live class for every page, so only a badge on a video card counts.
+    """
+    found: list[str] = []
+    for part in re.split(r'<div\s+class="videostream thumbnail', html)[1:]:
+        head, _, rest = part.partition(">")
+        blob = head + ">" + rest[:4000]
+        video = re.search(r'data-video-id="(\d+)"', head) or re.search(r'data-video-id="(\d+)"', blob[:1500])
+        if video and 'videostream__status--live"' in blob and video.group(1) not in found:
+            found.append(video.group(1))
+    if not found:
+        return None
+    if len(found) > 1:
+        raise ValueError(
+            "That Rumble channel lists more than one live video. Paste the live video's URL or turn off follow live."
+        )
+    return found[0]
+
+
 def chat_id_from_html(html: str) -> str:
     """Prefer the player embed. A directory page has many videos and no single chat."""
     embeds = list(dict.fromkeys(_EMBED_RE.findall(html)))
@@ -102,6 +169,45 @@ def chat_id_from_html(html: str) -> str:
             "That Rumble page lists more than one video. Paste the live video's URL or its numeric chat id."
         )
     raise ValueError("Could not find a Rumble chat id on that page.")
+
+
+def chat_lines_from_chat_event(event: dict) -> list[dict]:
+    """Typed public-chat lines, including a rant's text. Notices without text are skipped."""
+    if not isinstance(event, dict):
+        return []
+    data = event.get("data") if isinstance(event.get("data"), dict) else event
+    if not isinstance(data, dict):
+        return []
+    users = {
+        str(person.get("id")): str(person.get("username") or "")
+        for person in data.get("users") or []
+        if isinstance(person, dict) and person.get("id") is not None
+    }
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        messages = [data] if _looks_like_chat_message(data) else []
+    found: list[dict] = []
+    seen: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        text = " ".join(str(message.get("text") or "").split())
+        if not text:
+            continue
+        author, _author_id = _chat_author(message, users)
+        key = str(message.get("id") or "")
+        if not key:
+            key = stable_key("rumble:chat-line:", [author, message.get("time"), text])
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append({
+            "key": key,
+            "author": author,
+            "text": text,
+            "time": chat_time(message.get("time")),
+        })
+    return found
 
 
 def donations_from_chat_event(event: dict) -> list[Donation]:
@@ -233,9 +339,11 @@ def _chat_message_donation(message: object, users: dict[str, str], channel: str)
 
 
 class RumbleClient:
-    def __init__(self, store: Store, transport: Transport | None = None):
+    def __init__(self, store: Store, transport: Transport | None = None, chat_feed=None):
         self.store = store
         self.transport = transport or Transport()
+        self._chat_feed = chat_feed
+        self._chat_for = ""
         self._next_poll = 0.0
         self._chat_target = ""
         self._chat_stop = threading.Event()
@@ -244,9 +352,14 @@ class RumbleClient:
         self._sse_lock = threading.Lock()
         self._chat_detail = ""
         self._chat_error = ""
+        self._chat_level = ""
 
     def configured(self) -> bool:
-        return bool(self.store.get_setting("rumble_api_url") or self.store.get_setting("rumble_watch"))
+        if self.store.get_setting("rumble_api_url"):
+            return True
+        if self.store.get_setting("rumble_follow_live") == "1":
+            return bool(self.store.get_setting("rumble_channel"))
+        return bool(self.store.get_setting("rumble_watch"))
 
     def interval(self) -> float:
         raw = self.store.get_setting("rumble_poll_seconds", "8")
@@ -256,8 +369,35 @@ class RumbleClient:
             seconds = 8
         return float(min(120, max(5, seconds)))
 
+    def rest(self) -> None:
+        """Stop the owner poll and the public chat. Saved URLs stay in settings."""
+        self._chat_stop.set()
+        self._close_sse()
+        self._chat_target = ""
+        self._chat_detail = ""
+        self._chat_error = ""
+        self._chat_level = ""
+        thread = self._chat_thread
+        if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=2)
+
     def tick(self, force: bool = False) -> None:
+        if self.store.collection_paused():
+            self.rest()
+            return
         self._ensure_chat()
+        follow = self.store.get_setting("rumble_follow_live") == "1"
+        if follow and not self.store.get_setting("rumble_channel"):
+            note = (
+                "Paste a channel URL to follow the live stream. "
+                "The video URL is kept and is not used while this is on."
+            )
+            self._chat_error = ""
+            self._chat_level = "idle"
+            self._chat_detail = note
+            if not self.store.get_setting("rumble_api_url"):
+                self.store.set_status("rumble", "idle", note)
+                return
         if not self.configured():
             self.store.set_status(
                 "rumble",
@@ -268,6 +408,8 @@ class RumbleClient:
         if not self.store.get_setting("rumble_api_url"):
             if self._chat_error:
                 self.store.set_status("rumble", "error", self._chat_error, error=self._chat_error)
+            elif self._chat_level == "idle":
+                self.store.set_status("rumble", "idle", self._chat_detail or "That channel is not live.")
             elif self._chat_detail:
                 self.store.set_status("rumble", "ok", self._chat_detail)
             else:
@@ -350,23 +492,39 @@ class RumbleClient:
             raise ApiError(api_error_message(page), status=page.status)
         return chat_id_from_html(page.body.decode("utf-8", "replace"))
 
+    def resolve_live_channel(self, channel: str) -> str | None:
+        page_url = rumble_channel_page_url(channel)
+        page = self.transport.request(
+            "GET",
+            page_url,
+            headers={"Accept": "text/html"},
+            allow_hosts=RUMBLE_HOSTS,
+            user_agent=RUMBLE_UA,
+        )
+        if page.status >= 400:
+            raise ApiError(api_error_message(page), status=page.status)
+        return live_chat_id_from_channel_html(page.body.decode("utf-8", "replace"))
+
+    def _chat_source(self) -> str:
+        """Follow-live ignores a saved video URL until it is off."""
+        if self.store.get_setting("rumble_follow_live") == "1":
+            channel = self.store.get_setting("rumble_channel").strip()
+            return f"live\n{channel}" if channel else ""
+        watch = self.store.get_setting("rumble_watch").strip()
+        return f"watch\n{watch}" if watch else ""
+
     def _ensure_chat(self) -> None:
-        target = self.store.get_setting("rumble_watch")
+        target = self._chat_source()
+        self._chat_for = remember_chat(self._chat_feed, "rumble", self._chat_for, target)
         if target == self._chat_target and (not target or (self._chat_thread and self._chat_thread.is_alive())):
             return
         self._chat_stop.set()
-        with self._sse_lock:
-            response = self._sse_response
-            self._sse_response = None
-        if response is not None:
-            try:
-                response.close()
-            except OSError:
-                pass
+        self._close_sse()
         self._chat_stop = threading.Event()
         self._chat_target = target
         self._chat_detail = ""
         self._chat_error = ""
+        self._chat_level = ""
         if not target:
             return
         stop = self._chat_stop
@@ -376,19 +534,39 @@ class RumbleClient:
         self._chat_thread.start()
 
     def _chat_loop(self, target: str, stop: threading.Event) -> None:
-        while not stop.is_set():
+        mode, source = target.split("\n", 1)
+        while not stop.is_set() and not self.store.collection_paused():
             try:
-                chat_id = self.resolve_chat_id(target)
+                if mode == "live":
+                    chat_id = self.resolve_live_channel(source)
+                    if stop.is_set() or self.store.collection_paused():
+                        return
+                    if not chat_id:
+                        self._chat_error = ""
+                        self._chat_level = "idle"
+                        self._chat_detail = (
+                            "That channel is not live. Chat waits until the channel page shows one live video."
+                        )
+                        self.store.set_status("rumble", "idle", self._chat_detail)
+                        stop.wait(30)
+                        continue
+                else:
+                    chat_id = self.resolve_chat_id(source)
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 self._read_chat(chat_id, stop)
-                if stop.is_set():
+                if stop.is_set() or self.store.collection_paused():
                     return
                 self._chat_error = ""
                 stop.wait(3)
             except TimeoutError:
                 continue
             except Exception as exc:
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 self._chat_error = redact(str(exc))
                 self._chat_detail = ""
+                self._chat_level = "error"
                 self.store.log("rumble", "error", self._chat_error)
                 self.store.set_status("rumble", "error", self._chat_error, error=self._chat_error)
                 stop.wait(15)
@@ -412,17 +590,20 @@ class RumbleClient:
                 raise ApiError(f"Rumble has no live chat for video {chat_id} right now.")
             if response.status >= 400:
                 raise ApiError(f"Rumble chat returned HTTP {response.status} for video {chat_id}.")
+            if stop.is_set() or self.store.collection_paused():
+                return
             self._chat_error = ""
+            self._chat_level = "ok"
             self._chat_detail = (
                 f"Public chat {chat_id} is connected. "
                 "This does not require owning the channel. Dollar amounts for subs still need the owner API."
             )
             self.store.set_status("rumble", "ok", self._chat_detail)
-            while not stop.is_set():
+            while not stop.is_set() and not self.store.collection_paused():
                 line = response.readline()
-                if not line:
+                if stop.is_set() or self.store.collection_paused() or not line:
                     return
-                self._consume_sse_line(line)
+                self._consume_sse_line(line, stop)
         finally:
             with self._sse_lock:
                 if self._sse_response is response:
@@ -432,7 +613,19 @@ class RumbleClient:
             except OSError:
                 pass
 
-    def _consume_sse_line(self, line: bytes) -> None:
+    def _close_sse(self) -> None:
+        with self._sse_lock:
+            response = self._sse_response
+            self._sse_response = None
+        if response is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
+
+    def _consume_sse_line(self, line: bytes, stop: threading.Event) -> None:
+        if stop.is_set() or self.store.collection_paused():
+            return
         text = line.decode("utf-8", "replace").strip()
         if not text.startswith("data:"):
             return
@@ -445,6 +638,7 @@ class RumbleClient:
             return
         if not isinstance(payload, dict):
             return
+        offer_chat(self._chat_feed, "rumble", chat_lines_from_chat_event(payload))
         donations = donations_from_chat_event(payload)
         inserted = self.store.add_many(donations)
         if inserted:

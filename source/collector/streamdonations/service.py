@@ -11,15 +11,17 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
+from .chat_feed import ChatFeed
+from .giveaway import Giveaway
 from .goals import dump_tiers, normalize_tiers
 from .kick import KickClient
 from .kick_public import validate_kick_watch
-from .rumble import RumbleClient, validate_rumble_api_url, validate_rumble_watch
+from .rumble import RumbleClient, validate_rumble_api_url, validate_rumble_channel, validate_rumble_watch
 from .store import Store
 from .transport import Transport
 from .util import redact
 from .youtube import YouTubeClient
-from .youtube_public import validate_youtube_watch
+from .youtube_public import validate_youtube_channel, validate_youtube_watch
 from .youtube_quota import clamp_poll_seconds
 
 _HOST_NAME = re.compile(
@@ -29,13 +31,18 @@ _ALLOWED_SETTINGS = {
     "youtube_client_id",
     "youtube_client_secret",
     "youtube_watch",
+    "youtube_channel",
+    "youtube_follow_live",
     "youtube_poll_seconds",
     "rumble_api_url",
     "rumble_watch",
+    "rumble_channel",
+    "rumble_follow_live",
     "rumble_poll_seconds",
     "kick_client_id",
     "kick_client_secret",
     "kick_watch",
+    "kick_follow_live",
     "kick_webhook_host",
     "kick_webhook_port",
     "kick_public_base",
@@ -45,6 +52,11 @@ _ALLOWED_SETTINGS = {
     "chat_extra",
     "goal_tiers",
 }
+
+PAUSED_DETAIL = (
+    "Collection is paused. Credentials and watch URLs were kept. "
+    "No API requests or live chat reading until you reconnect."
+)
 
 
 @dataclass
@@ -66,9 +78,12 @@ class Service:
     def __init__(self, store: Store, transport: Transport | None = None):
         self.store = store
         shared = transport or Transport()
-        self.youtube = YouTubeClient(store, shared)
-        self.rumble = RumbleClient(store, shared)
-        self.kick = KickClient(store, shared)
+        self.chat = ChatFeed()
+        self.giveaway = Giveaway()
+        self.chat.on_lines = self.giveaway.observe
+        self.youtube = YouTubeClient(store, shared, chat_feed=self.chat)
+        self.rumble = RumbleClient(store, shared, chat_feed=self.chat)
+        self.kick = KickClient(store, shared, chat_feed=self.chat)
         self.on_listen_change = None
         self._stop = threading.Event()
         self._poll_lock = threading.Lock()
@@ -89,6 +104,9 @@ class Service:
         ]
         for thread in self._threads:
             thread.start()
+        if self.paused():
+            self._mark_paused()
+            return
         threading.Thread(target=self.kick.refresh_public_key, name="kick-key", daemon=True).start()
 
     def stop(self) -> None:
@@ -108,9 +126,84 @@ class Service:
                 continue
             self._stop.wait(1)
 
+    def paused(self) -> bool:
+        return self.store.collection_paused()
+
+    def set_paused(self, paused: bool, tab_id: str | None = None) -> None:
+        """Stop or resume one ledger without signing out.
+
+        Collectors follow the open ledger only. Pausing another ledger stores
+        that choice and leaves the open one running.
+        """
+        with self._poll_lock:
+            # Read this before the ledger document is opened. Migration writes
+            # "1", which would hide the first pause and skip stopping chat.
+            already = self.paused()
+            target = self.store.set_stream_paused(tab_id, paused)
+            active = self.store._active_stream_id()
+            if target != active:
+                self.store.log(
+                    "ledger",
+                    "info",
+                    "Paused that ledger. It does not collect while it is open."
+                    if paused
+                    else "That ledger will collect while it is open.",
+                )
+                return
+            if paused:
+                self._rest_platforms()
+                if not already:
+                    self.store.log(
+                        "ledger",
+                        "info",
+                        "Soft disconnect. This ledger's API requests and live chat reading are paused. "
+                        "Sign-in and watch URLs were kept.",
+                    )
+                return
+            if not already:
+                return
+            self.store.log("ledger", "info", "Reconnected. This ledger is collecting again.")
+            self._resume_platforms()
+
+    def follow_open_ledger(self) -> None:
+        """Start or stop collectors to match the ledger that is now open. No log line."""
+        with self._poll_lock:
+            if self.paused():
+                self._rest_platforms()
+                return
+            self._resume_platforms()
+
+    def _rest_platforms(self) -> None:
+        self.youtube.rest()
+        self.rumble.rest()
+        self.kick.rest()
+        self._mark_paused()
+
+    def _resume_platforms(self) -> None:
+        self.youtube._next_super = 0
+        self.youtube._next_broadcast = 0
+        self.youtube._next_chat = 0
+        self.rumble._next_poll = 0
+        self.kick._next_status = 0
+        for name, client in (
+            ("youtube", self.youtube),
+            ("rumble", self.rumble),
+            ("kick", self.kick),
+        ):
+            try:
+                client.tick()
+            except Exception as exc:
+                self.store.log(name, "error", redact(str(exc)))
+
+    def _mark_paused(self) -> None:
+        for name in ("youtube", "rumble", "kick"):
+            self.store.set_status(name, "idle", PAUSED_DETAIL)
+
     def poll_now(self) -> list[str]:
         errors = []
         with self._poll_lock:
+            if self.paused():
+                return ["Collection is paused. Reconnect to send requests again."]
             for name, client in (
                 ("youtube", self.youtube),
                 ("rumble", self.rumble),
@@ -172,6 +265,14 @@ class Service:
                     updates[key] = validate_youtube_watch(text)
                 else:
                     clears.append(key)
+            elif key == "youtube_channel":
+                text = str(value or "").strip()
+                if text:
+                    updates[key] = validate_youtube_channel(text)
+                else:
+                    clears.append(key)
+            elif key == "youtube_follow_live":
+                updates[key] = "1" if _flag(value) else "0"
             elif key in {"youtube_poll_seconds"}:
                 updates[key] = _youtube_poll_seconds(value)
             elif key == "rumble_poll_seconds":
@@ -197,6 +298,14 @@ class Service:
                     updates[key] = validate_rumble_watch(text)
                 else:
                     clears.append(key)
+            elif key == "rumble_channel":
+                text = str(value or "").strip()
+                if text:
+                    updates[key] = validate_rumble_channel(text)
+                else:
+                    clears.append(key)
+            elif key in {"rumble_follow_live", "kick_follow_live"}:
+                updates[key] = "1" if _flag(value) else "0"
             elif key == "kick_watch":
                 text = str(value or "").strip()
                 if text:

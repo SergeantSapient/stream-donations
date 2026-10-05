@@ -2,7 +2,13 @@
 
 import unittest
 
-from streamdonations.kick_public import donations_from_kick_public, kick_slug, validate_kick_watch
+from streamdonations.kick_public import (
+    donations_from_kick_public,
+    kick_live_status,
+    kick_slug,
+    public_kick_detail,
+    validate_kick_watch,
+)
 
 
 class PublicKickTests(unittest.TestCase):
@@ -59,6 +65,40 @@ class PublicKickTests(unittest.TestCase):
             donations_from_kick_public("LuckyUsersWhoGotGiftSubscriptionsEvent", {"users": ["a"]}, "creator"),
             [],
         )
+
+    def test_livestream_object_reports_live_without_changing_chat(self):
+        offline = {"id": 668, "slug": "xqc", "chatroom": {"id": 668}, "livestream": None}
+        self.assertEqual(kick_live_status(offline), (False, ""))
+        self.assertIsNone(kick_live_status({"chatroom": {"id": 1}}))
+        live = {
+            "id": 4911,
+            "slug": "classybeef",
+            "chatroom": {"id": 4910},
+            "livestream": {
+                "id": 130351980,
+                "channel_id": 4911,
+                "is_live": True,
+                "session_title": "Slot night",
+            },
+        }
+        self.assertEqual(kick_live_status(live), (True, "Slot night"))
+        self.assertEqual(kick_live_status({"livestream": {"is_live": False, "id": 9}}), (False, ""))
+        quiet = public_kick_detail(
+            {"username": "classybeef", "slug": "classybeef", "live": False, "title": ""},
+            follow=False,
+        )
+        self.assertNotIn("not live", quiet)
+        shown = public_kick_detail(
+            {"username": "classybeef", "slug": "classybeef", "live": True, "title": "Slot night"},
+            follow=True,
+        )
+        self.assertIn("The channel is live: Slot night.", shown)
+        self.assertIn("classybeef", shown)
+        waiting = public_kick_detail(
+            {"username": "xqc", "slug": "xqc", "live": False, "title": ""},
+            follow=True,
+        )
+        self.assertIn("The channel is not live. Chat stays connected.", waiting)
 
 
 if __name__ == "__main__":

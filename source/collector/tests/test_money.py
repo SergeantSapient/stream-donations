@@ -207,6 +207,33 @@ class MoneyTests(unittest.TestCase):
         self.assertEqual(member["Amount"], "")
         self.assertEqual(member["Amount USD"], "")
 
+    def test_anniversary_card_is_a_free_super_chat(self):
+        self.store.add_many([
+            row(
+                "yt-anniversary",
+                "youtube",
+                "member_milestone",
+                "samfisher2141",
+                "Member for 2 months · Smashers · HAIL Smash",
+                None,
+                None,
+                "2026-09-30T05:47:36Z",
+                {"headerPrimaryText": {"simpleText": "Member for 2 months"}},
+            )
+        ])
+        chats, chat_total = self.store.list_donations(kind="super_chat", membership_price=4.99, rates=RATES)
+        members, _member_total = self.store.list_donations(kind="membership", membership_price=4.99, rates=RATES)
+        self.assertEqual(chat_total, 6)
+        shown = next(item for item in chats if item["author_name"] == "samfisher2141")
+        self.assertEqual(shown["kind_label"], "Super Chat")
+        self.assertIsNone(shown["amount_usd"])
+        self.assertIsNone(shown["quoted_amount"])
+        self.assertNotIn("samfisher2141", {item["author_name"] for item in members})
+        self.assertEqual(self.store.total_donated(RATES, 4.99), 41.98)
+        report = self.store.stream_report(RATES, 4.99)
+        self.assertEqual(report["total_usd"], 41.98)
+        self.assertIn("Super Chat", {item["type"] for item in report["by_type"]})
+
     def test_type_filter_groups_platforms(self):
         chats, chat_total = self.store.list_donations(kind="super_chat")
         stickers, sticker_total = self.store.list_donations(kind="super_sticker")
@@ -278,6 +305,88 @@ class MoneyTests(unittest.TestCase):
             RATES,
         )
         self.assertIsNone(priced.usd)
+
+    def test_stored_peso_without_currency_uses_the_payload(self):
+        shown = quote(
+            {
+                "platform": "youtube",
+                "kind": "super_chat",
+                "amount_value": 50,
+                "currency": None,
+                "message": "juuuuuuuuuuuuicy tip",
+                "raw": {"purchaseAmountText": {"simpleText": "₱50.00"}},
+            },
+            None,
+            RATES,
+        )
+        self.assertEqual(shown.amount, 50.0)
+        self.assertEqual(shown.currency, "PHP")
+        self.assertEqual(shown.usd, round(50 / RATES["PHP"], 2))
+        exact = quote(
+            {
+                "platform": "youtube",
+                "kind": "super_chat",
+                "amount_value": 0.8,
+                "currency": None,
+                "raw": {
+                    "purchaseAmountText": {"simpleText": "$0.80"},
+                    "amountMicros": "50000000",
+                    "currency": "PHP",
+                },
+            },
+            None,
+            RATES,
+        )
+        self.assertEqual(exact.amount, 50.0)
+        self.assertEqual(exact.currency, "PHP")
+        self.assertEqual(exact.usd, round(50 / RATES["PHP"], 2))
+
+    def test_anniversary_membership_adds_nothing(self):
+        anniversary = quote(
+            {
+                "platform": "youtube",
+                "kind": "membership",
+                "amount_value": None,
+                "currency": None,
+                "message": "Smashers",
+                "raw": {
+                    "headerPrimaryText": {"runs": [{"text": "Member for 2 months"}]},
+                    "headerSubtext": {"simpleText": "Smashers"},
+                },
+            },
+            4.99,
+            RATES,
+        )
+        self.assertIsNone(anniversary.amount)
+        self.assertIsNone(anniversary.usd)
+        self.assertEqual(anniversary.label, "Super Chat")
+        year = quote(
+            {
+                "platform": "youtube",
+                "kind": "member_milestone",
+                "amount_value": None,
+                "currency": None,
+                "message": "Member for 1 year",
+                "raw": {},
+            },
+            4.99,
+            RATES,
+        )
+        self.assertIsNone(year.usd)
+        self.assertEqual(year.label, "Super Chat")
+        fresh = quote(
+            {
+                "platform": "youtube",
+                "kind": "membership",
+                "amount_value": None,
+                "currency": None,
+                "message": "Smashers",
+                "raw": {"headerSubtext": {"simpleText": "Smashers"}},
+            },
+            4.99,
+            RATES,
+        )
+        self.assertEqual(fresh.usd, 4.99)
 
     def test_membership_price_setting(self):
         service = Service(self.store)

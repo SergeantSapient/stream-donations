@@ -17,8 +17,10 @@ import os
 import socket
 import ssl
 import threading
+import time
 from urllib.parse import urlparse
 
+from .chat_feed import chat_time, offer_chat, remember_chat
 from .normalize import Donation
 from .store import Store
 from .transport import Transport, api_error_message
@@ -68,6 +70,54 @@ def kick_slug(value: str) -> str:
 
 def _slug_ok(value: str) -> bool:
     return bool(value) and all(ch.isalnum() or ch in "_-" for ch in value) and len(value) <= 50
+
+
+def kick_live_status(payload: dict) -> tuple[bool, str] | None:
+    """Whether this channel payload says a broadcast is on.
+
+    None means the payload did not say. The chat room id is unchanged either way.
+    """
+    if not isinstance(payload, dict) or "livestream" not in payload:
+        return None
+    live = payload.get("livestream")
+    if not isinstance(live, dict) or live.get("is_live") is not True:
+        return False, ""
+    title = " ".join(str(live.get("session_title") or "").split())
+    return True, title[:80]
+
+
+def public_kick_detail(info: dict, follow: bool) -> str:
+    label = info.get("username") or info.get("slug") or "this channel"
+    sentence = ""
+    if follow and info.get("live") is not None:
+        if info.get("live"):
+            title = str(info.get("title") or "")
+            sentence = f" The channel is live: {title}." if title else " The channel is live."
+        else:
+            sentence = " The channel is not live. Chat stays connected."
+    return (
+        f"Public chat for {label}.{sentence} "
+        "New subs, gifted subs, and Kicks do not need you to own the channel."
+    )
+
+
+def chat_lines_from_kick_public(event_name: str, data: object) -> list[dict]:
+    """A public chat message. Donations stay on the other parser. Nothing is fetched."""
+    leaf = (event_name or "").strip().split("\\")[-1].lower().replace("_", "")
+    if leaf not in {"chatmessage", "chatmessageevent", "chatmessagesentevent"}:
+        return []
+    payload = _object(data)
+    if payload is None:
+        return []
+    text = " ".join(str(payload.get("content") or payload.get("message") or "").split())
+    if not text:
+        return []
+    sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
+    author = str(sender.get("username") or payload.get("username") or payload.get("sender_username") or "")
+    key = str(payload.get("id") or "")
+    if not key:
+        key = stable_key("kick:chat:", [author, text, payload.get("created_at")])
+    return [{"key": key, "author": author, "text": text, "time": chat_time(payload.get("created_at"))}]
 
 
 def donations_from_kick_public(event_name: str, data: object, channel_slug: str) -> list[Donation]:
@@ -336,17 +386,47 @@ def _open_pusher() -> socket.socket:
 
 
 class PublicKickChat:
-    def __init__(self, store: Store, transport: Transport):
+    def __init__(self, store: Store, transport: Transport, chat_feed=None):
         self.store = store
         self.transport = transport
+        self._chat_feed = chat_feed
+        self._chat_for = ""
         self.detail = ""
         self.error = ""
         self._target = ""
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._sock: socket.socket | None = None
+        self._sock_lock = threading.Lock()
+
+    def rest(self) -> None:
+        """Stop reading chat. The saved channel stays in settings."""
+        self._stop.set()
+        self._target = ""
+        self.detail = ""
+        self.error = ""
+        with self._sock_lock:
+            sock = self._sock
+            self._sock = None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        thread = self._thread
+        if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=2)
+
+    def source(self) -> str:
+        watch = self.store.get_setting("kick_watch").strip()
+        if not watch:
+            return ""
+        follow = "1" if self.store.get_setting("kick_follow_live") == "1" else "0"
+        return f"{follow}\n{watch}"
 
     def ensure(self) -> None:
-        target = self.store.get_setting("kick_watch")
+        target = self.source()
+        self._chat_for = remember_chat(self._chat_feed, "kick", self._chat_for, target)
         if target == self._target and (not target or (self._thread and self._thread.is_alive())):
             return
         self._stop.set()
@@ -361,27 +441,51 @@ class PublicKickChat:
         self._thread.start()
 
     def _loop(self, target: str, stop: threading.Event) -> None:
-        while not stop.is_set():
+        follow_flag, source = target.split("\n", 1)
+        follow = follow_flag == "1"
+        while not stop.is_set() and not self.store.collection_paused():
             sock = None
             try:
-                slug = kick_slug(target)
+                slug = kick_slug(source)
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 info = self._lookup(slug)
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 sock = _open_pusher()
+                with self._sock_lock:
+                    if stop.is_set() or self.store.collection_paused():
+                        sock.close()
+                        return
+                    self._sock = sock
                 buf: _SocketBuffer = sock._stream_donations_buffer  # type: ignore[attr-defined]
                 self._subscribe(sock, info)
-                label = info.get("username") or info["slug"]
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 self.error = ""
-                self.detail = (
-                    f"Public chat for {label}. "
-                    "New subs, gifted subs, and Kicks do not need you to own the channel."
-                )
+                self.detail = public_kick_detail(info, follow)
                 self.store.set_status("kick", "ok", self.detail)
                 sock.settimeout(50)
-                while not stop.is_set():
+                next_live = time.monotonic() + 60
+                while not stop.is_set() and not self.store.collection_paused():
+                    if follow and time.monotonic() >= next_live:
+                        next_live = time.monotonic() + 60
+                        fresh = self._refresh_live(slug, info)
+                        if stop.is_set() or self.store.collection_paused():
+                            return
+                        if fresh is not None and (
+                            fresh["chatroom_id"] != info["chatroom_id"]
+                            or fresh["channel_id"] != info["channel_id"]
+                        ):
+                            break
+                        if fresh is not None:
+                            info = fresh
                     try:
                         opcode, payload = _read_frame(buf)
                     except TimeoutError:
                         continue
+                    if stop.is_set() or self.store.collection_paused():
+                        return
                     if opcode == 8:
                         break
                     if opcode == 9:
@@ -389,16 +493,21 @@ class PublicKickChat:
                         continue
                     if opcode != 1 or not payload:
                         continue
-                    self._on_message(sock, payload, info["slug"])
+                    self._on_message(sock, payload, info["slug"], stop)
             except TimeoutError:
                 continue
             except Exception as exc:
+                if stop.is_set() or self.store.collection_paused():
+                    return
                 self.error = redact(str(exc))
                 self.detail = ""
                 self.store.log("kick", "error", self.error)
                 self.store.set_status("kick", "error", self.error, error=self.error)
                 stop.wait(15)
             finally:
+                with self._sock_lock:
+                    if self._sock is sock:
+                        self._sock = None
                 if sock is not None:
                     try:
                         sock.close()
@@ -407,7 +516,14 @@ class PublicKickChat:
 
     def _lookup(self, slug: str) -> dict:
         if slug.isdigit():
-            return {"chatroom_id": int(slug), "channel_id": int(slug), "slug": slug, "username": slug}
+            return {
+                "chatroom_id": int(slug),
+                "channel_id": int(slug),
+                "slug": slug,
+                "username": slug,
+                "live": None,
+                "title": "",
+            }
         result = self.transport.request(
             "GET",
             f"https://kick.com/api/v2/channels/{slug}",
@@ -428,12 +544,33 @@ class PublicKickChat:
         if chatroom_id is None:
             raise ApiError(f"Kick did not return a chatroom for {slug}")
         user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+        status = kick_live_status(payload)
+        live: bool | None
+        title = ""
+        if status is None:
+            live = None
+        else:
+            live, title = status
         return {
             "chatroom_id": chatroom_id,
             "channel_id": channel_id or chatroom_id,
             "slug": str(payload.get("slug") or slug),
             "username": str(user.get("username") or payload.get("slug") or slug),
+            "live": live,
+            "title": title,
         }
+
+    def _refresh_live(self, slug: str, info: dict) -> dict | None:
+        """Re-read live or offline from the same channel lookup. Chat stays up."""
+        try:
+            fresh = self._lookup(slug)
+        except (ApiError, OSError, TimeoutError, ValueError):
+            return None
+        if fresh["chatroom_id"] != info["chatroom_id"] or fresh["channel_id"] != info["channel_id"]:
+            return fresh
+        self.detail = public_kick_detail(fresh, True)
+        self.store.set_status("kick", "ok", self.detail)
+        return fresh
 
     def _subscribe(self, sock: socket.socket, info: dict) -> None:
         chatroom_id = info["chatroom_id"]
@@ -451,7 +588,9 @@ class PublicKickChat:
                 "data": {"auth": "", "channel": name},
             }))
 
-    def _on_message(self, sock: socket.socket, payload: bytes, channel_slug: str) -> None:
+    def _on_message(self, sock: socket.socket, payload: bytes, channel_slug: str, stop: threading.Event) -> None:
+        if stop.is_set() or self.store.collection_paused():
+            return
         try:
             message = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -464,6 +603,7 @@ class PublicKickChat:
             return
         if event.startswith("pusher:"):
             return
+        offer_chat(self._chat_feed, "kick", chat_lines_from_kick_public(event, message.get("data")))
         inserted = self.store.add_many(donations_from_kick_public(event, message.get("data"), channel_slug))
         if inserted:
             self.store.log("kick", "info", f"Stored {inserted} event(s) from the public Kick chat.")

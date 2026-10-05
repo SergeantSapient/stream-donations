@@ -1,6 +1,6 @@
 "use strict";
 
-const { contextBridge, shell } = require("electron");
+const { clipboard, contextBridge, shell } = require("electron");
 
 contextBridge.exposeInMainWorld("desktop", {
   openExternal(url) {
@@ -8,5 +8,8 @@ contextBridge.exposeInMainWorld("desktop", {
       return shell.openExternal(url);
     }
     return Promise.resolve();
+  },
+  readClipboard() {
+    return clipboard.readText();
   },
 });

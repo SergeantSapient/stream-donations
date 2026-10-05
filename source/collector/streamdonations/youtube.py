@@ -32,7 +32,7 @@ TOKEN_HOSTS = {"oauth2.googleapis.com"}
 
 
 class YouTubeClient:
-    def __init__(self, store: Store, transport: Transport | None = None):
+    def __init__(self, store: Store, transport: Transport | None = None, chat_feed=None):
         self.store = store
         self.transport = transport or Transport()
         self._auth_lock = threading.Lock()
@@ -42,7 +42,7 @@ class YouTubeClient:
         self._chats: list[dict[str, str]] = []
         self._chat_tokens: dict[str, str] = {}
         self._live_disabled = False
-        self._public = PublicChatFollower(store, self.transport)
+        self._public = PublicChatFollower(store, self.transport, chat_feed)
         self._quota = YouTubeQuota(store)
 
     def client_saved(self) -> bool:
@@ -50,6 +50,17 @@ class YouTubeClient:
 
     def connected(self) -> bool:
         return self.client_saved() and bool(self.store.get_setting("youtube_refresh_token"))
+
+    def public_video_id(self, target: str) -> str:
+        """11-character id for a saved video address. Same lookup public chat uses."""
+        return self._public._resolve(target)
+
+    def public_live_video_id(self, channel: str) -> str | None:
+        """Current live video id, or None when the channel is offline.
+
+        Uses the public /live page already fetched for chat. It does not spend Data API quota.
+        """
+        return self._public._resolve_live_channel(channel)
 
     def interval(self) -> float:
         raw = self.store.get_setting("youtube_poll_seconds", "900")
@@ -108,7 +119,10 @@ class YouTubeClient:
         self._chats = []
         self._live_disabled = False
         self._next_broadcast = 0.0
-        if self.store.get_setting("youtube_watch"):
+        public = self.store.get_setting("youtube_watch") or (
+            self.store.get_setting("youtube_follow_live") == "1" and self.store.get_setting("youtube_channel")
+        )
+        if public:
             self.store.set_status(
                 "youtube",
                 "idle",
@@ -117,11 +131,27 @@ class YouTubeClient:
         else:
             self.store.set_status("youtube", "unconfigured", "Disconnected. Connect the channel again to keep collecting.")
 
+    def rest(self) -> None:
+        self._public.rest()
+
     def tick(self, force: bool = False) -> None:
+        if self.store.collection_paused():
+            self.rest()
+            return
         self._public.ensure()
+        follow = self.store.get_setting("youtube_follow_live") == "1"
+        has_channel = bool(self.store.get_setting("youtube_channel"))
         has_watch = bool(self.store.get_setting("youtube_watch"))
         if not self.connected():
-            if has_watch:
+            if follow and not has_channel:
+                self.store.set_status(
+                    "youtube",
+                    "idle",
+                    "Paste a channel URL to follow the live stream. "
+                    "The video URL is kept and is not used while this is on.",
+                )
+                return
+            if follow or has_watch:
                 self._report_public()
                 return
             if not self.client_saved():
@@ -246,8 +276,11 @@ class YouTubeClient:
         self.store.set_status("youtube", "ok", detail)
 
     def _report_public(self) -> None:
-        if self._public.error:
-            self.store.set_status("youtube", "error", self._public.error, error=self._public.error)
+        if self._public.error or self._public.level == "error":
+            message = self._public.error or "Public chat failed."
+            self.store.set_status("youtube", "error", message, error=message)
+        elif self._public.level == "idle":
+            self.store.set_status("youtube", "idle", self._public.detail or "The channel is not live.")
         elif self._public.detail:
             self.store.set_status("youtube", "ok", self._public.detail)
         else:

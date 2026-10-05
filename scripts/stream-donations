@@ -1,6 +1,6 @@
 #!/bin/sh
 # Launch the Electron shell. The shell starts the Python collector.
-# This does not install anything and does not ask for root. The ledger and
+# This does not install packages and does not ask for root. The ledger and
 # API secrets stay in the home directory, not next to this file.
 set -eu
 if [ "$(id -u)" -eq 0 ]; then
@@ -39,9 +39,37 @@ case "${STREAM_DONATIONS_DATA:-}" in
     unset STREAM_DONATIONS_DATA
     ;;
 esac
+# File dialogs can go through the session portal when the desktop offers one.
+if [ -z "${GTK_USE_PORTAL+x}" ]; then
+  export GTK_USE_PORTAL=1
+fi
+# A per-user desktop entry lets the session match this window to an icon.
+# An AppImage already carries its own entry, and its mount path changes.
+if [ -z "${APPIMAGE:-}" ]; then
+  data="${XDG_DATA_HOME:-$HOME/.local/share}"
+  case "$data" in
+    "$HOME"|"$HOME"/*)
+      icon_dir="$data/icons/hicolor/256x256/apps"
+      if [ -f "$ROOT/app/icon.png" ] && mkdir -p "$icon_dir" "$data/applications"; then
+        cp "$ROOT/app/icon.png" "$icon_dir/stream-donations.png"
+        cat > "$data/applications/stream-donations.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Stream Donations
+Comment=Local ledger of Super Chats, Super Stickers, and memberships
+Exec=$ROOT/$(basename "$0")
+Icon=stream-donations
+StartupWMClass=stream-donations
+Terminal=false
+Categories=Utility;
+EOF
+      fi
+      ;;
+  esac
+fi
 # The AppImage mount cannot use Electron's sandbox helper. A normal directory
 # launch keeps the sandbox.
 if [ -n "${APPIMAGE:-}" ]; then
-  exec "$ELECTRON" --no-sandbox "$ROOT/app" "$@"
+  exec "$ELECTRON" --no-sandbox --class=stream-donations "$ROOT/app" "$@"
 fi
-exec "$ELECTRON" "$ROOT/app" "$@"
+exec "$ELECTRON" --class=stream-donations "$ROOT/app" "$@"

@@ -12,7 +12,7 @@ KIND_LABELS = {
     "super_sticker": "Super Sticker",
     "fan_funding": "Fan funding",
     "membership": "New member",
-    "member_milestone": "Member milestone",
+    "member_milestone": "Super Chat",
     "membership_gift": "Gifted memberships",
     "gift_membership_received": "Gift membership received",
     "rant": "Rant",

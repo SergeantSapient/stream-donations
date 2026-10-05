@@ -59,6 +59,7 @@ cp -a "$ELECTRON_SRC/." "$DIST/electron/"
 cp "$ROOT/source/electron/package.json" "$DIST/app/package.json"
 cp "$ROOT/source/electron/main.js" "$DIST/app/main.js"
 cp "$ROOT/source/electron/preload.js" "$DIST/app/preload.js"
+cp "$ROOT/source/electron/icon.png" "$DIST/app/icon.png"
 cp -a "$ROOT/source/collector/streamdonations" "$DIST/collector/streamdonations"
 find "$DIST/collector" -depth -name '__pycache__' -exec rm -rf {} + || true
 find "$DIST/collector" -name '*.pyc' -delete || true
@@ -74,42 +75,16 @@ mkdir -p "$APPDIR"
 cp -a "$DIST/." "$APPDIR/"
 cp "$APPDIR/StreamDonations" "$APPDIR/AppRun"
 chmod 755 "$APPDIR/AppRun"
+cp "$ROOT/source/electron/icon.png" "$APPDIR/stream-donations.png"
 cat > "$APPDIR/stream-donations.desktop" <<'EOF'
 [Desktop Entry]
 Name=Stream Donations
 Exec=StreamDonations
 Icon=stream-donations
+StartupWMClass=stream-donations
 Type=Application
 Categories=Utility;
 EOF
-"$PYTHON_CACHE/bin/python3" - <<PY
-import struct
-import zlib
-from pathlib import Path
-
-def chunk(tag, data):
-    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-size = 256
-rows = []
-for y in range(size):
-    row = bytearray([0])
-    for x in range(size):
-        edge = 28 < x < 228 and 28 < y < 228
-        mark = 78 < x < 178 and 108 < y < 148
-        if mark:
-            row += bytes((19, 20, 22, 255))
-        elif edge:
-            row += bytes((238, 237, 229, 255))
-        else:
-            row += bytes((19, 20, 22, 255))
-    rows.append(bytes(row))
-png = b"\x89PNG\r\n\x1a\n"
-png += chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
-png += chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
-png += chunk(b"IEND", b"")
-Path("$APPDIR/stream-donations.png").write_bytes(png)
-PY
 
 tool="$ROOT/build/appimagetool"
 if [ ! -x "$tool" ]; then
@@ -117,11 +92,14 @@ if [ ! -x "$tool" ]; then
     && chmod 755 "$tool" \
     || true
 fi
+# Set STREAM_DONATIONS_APPIMAGE to write somewhere else when the usual file is open.
+image="${STREAM_DONATIONS_APPIMAGE:-$ROOT/dist/StreamDonations-x86_64.AppImage}"
 if [ -x "$tool" ]; then
-  ARCH=x86_64 "$tool" --appimage-extract-and-run "$APPDIR" "$ROOT/dist/StreamDonations-x86_64.AppImage" \
-    || ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$APPDIR" "$ROOT/dist/StreamDonations-x86_64.AppImage" \
+  ARCH=x86_64 "$tool" --appimage-extract-and-run "$APPDIR" "$image" \
+    || ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$APPDIR" "$image" \
     || echo "AppImage tool could not wrap the folder. Run dist/StreamDonations-linux-x64/StreamDonations instead." >&2
 else
   echo "AppImage tool was not downloaded. Run dist/StreamDonations-linux-x64/StreamDonations instead." >&2
 fi
 echo "Portable folder: $DIST"
+echo "AppImage: $image"

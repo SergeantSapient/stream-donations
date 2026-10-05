@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, nativeImage, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -9,6 +9,11 @@ const path = require("path");
 
 const TOKEN = crypto.randomBytes(32).toString("hex");
 const PORT = process.env.STREAM_DONATIONS_PORT || "47321";
+
+if (process.platform === "linux") {
+  app.setName("stream-donations");
+  app.commandLine.appendSwitch("class", "stream-donations");
+}
 
 let collector = null;
 let quitting = false;
@@ -151,6 +156,15 @@ function startCollector() {
   return child;
 }
 
+function windowIcon() {
+  const iconPath = path.join(__dirname, "icon.png");
+  if (!fs.existsSync(iconPath)) {
+    return undefined;
+  }
+  const image = nativeImage.createFromPath(iconPath);
+  return image.isEmpty() ? undefined : image;
+}
+
 function stopCollector() {
   if (!collector || collector.exitCode !== null) {
     return;
@@ -183,6 +197,7 @@ async function openWindow(port) {
     backgroundColor: "#14120f",
     autoHideMenuBar: true,
     title: "Stream Donations",
+    icon: windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -203,7 +218,14 @@ async function openWindow(port) {
     shell.openExternal(url);
   });
 
+  const icon = windowIcon();
+  if (icon) {
+    window.setIcon(icon);
+  }
   await window.loadURL(origin + "/");
+  if (icon) {
+    window.setIcon(icon);
+  }
 }
 
 app.setPath("userData", path.join(dataDir(), "window"));
