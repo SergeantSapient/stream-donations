@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import __version__
 from .currencies import SUPPORTED_CURRENCIES
 from .embed import FRAME_SRC, player_for_ledger
 from .fx import rate_status, refresh_rates, usd_rates
@@ -20,19 +21,22 @@ from .kinds import KIND_LABELS, PLATFORM_LABELS
 from .goals import load_tiers
 from .money import DISPLAY_LABELS, parse_membership_price
 from .paste import paste_for_form
-from .service import Service
+from .service import Service, displayed_ledger_page_size
+from .ledger_file import parse_ledger_jsonl, present_archive
 from .settings_file import export_settings, parse_settings_file
-from .store import Store
+from .store import DuplicateManual, Store, _checked_manual_fields
 from .util import ApiError, redact, utc_now_iso
 from .youtube import open_browser
 from .youtube_quota import clamp_poll_seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _DONATION_PATH = re.compile(r"/api/donations/(\d+)")
-_ICON_FILES = {
-    "/icons/youtube.svg": "icons/youtube.svg",
-    "/icons/rumble.svg": "icons/rumble.svg",
-    "/icons/kick.svg": "icons/kick.svg",
+_STATIC_FILES = {
+    "/icons/youtube.svg": ("icons/youtube.svg", "image/svg+xml"),
+    "/icons/rumble.svg": ("icons/rumble.svg", "image/svg+xml"),
+    "/icons/kick.svg": ("icons/kick.svg", "image/svg+xml"),
+    "/icons/superberry.png": ("icons/superberry.png", "image/png"),
+    "/fonts/fredoka.woff2": ("fonts/fredoka.woff2", "font/woff2"),
 }
 
 
@@ -131,11 +135,21 @@ class App:
                 return self._file("app.js", "text/javascript; charset=utf-8")
             if method == "GET" and path == "/styles.css":
                 return self._file("styles.css", "text/css; charset=utf-8")
-            if method == "GET" and path in _ICON_FILES:
-                return self._file(_ICON_FILES[path], "image/svg+xml")
+            if method == "GET" and path in _STATIC_FILES:
+                name, content_type = _STATIC_FILES[path]
+                return self._file(name, content_type)
             if path.startswith("/api/"):
                 return self._api(method, path, query, body)
             return json_response(404, {"error": "Not found"})
+        except DuplicateManual as exc:
+            match = exc.match
+            return json_response(409, {
+                "error": "This ledger already has a matching gift.",
+                "duplicate": True,
+                "author_name": match.get("author_name") or "",
+                "amount": match.get("amount"),
+                "currency": match.get("currency") or "",
+            })
         except ValueError as exc:
             return json_response(400, {"error": str(exc)})
         except ApiError as exc:
@@ -287,7 +301,7 @@ class App:
             return json_response(200, paste_for_form(payload.get("text"), price, rates))
         if path == "/api/donations" and method == "POST":
             payload = _object(body)
-            donation_id = self.store.add_manual_entry(
+            fields = _checked_manual_fields(
                 author_name=payload.get("author_name"),
                 platform=payload.get("platform"),
                 kind=payload.get("kind"),
@@ -295,6 +309,19 @@ class App:
                 currency=payload.get("currency", "USD"),
                 message=payload.get("message", ""),
                 created_at=payload.get("created_at", ""),
+            )
+            if payload.get("confirm_duplicate") is not True:
+                match = self.store.manual_duplicate(fields)
+                if match is not None:
+                    raise DuplicateManual(match)
+            donation_id = self.store.add_manual_entry(
+                author_name=fields["author"],
+                platform=fields["platform"],
+                kind=fields["kind"],
+                amount=fields["amount"],
+                currency=fields["currency"],
+                message=fields["message"],
+                created_at=fields["created_at"],
             )
             rates, price = self._rates_and_price()
             donation = self.store.get_donation(donation_id, membership_price=price, rates=rates)
@@ -347,6 +374,44 @@ class App:
         if match and method == "PATCH":
             payload = _object(body)
             donation_id = int(match.group(1))
+            # A gift edit is separate from a note or a hide. The drawer sends only the note.
+            if any(key in payload for key in ("author_name", "platform", "kind", "amount")):
+                current = self.store.get_donation(donation_id)
+                if current is None:
+                    return json_response(404, {"error": "Donation not found"})
+                if not current["manual"]:
+                    raise ValueError("Automatic entries cannot be edited.")
+                created_at = payload.get("created_at", "")
+                if created_at is None or str(created_at).strip() == "":
+                    created_at = current["created_at"]
+                fields = _checked_manual_fields(
+                    author_name=payload.get("author_name"),
+                    platform=payload.get("platform"),
+                    kind=payload.get("kind"),
+                    amount=payload.get("amount"),
+                    currency=payload.get("currency", "USD"),
+                    message=payload.get("message", ""),
+                    created_at=created_at,
+                )
+                if payload.get("confirm_duplicate") is not True:
+                    found = self.store.manual_duplicate(fields, ignore_id=donation_id)
+                    if found is not None:
+                        raise DuplicateManual(found)
+                updated = self.store.update_manual_entry(
+                    donation_id,
+                    author_name=fields["author"],
+                    platform=fields["platform"],
+                    kind=fields["kind"],
+                    amount=fields["amount"],
+                    currency=fields["currency"],
+                    message=fields["message"],
+                    created_at=fields["created_at"],
+                )
+                if updated is None:
+                    return json_response(404, {"error": "Donation not found"})
+                rates, price = self._rates_and_price()
+                donation = self.store.get_donation(donation_id, membership_price=price, rates=rates)
+                return json_response(200, donation or {"id": donation_id})
             processed = payload.get("processed", None)
             note = payload.get("note", None)
             if processed is not None and not isinstance(processed, bool):
@@ -391,6 +456,11 @@ class App:
                 "application/x-ndjson; charset=utf-8",
                 [("Content-Disposition", 'attachment; filename="donations.jsonl"')],
             )
+        if path == "/api/ledger/archive" and method == "POST":
+            # Preview only. The file is not stored and the open ledger is not changed.
+            rows = parse_ledger_jsonl(body)
+            rates, price = self._rates_and_price()
+            return json_response(200, present_archive(rows, membership_price=price, rates=rates))
         if path == "/api/collection" and method == "POST":
             payload = _object(body)
             if not isinstance(payload.get("paused"), bool):
@@ -457,7 +527,7 @@ class App:
             self.store.log(provider, "error", redact(str(exc)))
             return self._oauth_page("Sign-in failed", str(exc))
         label = "YouTube" if provider == "youtube" else "Kick"
-        return self._oauth_page(f"{label} connected", "You can close this tab and return to Stream Donations.")
+        return self._oauth_page(f"{label} connected", "You can close this tab and return to SuperBerry.")
 
     def _oauth_page(self, title: str, message: str) -> Response:
         page = f"""<!DOCTYPE html>
@@ -496,6 +566,7 @@ class App:
 
     def _meta(self) -> dict:
         return {
+            "version": __version__,
             "platforms": [{"id": key, "label": value} for key, value in PLATFORM_LABELS.items()],
             "currencies": [{"code": code, "name": name} for code, name in SUPPORTED_CURRENCIES],
             "kinds": [{"id": key, "label": value} for key, value in DISPLAY_LABELS.items()],
@@ -547,6 +618,7 @@ class App:
             "kick_webhook_port": seconds("kick_webhook_port", "47322"),
             "kick_public_base": self.store.get_setting("kick_public_base"),
             "membership_price": self.store.get_setting("membership_price"),
+            "ledger_page_size": displayed_ledger_page_size(self.store.get_setting("ledger_page_size")),
             "tiers_enabled": self.store.get_setting("tiers_enabled") == "1",
             "show_top_donors": self.store.get_setting("show_top_donors", "1") != "0",
             "chat_extra": self.store.get_setting("chat_extra"),

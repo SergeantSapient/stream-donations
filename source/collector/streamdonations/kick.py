@@ -30,7 +30,7 @@ from .kick_public import PublicKickChat
 from .normalize import normalize_kick_event
 from .store import Store
 from .transport import Transport, api_error_message
-from .util import ApiError, AuthError, redact
+from .util import ApiError, AuthError, display_donor, redact
 
 AUTH_URL = "https://id.kick.com/oauth/authorize"
 TOKEN_URL = "https://id.kick.com/oauth/token"
@@ -112,11 +112,13 @@ class KickClient:
     def rest(self) -> None:
         self._public.rest()
 
-    def tick(self, force: bool = False) -> None:
+    def tick(self, force: bool = False, public_only: bool = False) -> None:
         if self.store.collection_paused():
             self.rest()
             return
         self._public.ensure()
+        if public_only:
+            return
         has_watch = bool(self.store.get_setting("kick_watch"))
         if not self.client_saved():
             if has_watch:
@@ -314,7 +316,7 @@ class KickClient:
             return 204, f"ignored {event_type}"
         inserted = self.store.add_many([donation])
         if inserted:
-            self.store.log("kick", "info", f"Stored {event_type} from {donation.author_name or 'unknown'}.")
+            self.store.log("kick", "info", f"Stored {event_type} from {display_donor(donation.author_name) or 'unknown'}.")
         return 204, "stored"
 
     def _access_token(self) -> str:

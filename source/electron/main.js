@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -14,6 +14,115 @@ if (process.platform === "linux") {
   app.setName("stream-donations");
   app.commandLine.appendSwitch("class", "stream-donations");
 }
+
+// The embed address is looked up after the click, so Chromium would treat
+// the later play() as unattended and leave the stream paused.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
+const PLAYER_ACTIONS = new Set(["play", "pause", "mute", "unmute", "live"]);
+const PLAYER_HOSTS = new Set([
+  "www.youtube.com",
+  "youtube.com",
+  "www.youtube-nocookie.com",
+  "youtube-nocookie.com",
+  "rumble.com",
+  "www.rumble.com",
+  "player.kick.com",
+]);
+
+function playerCommandCode(action) {
+  return `(function () {
+    var action = ${JSON.stringify(action)};
+    var videos = document.querySelectorAll("video");
+    var video = null;
+    var best = -1;
+    var index;
+    for (index = 0; index < videos.length; index += 1) {
+      var item = videos[index];
+      var score = 0;
+      try {
+        if (item.seekable && item.seekable.length) score = item.seekable.end(item.seekable.length - 1) || 0;
+      } catch (error) {
+        score = 0;
+      }
+      if (!video || score >= best) {
+        video = item;
+        best = score;
+      }
+    }
+    if (!video) return "no-video";
+    function settle(pending) {
+      if (pending && typeof pending.catch === "function") pending.catch(function () {});
+    }
+    if (action === "play") {
+      settle(video.play());
+      return "playing";
+    }
+    if (action === "pause") {
+      video.pause();
+      return "paused";
+    }
+    if (action === "mute") {
+      video.muted = true;
+      return "muted";
+    }
+    if (action === "unmute") {
+      video.muted = false;
+      return "unmuted";
+    }
+    if (action === "live") {
+      try {
+        var ranges = video.seekable;
+        if (ranges && ranges.length) {
+          var end = ranges.end(ranges.length - 1);
+          if (isFinite(end) && end > 0) video.currentTime = end;
+        }
+      } catch (error) {}
+      settle(video.play());
+      return "live";
+    }
+    return "ignored";
+  })()`;
+}
+
+function collectPlayerFrames(frame, found) {
+  if (!frame) return;
+  found.push(frame);
+  const children = frame.frames || [];
+  for (let index = 0; index < children.length; index += 1) {
+    collectPlayerFrames(children[index], found);
+  }
+}
+
+ipcMain.handle("stream-donations-player", async (event, action) => {
+  if (!PLAYER_ACTIONS.has(action)) return "ignored";
+  const contents = event.sender;
+  if (!contents || contents.isDestroyed()) return "no-video";
+  const frames = [];
+  try {
+    collectPlayerFrames(contents.mainFrame, frames);
+  } catch (_error) {
+    return "no-video";
+  }
+  const code = playerCommandCode(action);
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
+    let host = "";
+    try {
+      host = new URL(frame.url).hostname.toLowerCase();
+    } catch (_error) {
+      continue;
+    }
+    if (!PLAYER_HOSTS.has(host)) continue;
+    try {
+      const result = await frame.executeJavaScript(code, true);
+      if (result && result !== "no-video") return result;
+    } catch (_error) {
+      /* Another frame of the same player may hold the video element. */
+    }
+  }
+  return "no-video";
+});
 
 let collector = null;
 let quitting = false;
@@ -146,7 +255,7 @@ function startCollector() {
   child.on("exit", (code) => {
     if (!quitting && code !== 0) {
       dialog.showErrorBox(
-        "Stream Donations",
+        "SuperBerry",
         `The collector stopped (${code}).\n${stderrTail || "No error output."}`,
       );
       app.quit();
@@ -196,7 +305,7 @@ async function openWindow(port) {
     minHeight: 640,
     backgroundColor: "#14120f",
     autoHideMenuBar: true,
-    title: "Stream Donations",
+    title: "SuperBerry",
     icon: windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -236,7 +345,7 @@ app.whenReady().then(async () => {
     const port = await waitForReady(child);
     await openWindow(port);
   } catch (error) {
-    dialog.showErrorBox("Stream Donations", String(error.message || error));
+    dialog.showErrorBox("SuperBerry", String(error.message || error));
     quitting = true;
     stopCollector();
     app.quit();

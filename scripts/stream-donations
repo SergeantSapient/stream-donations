@@ -52,13 +52,23 @@ if [ -z "${APPIMAGE:-}" ]; then
       icon_dir="$data/icons/hicolor/256x256/apps"
       if [ -f "$ROOT/app/icon.png" ] && mkdir -p "$icon_dir" "$data/applications"; then
         cp "$ROOT/app/icon.png" "$icon_dir/stream-donations.png"
+        if command -v magick >/dev/null 2>&1; then
+          for size in 16 24 32 48 64 128 256 512; do
+            dest="$data/icons/hicolor/${size}x${size}/apps"
+            mkdir -p "$dest"
+            magick "$ROOT/app/icon.png" -resize "${size}x${size}" "$dest/stream-donations.png"
+          done
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+          gtk-update-icon-cache -f -t "$data/icons/hicolor" >/dev/null 2>&1 || true
+        fi
         cat > "$data/applications/stream-donations.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Stream Donations
+Name=SuperBerry
 Comment=Local ledger of Super Chats, Super Stickers, and memberships
 Exec=$ROOT/$(basename "$0")
-Icon=stream-donations
+Icon=$icon_dir/stream-donations.png
 StartupWMClass=stream-donations
 Terminal=false
 Categories=Utility;

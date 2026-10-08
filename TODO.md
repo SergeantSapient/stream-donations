@@ -2,35 +2,35 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.0.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Wishlist item 4 (settings file) is in the app. The version number was not raised. Nothing else on this list has been started.
+Current app version is `1.0.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
-## Reminder
+The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
-Desktop notification is set for **2026-09-30 22:00 America/New_York** (10:00 PM Eastern, which is EDT that day). After that time, start the to-do list below. Wishlist items stay blocked until explicitly requested.
+## Done
 
-The timer is the user unit `stream-donations-resume.timer`. If the machine is asleep or the session is logged out at that minute, it fires on the next login instead. Cancel with `systemctl --user disable --now stream-donations-resume.timer`.
+1. **Donor names.** Names are shown without `@` in the ledger, the top-donors list, thank-yous, notifications, and exports. Copying the top-donors line, or a thank-you under that section, puts `@` back on each username. Placeholders stay bare. The search prefix `@donor` still works.
+
+2. **Ledger page size.** Settings chooses 10, 25, 50, or 100, or a custom whole number from 1 to 500. One size is shared by every ledger. Unset or invalid stays 100. Saving returns to page 1. The settings export includes it.
+
+3. **UI cleanup.** The ledger follows the Live Till look. YouTube, Rumble, Kick, Streamers, and Settings are dialogs, not pages. The header has Export (CSV and JSONL for the open ledger), Log, and the menu. Reset ledger is in that menu. The long ledger note is behind a help icon, which can grow more sections later.
+
+4. **Duplicate warning for manual entry.** Adding a gift that matches one already on the open ledger asks first. A match is the same donor, platform, type, amount, currency, and message, whether that row was typed or collected. The user can save the second copy. Collection from a platform does not ask. An edit that would match a different gift asks the same question.
+
+5. **Read-only import.** Open archive, in the header menu, reads a JSONL export, the same file Export already writes, one donation per line, and shows it. The open ledger is not changed and the file is not written back. CSV is a spreadsheet view, so it cannot be opened as a ledger. A settings file is not a ledger.
+
+6. **In-line edit.** Hover a manual row and Edit appears beside Delete. The manual-entry form fills in, + becomes Save, and Clear becomes Cancel. Donor, platform, type, amount, currency, message, and time can change. An empty time keeps the stored one. The same id stays a manual row. An automatic row cannot be edited. Saving a row unchanged does not ask about a duplicate. An edit that matches a different gift on this ledger asks first.
+
+7. **Version classification.** A shipped change is recorded with `python3 scripts/version.py`. The number is major.considerable.minor. Minor raises the last number, considerable raises the middle number, and major raises the first. A peripheral fix does not change the number. Wishlist work is considerable unless the request says it is major. The collector and Electron keep the same number. See Version rules.
 
 ## To do
 
-Implement these as soon as possible. They are not wishlist items.
-
-1. **Donor names.** Correct how donor names are presented in the app and in exports. `@` is only for "Thank You" and "Top Donor", because those strings are pasted or injected into chat. Everywhere else, show the name without `@`.
-
-2. **Ledger page size.** Add a setting for page size: 10, 25, 50, or 100. A custom size is worth considering.
-
-3. **UI cleanup.** Bring the look as close as practical to the current Live Till app, and keep the newer features integrated cleanly. Settings should not be a separate page. Use a virtual window or dialogue for adjustments.
-
-4. **Read-only import.** Open an archived ledger for viewing only. Do not write back into it.
-
-5. **In-line edit and delete.** Edit or delete a donation from the ledger row. The duplicate warning stays for manual entry, checked against other manual rows and against automated rows, and the user can dismiss it. Automated entry ignores that warning.
-
-6. **Automated version control.** Let the LLM decide whether a change is minor, considerable, or major. A bug fix inside a small window, before any reasonable deployment can happen, does not tick the version. Note those in the changelog as peripheral fixes.
+Nothing is queued. The next work is the wishlist. Each wishlist item is considerable unless the request says it is a major update.
 
 ## Wishlist
 
-Do not implement these without an understanding of the complications, and do not implement them until the project manager explicitly asks. Research only until then.
+Do not implement these without an understanding of the complications, and do not implement them until explicitly asked. Research only until then.
 
-Each item below is a **major** version change on its own. If several are requested at once, they can ship as one major bump. Gently remind the project manager that packing multiple majors into one release is probably a bad idea.
+Each item is a **considerable** version change unless the request says it is major. If several are requested at once, they can share one bump. Gently remind that packing several wishlist items into one release is probably a bad idea.
 
 1. **Chat injection.** Option to inject "Stream Total", "Thank You", and "Top Donor" blurbs into chat. Session handling per platform will likely mean simulating a logged-in user. That session material must not be hard-coded into the app.
 
@@ -38,7 +38,7 @@ Each item below is a **major** version change on its own. If several are request
 
 3. **Cloud or remote export.** Export the ledger to cloud or other remote storage.
 
-4. **Settings export without secrets.** Done. The Settings tab exports and imports a versioned JSON file of that tab only (membership price, goal tiers, the extra chat note, and top donors). API keys and secrets are not in the file. A newer file still applies the settings this version understands, and settings the file leaves out stay as they are. A full JSON ledger export is still not part of this.
+4. **Settings export without secrets.** Done. The Settings dialog exports and imports a versioned JSON file: membership price, the extra chat note, top donors, and the shared ledger page size. Goal tiers are not in that file. They live on a streamer preset and are written onto a ledger only when that preset is saved with the ledger's addresses. API keys and secrets are not in the file. A newer file still applies the settings this version understands, and settings the file leaves out stay as they are. A full JSON ledger export is still not part of this.
 
 5. **PWA instead of Electron.** Convert to a progressive web app. Account for what a browser will limit, including system resources.
 
@@ -52,6 +52,7 @@ Each item below is a **major** version change on its own. If several are request
 
 ## Version rules
 
-- Wishlist items are major. To-do items are classified when they are done, using the rule in to-do item 6.
-- Peripheral fixes in the pre-deployment window are changelog notes only. They do not bump the version.
-- One requested batch of wishlist work may share a single major bump. Say so, and say that combining them is probably a bad idea, before doing it.
+- Wishlist items are considerable unless the request says the update is major.
+- To-do items are classified when they are done: minor, considerable, or major.
+- A peripheral fix is a changelog note under the current version. It does not bump the number.
+- One requested batch of wishlist work may share a single bump. Say so, and say that combining them is probably a bad idea, before doing it.

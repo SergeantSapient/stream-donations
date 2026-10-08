@@ -135,6 +135,34 @@ class ChatFeedTests(unittest.TestCase):
         feed.add("kick", [{"key": "d", "author": "Pat", "text": "stamped", "time": "2026-09-25T11:04:30+00:00"}])
         self.assertEqual(feed.since(0, 0, False)["lines"][0]["time"], "2026-09-25T11:04:30Z")
 
+    def test_late_poll_stays_in_clock_order(self):
+        feed = ChatFeed()
+        heard = []
+        feed.on_lines = heard.extend
+        feed.add("rumble", [{"key": "r", "author": "A", "text": "rumble", "time": "2026-10-05T21:57:53Z"}])
+        cursor = feed.since(0, 0, False)["cursor"]
+        feed.add("youtube", [{"key": "y", "author": "B", "text": "youtube", "time": "2026-10-05T21:57:47Z"}])
+        feed.add("kick", [{"key": "k", "author": "C", "text": "kick", "time": "2026-10-05T21:57:59Z"}])
+        ordered = feed.since(0, 0, False)
+        self.assertEqual([line["text"] for line in ordered["lines"]], ["youtube", "rumble", "kick"])
+        fresh = feed.since(cursor, ordered["generation"], False)
+        self.assertEqual([line["text"] for line in fresh["lines"]], ["youtube", "kick"])
+        self.assertEqual([line["text"] for line in heard], ["rumble", "youtube", "kick"])
+
+        same = ChatFeed()
+        same.add("youtube", [{"key": "a", "author": "A", "text": "first", "time": "2026-10-05T21:57:59Z"}])
+        same.add("kick", [{"key": "b", "author": "B", "text": "second", "time": "2026-10-05T21:57:59Z"}])
+        self.assertEqual(
+            [line["text"] for line in same.since(0, 0, False)["lines"]],
+            ["first", "second"],
+        )
+
+        short = ChatFeed(limit=2)
+        short.add("rumble", [{"key": "n", "author": "A", "text": "mid", "time": "2026-10-05T21:57:53Z"}])
+        short.add("kick", [{"key": "z", "author": "B", "text": "new", "time": "2026-10-05T21:57:59Z"}])
+        short.add("youtube", [{"key": "o", "author": "C", "text": "old", "time": "2026-10-05T21:57:47Z"}])
+        self.assertEqual([line["text"] for line in short.since(0, 0, False)["lines"]], ["mid", "new"])
+
     def test_feed_keeps_a_short_buffer_and_drops_one_platform(self):
         self.assertEqual(clean_chat_text(" hi\x00 there ", 20), "hi there")
         feed = ChatFeed(limit=2)

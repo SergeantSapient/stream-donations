@@ -219,6 +219,19 @@ class PublicYouTubeTests(unittest.TestCase):
         "isLiveNow":true
         """
         self.assertIsNone(live_video_from_channel_html(ended))
+        upcoming = """
+        <link rel="canonical" href="https://www.youtube.com/watch?v=tL02RZwytU4">
+        "videoDetails":{"videoId":"tL02RZwytU4","title":"Soon","isUpcoming":true,"isLiveContent":true}
+        "isLiveNow":false
+        "videoId":"othervideo1"
+        """
+        self.assertEqual(live_video_from_channel_html(upcoming), "tL02RZwytU4")
+        other_upcoming = """
+        <link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
+        "videoDetails":{"videoId":"abcdefghijk","title":"Old","isLive":false}
+        "videoDetails":{"videoId":"zzzzzzzzzzz","isUpcoming":true}
+        """
+        self.assertIsNone(live_video_from_channel_html(other_upcoming))
         self.assertEqual(
             youtube_channel_live_url("https://www.youtube.com/@NASA/streams"),
             "https://www.youtube.com/@NASA/live",

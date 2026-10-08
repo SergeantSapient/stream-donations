@@ -21,6 +21,7 @@ TAB_KEYS = (
     "membership_price",
     "show_top_donors",
     "chat_extra",
+    "ledger_page_size",
 )
 
 # Never copy these into a file or apply them from one, even if a later edit
@@ -80,7 +81,7 @@ def parse_settings_file(body: bytes) -> SettingsFile:
     if not isinstance(payload, dict):
         raise ValueError("Settings file must be an object.")
     if payload.get("kind") != KIND:
-        raise ValueError("This file is not a Stream Donations settings file.")
+        raise ValueError("This file is not a SuperBerry settings file.")
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:
         raise ValueError("Settings file version must be a whole number of 1 or higher.")

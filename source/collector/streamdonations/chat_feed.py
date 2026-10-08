@@ -1,7 +1,8 @@
 """Recent public chat lines for the stream panel.
 
-Lines stay in memory for the open window. They are not written to the ledger
-and they are not logged.
+Lines stay in memory for the open window, ordered by each message's own clock.
+A late poll is inserted at that time. They are not written to the ledger and
+they are not logged.
 """
 
 from __future__ import annotations
@@ -45,6 +46,15 @@ def chat_time(value: object) -> str:
     return format_utc(datetime.fromtimestamp(seconds, tz=timezone.utc))
 
 
+def _insert_by_time(lines: deque[dict], item: dict) -> None:
+    """Place a line by its clock. The same second keeps the earlier id."""
+    for index, row in enumerate(lines):
+        if item["time"] < row["time"] or (item["time"] == row["time"] and item["id"] < row["id"]):
+            lines.insert(index, item)
+            return
+    lines.append(item)
+
+
 class ChatFeed:
     def __init__(self, limit: int = _LIMIT):
         self._limit = limit
@@ -81,7 +91,7 @@ class ChatFeed:
                     "time": when,
                     "key": token,
                 }
-                self._lines.append(item)
+                _insert_by_time(self._lines, item)
                 added.append({
                     "platform": platform,
                     "author": author,
@@ -129,6 +139,7 @@ class ChatFeed:
                 for row in self._lines
                 if row["id"] > start
             ]
+            lines.sort(key=lambda row: (row["time"], row["id"]))
             return {
                 "lines": lines,
                 "cursor": self._cursor,

@@ -23,6 +23,8 @@ const state = {
 
 const highlightTimers = new Map();
 let refreshSerial = 0;
+let editingId = null;
+let editingUsd = 0;
 let streamChain = Promise.resolve();
 let lastTabClick = null;
 let nameDialogRequestedAt = 0;
@@ -38,6 +40,65 @@ function el(tag, className, text) {
   return node;
 }
 
+const PLATFORM_ICONS = {
+  youtube: "/icons/youtube.svg",
+  rumble: "/icons/rumble.svg",
+  kick: "/icons/kick.svg",
+};
+const PLATFORM_NAMES = {
+  youtube: "YouTube",
+  rumble: "Rumble",
+  kick: "Kick",
+  other: "Other",
+};
+
+function platformKey(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (PLATFORM_NAMES[text]) return text;
+  return Object.keys(PLATFORM_NAMES).find((id) => PLATFORM_NAMES[id].toLowerCase() === text) || "";
+}
+
+function platformMark(id) {
+  const icon = PLATFORM_ICONS[id];
+  if (!icon) return null;
+  const mark = document.createElement("img");
+  mark.className = "platform-mark";
+  mark.src = icon;
+  mark.alt = "";
+  mark.setAttribute("aria-hidden", "true");
+  return mark;
+}
+
+function platformLabel(id, label) {
+  const key = platformKey(id) || platformKey(label);
+  const name = document.createElement("span");
+  name.className = "platform-name";
+  if (key) name.dataset.platform = key;
+  const mark = platformMark(key);
+  if (mark) name.appendChild(mark);
+  name.appendChild(document.createTextNode(label || PLATFORM_NAMES[key] || id || ""));
+  return name;
+}
+
+function fillPlatformPhrase(node, platform, phrase) {
+  if (!node) return;
+  const key = platformKey(platform);
+  const name = PLATFORM_NAMES[key] || "";
+  const text = phrase || "";
+  node.replaceChildren();
+  const mark = platformMark(key);
+  if (mark) node.appendChild(mark);
+  if (name && text.toLowerCase().startsWith(name.toLowerCase())) {
+    const colored = document.createElement("span");
+    colored.className = "platform-name";
+    colored.dataset.platform = key;
+    colored.textContent = text.slice(0, name.length);
+    node.append(colored, document.createTextNode(text.slice(name.length)));
+    return;
+  }
+  node.appendChild(document.createTextNode(text));
+}
+
 function icon(name) {
   const paths = {
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path>',
@@ -45,6 +106,9 @@ function icon(name) {
     eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="2.5"></circle>',
     "eye-off": '<path d="M3 4l18 16"></path><path d="M10.6 6.2A11 11 0 0 1 12 6c6.5 0 10 6 10 6a18 18 0 0 1-3.1 3.7"></path><path d="M6.2 6.9C3.6 8.7 2 12 2 12s3.5 6 10 6c1.2 0 2.4-.2 3.5-.6"></path><path d="M9.9 9.9a2.5 2.5 0 0 0 3.2 3.2"></path>',
     trash: '<path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M7 7l1 12h8l1-12"></path><path d="M10 11v5M14 11v5"></path>',
+    pencil: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"></path>',
+    check: '<path d="M5 12.5 9.5 17 19 7"></path>',
+    plus: '<path d="M12 5v14M5 12h14"></path>',
     plug: '<path d="M9 7V3.5M15 7V3.5"></path><path d="M7.5 7h9v5a4.5 4.5 0 0 1-9 0V7z"></path><path d="M12 16.5V21"></path>',
     unplug: '<path d="M9 6V2.5M15 6V2.5"></path><path d="M7.5 6h9v4.2a4.5 4.5 0 0 1-9 0V6z"></path><path d="M12 15v2M12 19.5V22"></path>',
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
@@ -58,15 +122,34 @@ function icon(name) {
 }
 
 function closeMenu() {
-  const menu = $("app-menu");
-  const button = $("app-menu-button");
+  for (const [menuId, buttonId] of [
+    ["app-menu", "app-menu-button"],
+    ["export-menu", "export-button"],
+    ["ledger-help", "ledger-help-button"],
+  ]) {
+    const menu = $(menuId);
+    const button = $(buttonId);
+    if (!menu || !button) continue;
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  }
+}
+
+function toggleMenu(menuId, buttonId) {
+  const menu = $(menuId);
+  const button = $(buttonId);
   if (!menu || !button) return;
-  menu.hidden = true;
-  button.setAttribute("aria-expanded", "false");
+  const willOpen = menu.hidden;
+  closeMenu();
+  if (!willOpen) return;
+  menu.hidden = false;
+  button.setAttribute("aria-expanded", "true");
 }
 
 // Same cap as settings_file.MAX_BYTES. A larger file is not a settings file.
 const SETTINGS_FILE_MAX_BYTES = 262144;
+// Same cap as ledger_file.MAX_BYTES. A larger file is refused before it is sent.
+const ARCHIVE_MAX_BYTES = 1000000;
 
 let pendingUndo = null;
 const deletingManual = new Set();
@@ -120,7 +203,14 @@ async function api(path, options) {
     }
   }
   if (!response.ok) {
-    throw new Error((payload && payload.error) || response.statusText || "Request failed");
+    const error = new Error((payload && payload.error) || response.statusText || "Request failed");
+    if (payload && payload.duplicate === true) {
+      error.duplicate = true;
+      error.authorName = payload.author_name || "";
+      error.amount = payload.amount;
+      error.currency = payload.currency || "";
+    }
+    throw error;
   }
   return payload;
 }
@@ -307,6 +397,7 @@ function readClipboard() {
 function applyPaste(parsed) {
   $("manual-donor").value = parsed.donor || "";
   if (parsed.platform) $("manual-platform").value = parsed.platform;
+  syncManualPlatformMark();
   if (parsed.kind) $("manual-kind").value = parsed.kind;
   $("manual-message").value = parsed.message || "";
   $("manual-native").value = parsed.amount || "";
@@ -327,6 +418,11 @@ function applyPaste(parsed) {
     toast("Filled from the clipboard. The amount was not in the paste.");
   }
   updateStreamPreview();
+}
+
+function topDonorCopyText() {
+  const report = state.stream || {};
+  return report.donor_bar_copy || ($("donor-bar") && $("donor-bar").value) || "";
 }
 
 function copyText(text, ok) {
@@ -393,13 +489,8 @@ function platformPill(id, label) {
   button.type = "button";
   button.className = "pill";
   button.dataset.platform = id;
-  if (id) {
-    const dot = document.createElement("span");
-    dot.className = "dot dot-" + id;
-    dot.setAttribute("aria-hidden", "true");
-    button.appendChild(dot);
-  }
-  button.appendChild(document.createTextNode(label));
+  if (id) button.appendChild(platformLabel(id, label));
+  else button.appendChild(document.createTextNode(label));
   button.addEventListener("click", () => {
     state.filters.platform = id;
     state.filters.offset = 0;
@@ -471,6 +562,7 @@ function renderRows(page) {
     tr.dataset.donoBand = String(donoAmountBand(row.amount_usd));
     if (syncHighlight(row, now)) tr.classList.add("is-new");
     if (state.selected && state.selected.id === row.id) tr.classList.add("is-selected");
+    if (editingId != null && row.id === editingId) tr.classList.add("is-editing");
     tr.tabIndex = 0;
     if (row.hidden) tr.classList.add("is-hidden");
     tr.addEventListener("click", (event) => {
@@ -499,7 +591,7 @@ function renderRows(page) {
       timeCell,
       donorCell,
       el("td", "num", ledgerAmount(row)),
-      el("td", null, row.platform_label || row.platform),
+      platformCell(row),
       el("td", null, row.kind_label || row.kind),
       el("td", null, ledgerCurrency(row)),
       el("td", "num", formatPlain(row.amount_usd)),
@@ -525,21 +617,76 @@ function renderRows(page) {
   return true;
 }
 
+function renderArchive(view) {
+  const rows = (view && view.donations) || [];
+  const count = Number(view && view.count);
+  const total = Number(view && view.total_usd);
+  const shown = Number.isFinite(count) ? count : rows.length;
+  const noun = shown === 1 ? "donation" : "donations";
+  $("archive-summary").textContent = `${shown} ${noun} · ${formatUsd(Number.isFinite(total) ? total : 0)}. Not saved.`;
+  const body = $("archive-rows");
+  body.replaceChildren();
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.dataset.platform = row.platform || "other";
+    tr.dataset.donoBand = String(donoAmountBand(row.amount_usd));
+    if (row.hidden) tr.classList.add("is-hidden");
+    const when = localParts(row.created_at);
+    const dateCell = el("td", "num", when.date);
+    const timeCell = el("td", "num", when.time);
+    dateCell.title = row.created_at || "";
+    timeCell.title = row.created_at || "";
+    const donor = donorName(row.author_name);
+    const donorCell = el("td", "donor-cell", donor);
+    if (donor !== "—") donorCell.title = donor;
+    const message = el("td", "message-cell", row.message || "—");
+    if (row.message) message.title = row.message;
+    tr.append(
+      dateCell,
+      timeCell,
+      donorCell,
+      el("td", "num", ledgerAmount(row)),
+      platformCell(row),
+      el("td", null, row.kind_label || row.kind),
+      el("td", null, ledgerCurrency(row)),
+      el("td", "num", formatPlain(row.amount_usd)),
+      message,
+      el("td", "num", row.hidden ? "—" : formatRunning(row.running_usd)),
+    );
+    body.appendChild(tr);
+  });
+  const empty = $("archive-empty");
+  if (empty) empty.hidden = rows.length !== 0;
+}
+
 function rowAction(row) {
   const cell = el("td", "row-actions");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "icon-button row-action";
   if (row.manual) {
-    button.classList.add("is-delete");
-    button.setAttribute("aria-label", "Delete");
-    button.title = "Delete this manual entry";
-    button.appendChild(icon("trash"));
-    button.addEventListener("click", (event) => {
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "icon-button row-action";
+    edit.setAttribute("aria-label", "Edit");
+    edit.title = "Edit";
+    edit.appendChild(icon("pencil"));
+    edit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      beginEdit(row);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button row-action is-delete";
+    remove.setAttribute("aria-label", "Delete");
+    remove.title = "Delete this manual entry";
+    remove.appendChild(icon("trash"));
+    remove.addEventListener("click", (event) => {
       event.stopPropagation();
       deleteManual(row);
     });
+    cell.append(edit, remove);
   } else {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "icon-button row-action";
     const hidden = Boolean(row.hidden);
     button.setAttribute("aria-label", hidden ? "Count again" : "Hide");
     button.title = hidden
@@ -550,8 +697,8 @@ function rowAction(row) {
       event.stopPropagation();
       setEntryHidden(row, !hidden);
     });
+    cell.appendChild(button);
   }
-  cell.appendChild(button);
   return cell;
 }
 
@@ -594,6 +741,7 @@ function deleteManual(row) {
         $("drawer").hidden = true;
         state.selected = null;
       }
+      if (editingId === row.id) cancelManualEdit();
       pendingUndo = snapshot;
       toast("Deleted that manual entry.", false, {
         label: "Undo",
@@ -618,9 +766,31 @@ function setEntryHidden(row, hidden) {
     .catch((error) => toast(error.message, true));
 }
 
+function syncManualPlatformMark() {
+  const select = $("manual-platform");
+  const mark = $("manual-platform-mark");
+  const label = $("manual-platform-label");
+  if (!select) return;
+  const id = platformKey(select.value) || "other";
+  if (label) label.dataset.platform = id;
+  if (!mark) return;
+  const icon = PLATFORM_ICONS[id];
+  mark.hidden = !icon;
+  if (icon) mark.src = icon;
+}
+
+function platformCell(row) {
+  const cell = document.createElement("td");
+  cell.appendChild(platformLabel(row.platform, row.platform_label || row.platform));
+  return cell;
+}
+
 function fact(dl, label, value) {
   dl.appendChild(el("dt", null, label));
-  dl.appendChild(el("dd", null, value || "—"));
+  const dd = document.createElement("dd");
+  if (value instanceof Node) dd.appendChild(value);
+  else dd.textContent = value || "—";
+  dl.appendChild(dd);
 }
 
 function renderDrawer(donation) {
@@ -630,7 +800,7 @@ function renderDrawer(donation) {
   const facts = $("drawer-facts");
   facts.replaceChildren();
   fact(facts, "When", donation.created_at);
-  fact(facts, "Platform", donation.platform_label);
+  fact(facts, "Platform", platformLabel(donation.platform, donation.platform_label));
   fact(facts, "Type", donation.kind_label);
   fact(facts, "From", donorName(donation.author_name));
   fact(facts, "Channel", donation.channel);
@@ -654,6 +824,13 @@ async function openDonation(id) {
   });
 }
 
+function cancelManualEdit() {
+  if (editingId == null) return;
+  const form = $("manual-entry");
+  if (form) form.reset();
+  setManualEditing(null);
+}
+
 async function refresh(options) {
   const serial = ++refreshSerial;
   const [summary, status, page, stream] = await Promise.all([
@@ -663,6 +840,9 @@ async function refresh(options) {
     api("/api/stream"),
   ]);
   if (serial !== refreshSerial) return;
+  const nextLedger = stream && stream.streams && stream.streams.active_id;
+  const previousLedger = state.stream && state.stream.streams && state.stream.streams.active_id;
+  if (previousLedger && nextLedger && previousLedger !== nextLedger) cancelManualEdit();
   renderSummary(summary);
   if (summary.fx) renderFx(summary.fx);
   renderStatus(status);
@@ -849,8 +1029,8 @@ function toggleLedgerPause(id, paused) {
     });
     if (paused && open) toast("Soft disconnect. This ledger is paused.");
     else if (!paused && open) toast("Reconnected. This ledger is collecting.");
-    else if (paused) toast("That ledger is paused. It does not collect while it is open.");
-    else toast("That ledger will collect while it is open.");
+    else if (paused) toast("That ledger is paused. It stays disconnected until you reconnect it.");
+    else toast("That ledger is collecting, including while another ledger is open.");
     await reloadOpenStream();
   });
 }
@@ -993,6 +1173,7 @@ const LEDGER_ADDRESS_FIELDS = [
     watchKey: "youtube_watch",
     channelKey: "youtube_channel",
     followKey: "youtube_follow_live",
+    platform: "youtube",
   },
   {
     followId: "ledger-rumble-follow",
@@ -1001,6 +1182,7 @@ const LEDGER_ADDRESS_FIELDS = [
     watchKey: "rumble_watch",
     channelKey: "rumble_channel",
     followKey: "rumble_follow_live",
+    platform: "rumble",
   },
 ];
 
@@ -1015,9 +1197,11 @@ function ledgerAddressMode(field) {
       : input.dataset.videoPlaceholder || "";
   }
   if (label && input) {
-    label.textContent = on
-      ? input.dataset.channelLabel || ""
-      : input.dataset.videoLabel || "";
+    fillPlatformPhrase(
+      label,
+      field.platform,
+      on ? input.dataset.channelLabel || "" : input.dataset.videoLabel || "",
+    );
   }
 }
 
@@ -1047,13 +1231,12 @@ function resetLedgerAddressFields() {
   if (kick) kick.value = "";
 }
 
-function presetPlatforms(preset) {
-  const names = [];
-  if (preset.youtube_channel) names.push("YouTube");
-  if (preset.rumble_channel) names.push("Rumble");
-  if (preset.kick_watch) names.push("Kick");
-  const channels = names.join(", ") || "No channels";
-  return preset.tiers_enabled ? channels + " · goals" : channels;
+function presetPlatformIds(preset) {
+  const ids = [];
+  if (preset.youtube_channel) ids.push("youtube");
+  if (preset.rumble_channel) ids.push("rumble");
+  if (preset.kick_watch) ids.push("kick");
+  return ids;
 }
 
 function renderPresetList(presets) {
@@ -1067,7 +1250,17 @@ function renderPresetList(presets) {
     const row = el("li");
     const meta = el("div", "preset-meta");
     meta.appendChild(el("p", "preset-name", preset.name));
-    meta.appendChild(el("p", "preset-channels", presetPlatforms(preset)));
+    const channels = el("p", "preset-channels");
+    const ids = presetPlatformIds(preset);
+    if (!ids.length) channels.textContent = preset.tiers_enabled ? "No channels · goals" : "No channels";
+    else {
+      ids.forEach((id, index) => {
+        if (index) channels.appendChild(document.createTextNode(", "));
+        channels.appendChild(platformLabel(id));
+      });
+      if (preset.tiers_enabled) channels.appendChild(document.createTextNode(" · goals"));
+    }
+    meta.appendChild(channels);
     const edit = el("button", null, "Edit");
     edit.type = "button";
     edit.setAttribute("aria-label", "Edit " + preset.name);
@@ -1378,7 +1571,7 @@ function renderStream(report) {
   if (!board.total) $("donor-summary").textContent = "No gifts yet";
   else if (lead) {
     const more = board.total > board.rows.length ? ` · top ${board.rows.length} of ${board.total}` : "";
-    $("donor-summary").textContent = `${lead.donor} leads at ${formatStreamUsd(lead.usd)}${more}`;
+    $("donor-summary").textContent = `${donorName(lead.donor)} leads at ${formatStreamUsd(lead.usd)}${more}`;
   } else $("donor-summary").textContent = `${board.total} donors`;
   $("donor-bar").value = report.donor_bar || "";
   const list = $("donor-list");
@@ -1386,10 +1579,13 @@ function renderStream(report) {
   (board.rows || []).forEach((donor, index) => {
     const name = el("div", "donor-name");
     const gifts = donor.count === 1 ? "gift" : "gifts";
-    name.append(
-      el("p", null, donor.donor),
-      el("p", "donor-meta", `${donor.count} ${gifts} · ${(donor.platforms || []).join(", ")}`),
-    );
+    const meta = el("p", "donor-meta");
+    meta.appendChild(document.createTextNode(`${donor.count} ${gifts}`));
+    (donor.platforms || []).forEach((platform) => {
+      meta.appendChild(document.createTextNode(" · "));
+      meta.appendChild(platformLabel(platform, platform));
+    });
+    name.append(el("p", null, donorName(donor.donor)), meta);
     const item = document.createElement("li");
     item.append(el("span", "donor-rank", String(index + 1)), name, el("span", "donor-usd", formatStreamUsd(donor.usd)));
     list.appendChild(item);
@@ -1406,7 +1602,7 @@ function renderStream(report) {
     button.setAttribute("aria-label", "Copy thank you");
     button.title = "Copy thank you";
     button.appendChild(icon("copy"));
-    button.addEventListener("click", () => copyText(item.line, "Thank you copied."));
+    button.addEventListener("click", () => copyText(item.copy || item.line, "Thank you copied."));
     row.append(el("p", null, item.line), button);
     thanksList.appendChild(row);
   });
@@ -1425,8 +1621,10 @@ function syncManualUsd() {
 function updateStreamPreview() {
   const report = state.stream;
   if (!report || !$("new-total")) return;
-  const extra = parseAmount($("manual-amount") && $("manual-amount").value);
-  const preview = round2(Number(report.total_usd || 0) + (extra || 0));
+  const typed = parseAmount($("manual-amount") && $("manual-amount").value);
+  const base = editingId == null ? 0 : (editingUsd || 0);
+  const extra = round2((typed || 0) - base);
+  const preview = round2(Number(report.total_usd || 0) + extra);
   $("new-total").value = preview.toFixed(2);
   $("chat-line").value = streamChatLine(preview, report);
   const statusTotal = $("status-total-line");
@@ -1497,22 +1695,19 @@ const WATCH_PLATFORMS = ["youtube", "rumble", "kick"];
 const WATCH_OPEN_KEY = "stream-donations-watch-open";
 const WATCH_PLATFORM_KEY = "stream-donations-watch-platform";
 const WATCH_TIMES_KEY = "stream-donations-watch-times";
+const WATCH_MUTED_KEY = "stream-donations-watch-muted";
 const WATCH_RESERVED = ["api", "settings", "dashboard", "browse", "categories", "following"];
 
-const WATCH_CHAT_ICONS = {
-  youtube: "/icons/youtube.svg",
-  rumble: "/icons/rumble.svg",
-  kick: "/icons/kick.svg",
-};
-const WATCH_CHAT_LABELS = {
-  youtube: "YouTube",
-  rumble: "Rumble",
-  kick: "Kick",
-};
+const WATCH_CHAT_ICONS = PLATFORM_ICONS;
+const WATCH_CHAT_LABELS = PLATFORM_NAMES;
 
 let watchBound = false;
 let watchSignature = "";
 let watchSerial = 0;
+let watchBareUrl = "";
+let watchFrameSrc = "";
+let watchPlaying = false;
+let watchMuted = false;
 let watchChatTimer = 0;
 let watchChatCursor = 0;
 let watchChatGeneration = -1;
@@ -1582,8 +1777,166 @@ function watchPlayerUrl(value) {
   return "";
 }
 
+// The server returns a bare player URL. These are the only query fields added,
+// and only after watchPlayerUrl has accepted that URL.
+function watchPlaybackUrl(value, autoplay, muted) {
+  const safe = watchPlayerUrl(value);
+  if (!safe) return "";
+  const url = new URL(safe);
+  const host = url.hostname.toLowerCase();
+  if (host === "www.youtube.com" || host === "www.youtube-nocookie.com") {
+    url.searchParams.set("enablejsapi", "1");
+    url.searchParams.set("playsinline", "1");
+    url.searchParams.set("origin", location.origin);
+    if (autoplay) url.searchParams.set("autoplay", "1");
+    if (muted) url.searchParams.set("mute", "1");
+    return url.toString();
+  }
+  if (host === "player.kick.com") {
+    url.searchParams.set("autoplay", autoplay ? "true" : "false");
+    url.searchParams.set("muted", muted ? "true" : "false");
+    return url.toString();
+  }
+  if (host === "rumble.com") return safe;
+  return "";
+}
+
+function setWatchControls(enabled) {
+  ["watch-play", "watch-live", "watch-mute"].forEach((id) => {
+    const button = $(id);
+    if (button) button.disabled = !enabled;
+  });
+}
+
+function setWatchPlaying(playing) {
+  watchPlaying = Boolean(playing);
+  const button = $("watch-play");
+  if (button) button.setAttribute("aria-pressed", watchPlaying ? "true" : "false");
+}
+
+function setWatchMuted(muted) {
+  const next = Boolean(muted);
+  const button = $("watch-mute");
+  if (next === watchMuted && button && button.getAttribute("aria-pressed") === (next ? "true" : "false")) {
+    return;
+  }
+  watchMuted = next;
+  if (button) button.setAttribute("aria-pressed", next ? "true" : "false");
+  try {
+    sessionStorage.setItem(WATCH_MUTED_KEY, next ? "1" : "0");
+  } catch (_error) {
+    /* Mute still applies to this player. */
+  }
+}
+
+function postYouTubeCommand(action) {
+  const frame = $("watch-frame");
+  if (!frame || !frame.contentWindow || frame.hidden) return false;
+  let url;
+  try {
+    url = new URL(frame.src);
+  } catch (_error) {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (host !== "www.youtube.com" && host !== "www.youtube-nocookie.com") return false;
+  const target = url.origin;
+  const send = (payload) => {
+    frame.contentWindow.postMessage(JSON.stringify(payload), target);
+  };
+  send({ event: "listening", id: "watch-frame", channel: "widget" });
+  const command = { event: "command", id: "watch-frame", channel: "widget", args: [] };
+  if (action === "play") command.func = "playVideo";
+  else if (action === "pause") command.func = "pauseVideo";
+  else if (action === "mute") command.func = "mute";
+  else if (action === "unmute") command.func = "unMute";
+  else if (action === "live") {
+    send(Object.assign({}, command, { func: "seekTo", args: [1000000000, true] }));
+    send(Object.assign({}, command, { func: "playVideo", args: [] }));
+    return true;
+  } else {
+    return false;
+  }
+  send(command);
+  return true;
+}
+
+function commandPlayer(action) {
+  if (postYouTubeCommand(action)) return Promise.resolve("posted");
+  const bridge = window.streamDonationsPlayer;
+  if (!bridge || typeof bridge.command !== "function") return Promise.resolve("unavailable");
+  return Promise.resolve(bridge.command(action))
+    .then((result) => {
+      if (result === "playing" || result === "paused" || result === "muted" || result === "unmuted" || result === "live") {
+        return result;
+      }
+      return "unavailable";
+    })
+    .catch(() => "unavailable");
+}
+
+function nudgeWatchPlayback(serial) {
+  [400, 1200, 2500].forEach((delay) => {
+    window.setTimeout(() => {
+      if (serial !== watchSerial || !watchPlaying) return;
+      const frame = $("watch-frame");
+      if (!frame || frame.hidden) return;
+      commandPlayer(watchMuted ? "mute" : "unmute");
+      commandPlayer("play");
+    }, delay);
+  });
+}
+
+function showWatchFrame(bare, autoplay, force, serial) {
+  const frame = $("watch-frame");
+  const src = watchPlaybackUrl(bare, autoplay, watchMuted);
+  if (!frame || !src) return false;
+  watchBareUrl = watchPlayerUrl(bare);
+  const changed = Boolean(force) || watchFrameSrc !== src;
+  if (changed) {
+    if (force) frame.removeAttribute("src");
+    frame.src = src;
+    watchFrameSrc = src;
+  }
+  frame.hidden = false;
+  setWatchControls(true);
+  if (autoplay && changed) {
+    setWatchPlaying(true);
+    nudgeWatchPlayback(serial);
+  }
+  return true;
+}
+
+function reloadWatchPlayer() {
+  const platform = selectedWatchPlatform();
+  if (platform) loadWatch(platform, true);
+}
+
+function onYouTubePlayerMessage(event) {
+  if (!event || (event.origin !== "https://www.youtube.com" && event.origin !== "https://www.youtube-nocookie.com")) {
+    return;
+  }
+  let data = event.data;
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch (_error) {
+      return;
+    }
+  }
+  if (!data || data.event !== "infoDelivery" || !data.info) return;
+  const info = data.info;
+  if (info.playerState === 1) setWatchPlaying(true);
+  else if (info.playerState === 2 || info.playerState === 0) setWatchPlaying(false);
+  if (typeof info.muted === "boolean") setWatchMuted(info.muted);
+}
+
 function stopWatchFrame() {
   watchSerial += 1;
+  watchBareUrl = "";
+  watchFrameSrc = "";
+  setWatchPlaying(false);
+  setWatchControls(false);
   const frame = $("watch-frame");
   if (!frame) return;
   frame.hidden = true;
@@ -1636,11 +1989,38 @@ function setWatchTimes(on) {
   }
 }
 
+function nextWatchChatRow(list, line) {
+  const stamp = line && line.time ? String(line.time) : "";
+  const id = Number.isInteger(line && line.id) ? line.id : null;
+  if (!stamp) return null;
+  for (const child of list.children) {
+    const childTime = child.dataset.time || "";
+    if (!childTime || stamp > childTime) continue;
+    if (stamp < childTime) return child;
+    const childId = Number(child.dataset.id);
+    if (id !== null && Number.isInteger(childId) && id < childId) return child;
+  }
+  return null;
+}
+
+function holdWatchChatPlace(scroller, item) {
+  if (!scroller || !item) return;
+  const viewTop = scroller.getBoundingClientRect().top;
+  if (item.getBoundingClientRect().bottom > viewTop + 1) return;
+  const next = item.nextElementSibling;
+  const shift = next
+    ? next.getBoundingClientRect().top - item.getBoundingClientRect().top
+    : item.getBoundingClientRect().height;
+  if (shift > 0) scroller.scrollTop += shift;
+}
+
 function appendWatchChatLine(list, line) {
   const platform = line && line.platform;
   const icon = WATCH_CHAT_ICONS[platform];
-  if (!icon || !line.text) return;
+  if (!icon || !line.text) return null;
   const item = document.createElement("li");
+  item.dataset.time = line.time ? String(line.time) : "";
+  item.dataset.id = Number.isInteger(line.id) ? String(line.id) : "";
   const mark = document.createElement("img");
   mark.className = "watch-chat-mark";
   mark.src = icon;
@@ -1661,7 +2041,10 @@ function appendWatchChatLine(list, line) {
   text.textContent = line.text;
   body.append(author, text);
   item.append(mark, when, body);
-  list.appendChild(item);
+  const before = nextWatchChatRow(list, line);
+  if (before) list.insertBefore(item, before);
+  else list.appendChild(item);
+  return item;
 }
 
 function renderWatchChat(result) {
@@ -1677,10 +2060,14 @@ function renderWatchChat(result) {
     watchChatGeneration = generation;
   }
   const lines = Array.isArray(result.lines) ? result.lines : [];
-  lines.forEach((line) => appendWatchChatLine(list, line));
+  const followTail = replace || nearBottom;
+  lines.forEach((line) => {
+    const item = appendWatchChatLine(list, line);
+    if (!followTail) holdWatchChatPlace(scroller, item);
+  });
   while (list.children.length > 200) list.removeChild(list.firstChild);
   if (Number.isInteger(result.cursor)) watchChatCursor = result.cursor;
-  if (scroller && (replace || nearBottom)) scroller.scrollTop = scroller.scrollHeight;
+  if (scroller && followTail) scroller.scrollTop = scroller.scrollHeight;
   if (result.paused && list.children.length === 0) {
     setWatchChatNote("Chat is paused with this ledger.");
   } else if (list.children.length === 0) {
@@ -1752,8 +2139,12 @@ function loadWatch(platform, force) {
       if (serial !== watchSerial) return;
       if ($("watch-panel").classList.contains("is-collapsed")) return;
       const safe = watchPlayerUrl(result && result.url);
-      const frame = $("watch-frame");
       if (!safe) {
+        watchBareUrl = "";
+        watchFrameSrc = "";
+        setWatchPlaying(false);
+        setWatchControls(false);
+        const frame = $("watch-frame");
         if (frame) {
           frame.hidden = true;
           frame.removeAttribute("src");
@@ -1762,13 +2153,7 @@ function loadWatch(platform, force) {
         return;
       }
       setWatchNote((result && result.message) || "");
-      if (frame) {
-        if (force || frame.getAttribute("src") !== safe) {
-          if (force) frame.removeAttribute("src");
-          frame.src = safe;
-        }
-        frame.hidden = false;
-      }
+      showWatchFrame(safe, true, Boolean(force), serial);
     })
     .catch((error) => {
       if (serial !== watchSerial) return;
@@ -1801,7 +2186,54 @@ function bindWatch() {
   }
   if (!WATCH_PLATFORMS.includes(platform)) platform = "";
   markWatchPlatform(platform);
+  try {
+    watchMuted = sessionStorage.getItem(WATCH_MUTED_KEY) === "1";
+  } catch (_error) {
+    watchMuted = false;
+  }
+  setWatchMuted(watchMuted);
   setWatchTimes(watchTimesOn());
+  const play = $("watch-play");
+  if (play) {
+    play.addEventListener("click", () => {
+      if (play.disabled) return;
+      const playing = play.getAttribute("aria-pressed") === "true";
+      commandPlayer(playing ? "pause" : "play").then((result) => {
+        if (result === "playing" || result === "paused") setWatchPlaying(result === "playing");
+        else if (result === "posted") setWatchPlaying(!playing);
+        else if (!playing) reloadWatchPlayer();
+      });
+    });
+  }
+  const live = $("watch-live");
+  if (live) {
+    live.addEventListener("click", () => {
+      if (live.disabled) return;
+      commandPlayer("live").then((result) => {
+        if (result === "live" || result === "posted") {
+          setWatchPlaying(true);
+          return;
+        }
+        reloadWatchPlayer();
+      });
+    });
+  }
+  const mute = $("watch-mute");
+  if (mute) {
+    mute.addEventListener("click", () => {
+      if (mute.disabled) return;
+      const muted = mute.getAttribute("aria-pressed") === "true";
+      commandPlayer(muted ? "unmute" : "mute").then((result) => {
+        if (result === "muted" || result === "unmuted") setWatchMuted(result === "muted");
+        else if (result === "posted") setWatchMuted(!muted);
+        else {
+          setWatchMuted(!muted);
+          reloadWatchPlayer();
+        }
+      });
+    });
+  }
+  window.addEventListener("message", onYouTubePlayerMessage);
   const times = $("watch-chat-times");
   if (times) {
     times.addEventListener("click", () => {
@@ -1842,6 +2274,37 @@ function bindWatch() {
   watchBound = true;
 }
 
+function normalizeLedgerPageSize(value) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 500) return PAGE_SIZE;
+  return number;
+}
+
+function syncLedgerPageSize(value) {
+  const size = normalizeLedgerPageSize(value);
+  const select = $("ledger-page-size");
+  const custom = $("ledger-page-custom");
+  const customLabel = $("ledger-page-custom-label");
+  const preset = size === 10 || size === 25 || size === 50 || size === 100;
+  if (select) select.value = preset ? String(size) : "custom";
+  if (custom) custom.value = String(size);
+  if (customLabel) customLabel.hidden = preset;
+  if (state.filters.limit !== size) {
+    state.filters.limit = size;
+    state.filters.offset = 0;
+  }
+}
+
+function ledgerPageSizeFromForm() {
+  const select = $("ledger-page-size");
+  if (!select || select.value !== "custom") return normalizeLedgerPageSize(select ? select.value : PAGE_SIZE);
+  const raw = ($("ledger-page-custom") && $("ledger-page-custom").value.trim()) || "";
+  if (!/^[0-9]+$/.test(raw)) throw new Error("Ledger page size must be a whole number.");
+  const number = Number(raw);
+  if (number < 1 || number > 500) throw new Error("Ledger page size must be between 1 and 500.");
+  return number;
+}
+
 function applySettingsToForm(settings) {
   state.settings = settings;
   $("youtube-client-id").value = settings.youtube_client_id || "";
@@ -1872,6 +2335,7 @@ function applySettingsToForm(settings) {
     ? "Saved. Leave blank to keep it."
     : "Client secret";
   if ($("membership-price")) $("membership-price").value = settings.membership_price || "";
+  syncLedgerPageSize(settings.ledger_page_size);
   if ($("show-top-donors")) $("show-top-donors").checked = settings.show_top_donors !== false;
   if ($("chat-extra")) $("chat-extra").value = settings.chat_extra || "";
   if (settings.fx) renderFx(settings.fx);
@@ -1942,14 +2406,33 @@ function bind() {
   });
   $("settings-form").addEventListener("submit", (event) => {
     event.preventDefault();
+    let ledgerPageSize;
+    try {
+      ledgerPageSize = ledgerPageSizeFromForm();
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
     saveSettings({
       membership_price: $("membership-price").value.trim(),
       show_top_donors: $("show-top-donors").checked,
       chat_extra: $("chat-extra").value,
+      ledger_page_size: ledgerPageSize,
     })
       .then(() => refresh())
       .catch((error) => toast(error.message, true));
   });
+  const pageSize = $("ledger-page-size");
+  if (pageSize) {
+    pageSize.addEventListener("change", () => {
+      const customLabel = $("ledger-page-custom-label");
+      if (customLabel) customLabel.hidden = pageSize.value !== "custom";
+      if (pageSize.value === "custom") {
+        const custom = $("ledger-page-custom");
+        if (custom) custom.focus();
+      }
+    });
+  }
   $("settings-import").addEventListener("click", () => {
     $("settings-import-file").click();
   });
@@ -1976,14 +2459,14 @@ function bind() {
       .catch((error) => toast(error.message, true));
   });
   $("copy-chat-line").addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
-  $("copy-donor-bar").addEventListener("click", () => copyText($("donor-bar").value, "Top donors copied."));
+  $("copy-donor-bar").addEventListener("click", () => copyText(topDonorCopyText(), "Top donors copied."));
   const statusCopyTotal = $("status-copy-total");
   if (statusCopyTotal) {
     statusCopyTotal.addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
   }
   const statusCopyDonors = $("status-copy-donors");
   if (statusCopyDonors) {
-    statusCopyDonors.addEventListener("click", () => copyText($("donor-bar").value, "Top donors copied."));
+    statusCopyDonors.addEventListener("click", () => copyText(topDonorCopyText(), "Top donors copied."));
   }
   $("manual-native").addEventListener("input", syncManualUsd);
   $("manual-currency").addEventListener("change", syncManualUsd);
@@ -1992,7 +2475,16 @@ function bind() {
     if (currency === DEFAULT_CURRENCY) $("manual-native").value = $("manual-amount").value;
     updateStreamPreview();
   });
-  $("manual-entry").addEventListener("reset", () => setTimeout(updateStreamPreview, 0));
+  $("manual-entry").addEventListener("reset", () => {
+    setManualEditing(null);
+    setTimeout(() => {
+      updateStreamPreview();
+      syncManualPlatformMark();
+    }, 0);
+  });
+  const manualPlatform = $("manual-platform");
+  if (manualPlatform) manualPlatform.addEventListener("change", syncManualPlatformMark);
+  syncManualPlatformMark();
   $("manual-entry").addEventListener("submit", (event) => {
     event.preventDefault();
     const when = $("manual-when").value;
@@ -2021,14 +2513,26 @@ function bind() {
       }
       body.created_at = parsed.toISOString();
     }
-    api("/api/donations", { method: "POST", body: JSON.stringify(body) })
-      .then(() => {
+    const editing = editingId;
+    const request = editing == null ? saveManual(body) : saveManualEdit(editing, body);
+    request
+      .then((saved) => {
+        if (!saved) return null;
         $("manual-entry").reset();
-        state.filters.offset = 0;
-        toast("Added to the ledger.");
-        return refresh({ scroll: true });
+        setManualEditing(null);
+        if (editing == null) state.filters.offset = 0;
+        toast(editing == null ? "Added to the ledger." : "Saved.");
+        return refresh(editing == null ? { scroll: true } : undefined);
       })
-      .catch((error) => toast(error.message, true));
+      .catch((error) => {
+        if (editing != null && error.message === "Donation not found") {
+          $("manual-entry").reset();
+          setManualEditing(null);
+          toast("That entry is no longer in the ledger.", true);
+          return refresh();
+        }
+        toast(error.message, true);
+      });
   });
   $("manual-paste").addEventListener("click", () => {
     const button = $("manual-paste");
@@ -2191,16 +2695,6 @@ function bind() {
       refresh().catch((error) => toast(error.message, true));
     }, 300);
   });
-  $("poll-now").addEventListener("click", () => {
-    api("/api/poll", { method: "POST" })
-      .then((result) => {
-        if (result.paused) toast("Collection is paused. Reconnect to send requests again.");
-        else if (result.errors && result.errors.length) toast(result.errors.join(" "), true);
-        else toast("Polled.");
-        return refresh();
-      })
-      .catch((error) => toast(error.message, true));
-  });
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => openSheet(button.dataset.tab));
   });
@@ -2228,20 +2722,56 @@ function bind() {
   });
   $("app-menu-button").addEventListener("click", (event) => {
     event.stopPropagation();
-    const menu = $("app-menu");
-    const open = menu.hidden;
-    menu.hidden = !open;
-    $("app-menu-button").setAttribute("aria-expanded", open ? "true" : "false");
+    toggleMenu("app-menu", "app-menu-button");
   });
+  $("export-button").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleMenu("export-menu", "export-button");
+  });
+  $("ledger-help-button").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleMenu("ledger-help", "ledger-help-button");
+  });
+  $("export-menu").addEventListener("click", () => closeMenu());
   document.addEventListener("click", (event) => {
-    if ($("app-menu").hidden) return;
     if (event.target.closest(".menu-wrap")) return;
     closeMenu();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMenu();
   });
+  let archiveSerial = 0;
+  const archiveOpen = $("archive-open");
+  const archiveFile = $("archive-file");
+  if (archiveOpen && archiveFile) {
+    archiveOpen.addEventListener("click", () => {
+      closeMenu();
+      archiveFile.click();
+    });
+    archiveFile.addEventListener("change", () => {
+      const file = archiveFile.files && archiveFile.files[0];
+      archiveFile.value = "";
+      if (!file) return;
+      if (file.size > ARCHIVE_MAX_BYTES) {
+        toast("That ledger file is too large.", true);
+        return;
+      }
+      const serial = ++archiveSerial;
+      file.text()
+        .then((text) => api("/api/ledger/archive", { method: "POST", body: text }))
+        .then((view) => {
+          if (serial !== archiveSerial) return;
+          renderArchive(view);
+          openSheet("archive");
+        })
+        .catch((error) => {
+          if (serial !== archiveSerial) return;
+          toast(error.message, true);
+        });
+    });
+  }
   $("reset-ledger").addEventListener("click", () => {
+    closeMenu();
     const sure = window.confirm(
       "Delete every donation on this ledger? Other ledgers stay. Platform settings and the log stay. This cannot be undone.",
     );
@@ -2334,13 +2864,29 @@ function renderGiveaway(state) {
       const n = Number(state.entries) || 0;
       const platforms = state.platforms || {};
       const label = closed ? (n === 1 ? "entry left" : "entries left") : (n === 1 ? "entry" : "entries");
-      counts.textContent = `${n} ${label}. YouTube ${platforms.youtube || 0}. Rumble ${platforms.rumble || 0}. Kick ${platforms.kick || 0}.`;
+      counts.replaceChildren(document.createTextNode(`${n} ${label}. `));
+      ["youtube", "rumble", "kick"].forEach((id, index) => {
+        if (index) counts.appendChild(document.createTextNode(" "));
+        const bit = document.createElement("span");
+        bit.className = "platform-count";
+        bit.append(platformLabel(id), document.createTextNode(` ${platforms[id] || 0}`));
+        counts.appendChild(bit);
+      });
     } else {
       counts.textContent = "";
     }
   }
   const winner = $("giveaway-winner");
-  if (winner) winner.textContent = state && state.winner_announce ? state.winner_announce : "";
+  if (winner) {
+    winner.replaceChildren();
+    if (state && state.winner && state.winner.author) {
+      winner.append(
+        document.createTextNode(`The giveaway winner is ${state.winner.author} on `),
+        platformLabel(state.winner.platform),
+        document.createTextNode("."),
+      );
+    }
+  }
   const winnersLabel = $("giveaway-winners-label");
   const winners = $("giveaway-winners");
   const drawn = state && Array.isArray(state.winners) ? state.winners : [];
@@ -2349,8 +2895,18 @@ function renderGiveaway(state) {
     winners.replaceChildren();
     drawn.forEach((row) => {
       const item = document.createElement("li");
-      const platform = WATCH_CHAT_LABELS[row.platform] || "";
-      item.textContent = platform ? `${row.author} on ${platform}` : String(row.author || "");
+      const label = document.createElement("span");
+      label.append(
+        document.createTextNode(`${row.author || "Someone"} on `),
+        platformLabel(row.platform),
+      );
+      const copy = giveawayCopyButton("Copy winner");
+      copy.addEventListener("click", () => {
+        const text = giveawayWinnerText(row);
+        if (!text) return;
+        copyText(text, "Winner copied.");
+      });
+      item.append(label, copy);
       winners.appendChild(item);
     });
   }
@@ -2359,8 +2915,6 @@ function renderGiveaway(state) {
     const typed = giveawayKeywordText();
     copyKeyword.disabled = !(state && state.announce) && !typed;
   }
-  const copyWinner = $("giveaway-copy-winner");
-  if (copyWinner) copyWinner.disabled = !(state && state.winner_announce);
   const redraw = $("giveaway-redraw");
   if (redraw) redraw.disabled = !(closed && Number(state && state.entries) > 0);
   renderStatusEphemeral();
@@ -2433,6 +2987,36 @@ function stopGiveawayPoll() {
   giveawayPoll = 0;
 }
 
+function giveawayWinnerText(row) {
+  const author = row && row.author ? String(row.author).trim() : "";
+  const platform = PLATFORM_NAMES[row && row.platform] || "";
+  if (!author || !platform) return "";
+  return `The giveaway winner is ${author} on ${platform}.`;
+}
+
+function giveawayCopyButton(label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", "9");
+  rect.setAttribute("y", "9");
+  rect.setAttribute("width", "11");
+  rect.setAttribute("height", "11");
+  rect.setAttribute("rx", "2");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M5 15V5a2 2 0 0 1 2-2h8");
+  svg.append(rect, path);
+  button.appendChild(svg);
+  return button;
+}
+
 function giveawayKeywordAnnounce() {
   const state = giveawayState;
   if (state && state.announce && (state.running || state.closed)) return state.announce;
@@ -2489,14 +3073,6 @@ function bindGiveaway() {
       copyText(text, "Keyword announcement copied.");
     });
   }
-  const copyWinner = $("giveaway-copy-winner");
-  if (copyWinner) {
-    copyWinner.addEventListener("click", () => {
-      const text = giveawayState && giveawayState.winner_announce;
-      if (!text) return;
-      copyText(text, "Winner copied.");
-    });
-  }
   const redraw = $("giveaway-redraw");
   if (redraw) {
     redraw.addEventListener("click", () => {
@@ -2536,6 +3112,100 @@ function openSheet(name) {
   if (name === "giveaway") startGiveawayPoll();
   const field = dialog.querySelector("input, select, textarea");
   if (field) field.focus();
+}
+
+function confirmDuplicate(error) {
+  const who = error.authorName || "this donor";
+  const amount = Number(error.amount);
+  const money = Number.isFinite(amount)
+    ? `${amount.toFixed(2)} ${error.currency || ""}`.trim()
+    : "the same amount";
+  return window.confirm(
+    `This ledger already has a gift from ${who} for ${money} with the same message. Save this one too?`,
+  );
+}
+
+function saveManual(body) {
+  return api("/api/donations", { method: "POST", body: JSON.stringify(body) }).catch((error) => {
+    if (!error.duplicate) throw error;
+    if (!confirmDuplicate(error)) return null;
+    return api("/api/donations", {
+      method: "POST",
+      body: JSON.stringify({ ...body, confirm_duplicate: true }),
+    });
+  });
+}
+
+function saveManualEdit(id, body) {
+  const send = (payload) => api("/api/donations/" + id, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return send(body).catch((error) => {
+    if (!error.duplicate) throw error;
+    if (!confirmDuplicate(error)) return null;
+    return send({ ...body, confirm_duplicate: true });
+  });
+}
+
+function localDateTimeValue(iso) {
+  const parts = localParts(iso);
+  if (parts.date === "—" || parts.time === "—") return "";
+  return parts.date + "T" + parts.time;
+}
+
+function setManualEditing(id) {
+  editingId = id;
+  if (id == null) editingUsd = 0;
+  const editing = id != null;
+  const form = $("manual-entry");
+  if (form) form.classList.toggle("is-editing", editing);
+  const heading = form && form.querySelector("h2");
+  if (heading) heading.textContent = editing ? "Edit entry" : "Manual entry";
+  const endpoint = form && form.querySelector(".endpoint");
+  if (endpoint) {
+    endpoint.textContent = editing
+      ? "Saving updates this manual entry. An empty time keeps the stored one."
+      : "A miss, or a gift from somewhere else";
+  }
+  const add = $("manual-add");
+  if (add) {
+    add.setAttribute("aria-label", editing ? "Save" : "Add");
+    add.title = editing ? "Save" : "Add";
+    add.replaceChildren(icon(editing ? "check" : "plus"));
+  }
+  const clear = $("manual-clear");
+  if (clear) clear.textContent = editing ? "Cancel" : "Clear";
+  document.querySelectorAll("#rows tr").forEach((row) => {
+    row.classList.toggle("is-editing", editing && row.dataset.id === String(id));
+  });
+}
+
+function beginEdit(row) {
+  if (!row || !row.manual) return;
+  const toggle = document.querySelector("#manual-entry .section-toggle");
+  if (toggle) setSectionExpanded(toggle, true);
+  $("manual-donor").value = String(row.author_name || "").replace(/^@+/, "").trim();
+  const platform = $("manual-platform");
+  if (platform) platform.value = row.platform || "other";
+  syncManualPlatformMark();
+  const kind = $("manual-kind");
+  if (kind && Array.from(kind.options).some((option) => option.value === row.kind)) kind.value = row.kind;
+  selectCurrency(row.currency || DEFAULT_CURRENCY);
+  const code = ($("manual-currency").value || DEFAULT_CURRENCY).trim().toUpperCase();
+  const native = row.amount_value == null || row.amount_value === "" ? "" : Number(row.amount_value).toFixed(2);
+  $("manual-native").value = native;
+  const usd = Number(row.amount_usd);
+  $("manual-amount").value = code === "USD" ? native : (Number.isFinite(usd) ? usd.toFixed(2) : "");
+  $("manual-message").value = row.message || "";
+  $("manual-when").value = localDateTimeValue(row.created_at);
+  editingUsd = Number.isFinite(usd) ? usd : 0;
+  setManualEditing(row.id);
+  const form = $("manual-entry");
+  if (form) form.scrollIntoView({ block: "start" });
+  const donor = $("manual-donor");
+  if (donor) donor.focus();
+  updateStreamPreview();
 }
 
 function readFilters() {

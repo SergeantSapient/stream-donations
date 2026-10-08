@@ -20,7 +20,8 @@ if [ ! -x "$ELECTRON_SRC/electron" ]; then
   echo "Electron is not built. From the project directory, run scripts/build.sh." >&2
   exit 1
 fi
-DIST="$ROOT/dist/StreamDonations-linux-x64"
+rm -rf "$ROOT/dist/StreamDonations-linux-x64" "$ROOT/dist/StreamDonations.AppDir"
+DIST="$ROOT/dist/SuperBerry-linux-x64"
 PYTHON_CACHE="$ROOT/build/python-standalone"
 mkdir -p "$ROOT/build" "$ROOT/dist"
 
@@ -64,22 +65,22 @@ cp -a "$ROOT/source/collector/streamdonations" "$DIST/collector/streamdonations"
 find "$DIST/collector" -depth -name '__pycache__' -exec rm -rf {} + || true
 find "$DIST/collector" -name '*.pyc' -delete || true
 cp -a "$PYTHON_CACHE" "$DIST/python"
-cp "$ROOT/scripts/stream-donations" "$DIST/StreamDonations"
-chmod 755 "$DIST/StreamDonations"
+cp "$ROOT/scripts/stream-donations" "$DIST/SuperBerry"
+chmod 755 "$DIST/SuperBerry"
 
 # The directory above is enough to run. An AppImage is the same tree wrapped
 # so it is one file. If the tool cannot be fetched, the folder is still there.
-APPDIR="$ROOT/dist/StreamDonations.AppDir"
+APPDIR="$ROOT/dist/SuperBerry.AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR"
 cp -a "$DIST/." "$APPDIR/"
-cp "$APPDIR/StreamDonations" "$APPDIR/AppRun"
+cp "$APPDIR/SuperBerry" "$APPDIR/AppRun"
 chmod 755 "$APPDIR/AppRun"
 cp "$ROOT/source/electron/icon.png" "$APPDIR/stream-donations.png"
 cat > "$APPDIR/stream-donations.desktop" <<'EOF'
 [Desktop Entry]
-Name=Stream Donations
-Exec=StreamDonations
+Name=SuperBerry
+Exec=SuperBerry
 Icon=stream-donations
 StartupWMClass=stream-donations
 Type=Application
@@ -93,13 +94,13 @@ if [ ! -x "$tool" ]; then
     || true
 fi
 # Set STREAM_DONATIONS_APPIMAGE to write somewhere else when the usual file is open.
-image="${STREAM_DONATIONS_APPIMAGE:-$ROOT/dist/StreamDonations-x86_64.AppImage}"
+image="${STREAM_DONATIONS_APPIMAGE:-$ROOT/dist/SuperBerry-x86_64.AppImage}"
 if [ -x "$tool" ]; then
   ARCH=x86_64 "$tool" --appimage-extract-and-run "$APPDIR" "$image" \
     || ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$APPDIR" "$image" \
-    || echo "AppImage tool could not wrap the folder. Run dist/StreamDonations-linux-x64/StreamDonations instead." >&2
+    || echo "AppImage tool could not wrap the folder. Run dist/SuperBerry-linux-x64/SuperBerry instead." >&2
 else
-  echo "AppImage tool was not downloaded. Run dist/StreamDonations-linux-x64/StreamDonations instead." >&2
+  echo "AppImage tool was not downloaded. Run dist/SuperBerry-linux-x64/SuperBerry instead." >&2
 fi
 echo "Portable folder: $DIST"
 echo "AppImage: $image"

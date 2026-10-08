@@ -47,6 +47,7 @@ _ALLOWED_SETTINGS = {
     "kick_webhook_port",
     "kick_public_base",
     "membership_price",
+    "ledger_page_size",
     "tiers_enabled",
     "show_top_donors",
     "chat_extra",
@@ -74,16 +75,95 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+class LedgerView:
+    """Settings and inserts for one ledger that is not the one on screen.
+
+    Public chat for that ledger keeps running. The open ledger's status line
+    and its chat panel stay on the ledger the user is looking at.
+    """
+
+    def __init__(self, store: Store, tab_id: str):
+        self._store = store
+        self.tab_id = tab_id
+        self._fields: dict[str, str] = {}
+
+    def refresh(self) -> bool:
+        for tab in self._store.ledger_snapshots():
+            if tab["id"] != self.tab_id:
+                continue
+            self._fields = tab
+            return tab.get("collection_paused") == "0"
+        return False
+
+    def collection_paused(self) -> bool:
+        return self._fields.get("collection_paused") != "0"
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        if key in self._fields:
+            value = self._fields.get(key) or ""
+            return value or default
+        # The owner Rumble URL is one shared account. A background ledger
+        # reads that channel's public chat, not the owner API.
+        if key == "rumble_api_url":
+            return ""
+        return self._store.get_setting(key, default)
+
+    def set_status(self, *_args, **_kwargs) -> None:
+        return None
+
+    def add_many(self, donations) -> int:
+        return self._store.add_many(donations, stream_id=self.tab_id)
+
+    def log(self, platform: str, level: str, message: str) -> None:
+        title = (self._fields.get("stream_title") or "").strip() or "Stream"
+        self._store.log(platform, level, f"{message} ({title})")
+
+    def __getattr__(self, name: str):
+        return getattr(self._store, name)
+
+
+class _OtherLedger:
+    def __init__(self, view: LedgerView, transport: Transport):
+        self.view = view
+        self.youtube = YouTubeClient(view, transport, chat_feed=None)
+        self.rumble = RumbleClient(view, transport, chat_feed=None)
+        self.kick = KickClient(view, transport, chat_feed=None)
+
+    def rest(self) -> None:
+        self.youtube.rest()
+        self.rumble.rest()
+        self.kick.rest()
+
+    def tick(self) -> None:
+        self.youtube.tick(public_only=True)
+        self.rumble.tick(public_only=True)
+        self.kick.tick(public_only=True)
+
+
+def _ledger_has_target(tab: dict) -> bool:
+    if tab.get("youtube_follow_live") == "1" and tab.get("youtube_channel"):
+        return True
+    if tab.get("youtube_watch"):
+        return True
+    if tab.get("rumble_follow_live") == "1" and tab.get("rumble_channel"):
+        return True
+    if tab.get("rumble_watch"):
+        return True
+    return bool(tab.get("kick_watch"))
+
+
 class Service:
     def __init__(self, store: Store, transport: Transport | None = None):
         self.store = store
         shared = transport or Transport()
+        self._transport = shared
         self.chat = ChatFeed()
         self.giveaway = Giveaway()
         self.chat.on_lines = self.giveaway.observe
         self.youtube = YouTubeClient(store, shared, chat_feed=self.chat)
         self.rumble = RumbleClient(store, shared, chat_feed=self.chat)
         self.kick = KickClient(store, shared, chat_feed=self.chat)
+        self._others: dict[str, _OtherLedger] = {}
         self.on_listen_change = None
         self._stop = threading.Event()
         self._poll_lock = threading.Lock()
@@ -113,12 +193,18 @@ class Service:
         self._stop.set()
         for thread in self._threads:
             thread.join(timeout=2)
+        with self._poll_lock:
+            self._drop_other_ledgers(set())
 
     def _loop(self, name: str, tick) -> None:
         while not self._stop.is_set():
             try:
                 with self._poll_lock:
-                    tick()
+                    try:
+                        tick()
+                    finally:
+                        if name == "youtube":
+                            self._sync_other_ledgers()
             except Exception as exc:
                 message = redact(str(exc))
                 self.store.log(name, "error", message)
@@ -132,8 +218,7 @@ class Service:
     def set_paused(self, paused: bool, tab_id: str | None = None) -> None:
         """Stop or resume one ledger without signing out.
 
-        Collectors follow the open ledger only. Pausing another ledger stores
-        that choice and leaves the open one running.
+        Every connected ledger keeps collecting. Pausing one leaves the others running.
         """
         with self._poll_lock:
             # Read this before the ledger document is opened. Migration writes
@@ -142,16 +227,18 @@ class Service:
             target = self.store.set_stream_paused(tab_id, paused)
             active = self.store._active_stream_id()
             if target != active:
+                self._sync_other_ledgers()
                 self.store.log(
                     "ledger",
                     "info",
-                    "Paused that ledger. It does not collect while it is open."
+                    "Paused that ledger. It stays disconnected until you reconnect it."
                     if paused
-                    else "That ledger will collect while it is open.",
+                    else "That ledger is collecting, including while another ledger is open.",
                 )
                 return
             if paused:
                 self._rest_platforms()
+                self._sync_other_ledgers()
                 if not already:
                     self.store.log(
                         "ledger",
@@ -161,17 +248,55 @@ class Service:
                     )
                 return
             if not already:
+                self._sync_other_ledgers()
                 return
             self.store.log("ledger", "info", "Reconnected. This ledger is collecting again.")
             self._resume_platforms()
+            self._sync_other_ledgers()
 
     def follow_open_ledger(self) -> None:
-        """Start or stop collectors to match the ledger that is now open. No log line."""
+        """Point the on-screen collectors at the open ledger. Other connected ledgers stay up."""
         with self._poll_lock:
             if self.paused():
                 self._rest_platforms()
-                return
-            self._resume_platforms()
+            else:
+                self._resume_platforms()
+            self._sync_other_ledgers()
+
+    def _sync_other_ledgers(self) -> None:
+        """Public chat for every connected ledger except the one on screen."""
+        open_id = self.store._active_stream_id()
+        wanted: set[str] = set()
+        for tab in self.store.ledger_snapshots():
+            if tab["id"] == open_id or tab.get("collection_paused") != "0":
+                continue
+            if _ledger_has_target(tab):
+                wanted.add(tab["id"])
+        self._drop_other_ledgers(wanted)
+        for tab_id in wanted:
+            bundle = self._others.get(tab_id)
+            if bundle is None:
+                bundle = self._make_other(tab_id)
+                self._others[tab_id] = bundle
+            if not bundle.view.refresh():
+                self._others.pop(tab_id, None)
+                bundle.rest()
+                continue
+            try:
+                bundle.tick()
+            except Exception as exc:
+                self.store.log("ledger", "error", redact(str(exc)))
+
+    def _make_other(self, tab_id: str) -> _OtherLedger:
+        view = LedgerView(self.store, tab_id)
+        view.refresh()
+        return _OtherLedger(view, self._transport)
+
+    def _drop_other_ledgers(self, keep: set[str]) -> None:
+        for tab_id in list(self._others):
+            if tab_id in keep:
+                continue
+            self._others.pop(tab_id).rest()
 
     def _rest_platforms(self) -> None:
         self.youtube.rest()
@@ -318,6 +443,8 @@ class Service:
                     updates[key] = _bounded_money(text)
                 else:
                     clears.append(key)
+            elif key == "ledger_page_size":
+                updates[key] = _bounded_int(value, 1, 500, "Ledger page size")
             elif key in {"tiers_enabled", "show_top_donors"}:
                 updates[key] = "1" if _flag(value) else "0"
             elif key == "chat_extra":
@@ -396,6 +523,20 @@ def _youtube_poll_seconds(value: object) -> str:
     # A saved 30 or 90 second interval is raised, not rejected, so an open
     # settings form from before this floor still saves the rest of the form.
     return str(clamp_poll_seconds(number))
+
+
+def displayed_ledger_page_size(value: object) -> int:
+    """Rows per ledger page. A missing or broken saved value is the old page of 100."""
+    text = str(value or "").strip()
+    if not text:
+        return 100
+    try:
+        number = int(text)
+    except ValueError:
+        return 100
+    if number < 1 or number > 500:
+        return 100
+    return number
 
 
 def _bounded_int(value: object, low: int, high: int, label: str) -> str:

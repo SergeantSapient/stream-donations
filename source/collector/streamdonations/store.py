@@ -29,7 +29,7 @@ from .money import CSV_FIELDS, DISPLAY_KIND_SQL, money_text, parse_membership_pr
 from .search import matches_ledger_query
 from .normalize import Donation
 from .payload_log import payload_message
-from .util import csv_safe, to_utc_iso, utc_now_iso
+from .util import csv_safe, display_donor, to_utc_iso, utc_now_iso
 
 # Globals mirror the open ledger. Secrets and streamer presets stay global.
 # Other ledgers live in the streams document.
@@ -221,11 +221,11 @@ class Store:
             self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
             self._conn.commit()
 
-    def add_many(self, donations: list[Donation]) -> int:
+    def add_many(self, donations: list[Donation], stream_id: str | None = None) -> int:
         if not donations:
             return 0
         received = utc_now_iso()
-        stream_id = self._active_stream_id()
+        stream_id = self._active_stream_id() if stream_id is None else stream_id
         inserted = 0
         fresh: list[Donation] = []
         with self._lock:
@@ -343,11 +343,74 @@ class Store:
         )
         return int(row["id"])
 
+    def manual_duplicate(self, fields: dict, ignore_id: int | None = None) -> dict | None:
+        """The first open-ledger row that is the same gift as a hand-entered one.
+
+        Same donor, platform, type, amount, currency, and message. Hidden rows
+        still count. Another ledger does not. Automated collection does not call this.
+        ignore_id skips the row being edited, so saving it unchanged is not a copy.
+        """
+        author = display_donor(fields.get("author")).casefold()
+        platform = str(fields.get("platform") or "")
+        kind = str(fields.get("kind") or "")
+        currency = str(fields.get("currency") or "").upper()
+        message = " ".join(str(fields.get("message") or "").split()).casefold()
+        try:
+            amount = round(float(fields["amount"]), 2)
+        except (TypeError, ValueError, KeyError):
+            return None
+        skipped = None if ignore_id is None else int(ignore_id)
+        stream_id = self._active_stream_id()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, author_name, platform, kind, message, amount_value, currency
+                FROM donations
+                WHERE stream_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (stream_id,),
+            ).fetchall()
+        for row in rows:
+            if skipped is not None and int(row["id"]) == skipped:
+                continue
+            if display_donor(row["author_name"]).casefold() != author:
+                continue
+            if str(row["platform"] or "") != platform or str(row["kind"] or "") != kind:
+                continue
+            if str(row["currency"] or "").upper() != currency:
+                continue
+            if row["amount_value"] is None:
+                continue
+            if round(float(row["amount_value"]), 2) != amount:
+                continue
+            stored = " ".join(str(row["message"] or "").split()).casefold()
+            if stored != message:
+                continue
+            return {
+                "id": int(row["id"]),
+                "author_name": display_donor(row["author_name"]) or author,
+                "amount": amount,
+                "currency": currency,
+            }
+        return None
+
     def set_stream_started(self, when: str | None) -> None:
         if when:
             self.set_setting("stream_started_at", when)
         else:
             self.delete_setting("stream_started_at")
+
+    def ledger_snapshots(self) -> list[dict]:
+        """Each ledger's own addresses and pause. The open ledger is unchanged."""
+        doc = self._stream_doc()
+        snapshots = []
+        for tab in doc["tabs"]:
+            item = {"id": tab["id"]}
+            for key in _STREAM_FIELDS:
+                item[key] = str(tab.get(key) or "")
+            snapshots.append(item)
+        return snapshots
 
     def stream_tabs(self) -> dict:
         """Id, label, and pause for each ledger. A blank name is shown as Stream.
@@ -692,6 +755,7 @@ class Store:
             "tiers": [tier.as_dict() for tier in tiers],
             "donors": donors,
             "donor_bar": donor_bar_line(donors["rows"]),
+            "donor_bar_copy": donor_bar_line(donors["rows"], mentions=True),
             "thanks": thanks,
             "last": _last_line(last),
         }
@@ -849,6 +913,80 @@ class Store:
         else:
             self.log("ledger", "info", "An automatic ledger entry counts again.")
         return self.get_donation(donation_id)
+
+    def update_manual_entry(
+        self,
+        donation_id: int,
+        *,
+        author_name: object,
+        platform: object,
+        kind: object,
+        amount: object,
+        currency: object = "USD",
+        message: object = "",
+        created_at: object = "",
+    ) -> dict | None:
+        """Replace the visible fields of one hand-entered row.
+
+        The id and manual dedupe key stay. Note, processed, hidden, raw, and
+        received_at stay. A blank time keeps the stored time. An automatic row
+        cannot be edited.
+        """
+        current = self.get_donation(donation_id)
+        if current is None:
+            return None
+        if not current["manual"]:
+            raise ValueError("Automatic entries cannot be edited.")
+        kept = created_at if str(created_at or "").strip() else current["created_at"]
+        fields = _checked_manual_fields(
+            author_name=author_name,
+            platform=platform,
+            kind=kind,
+            amount=amount,
+            currency=currency,
+            message=message,
+            created_at=kept,
+        )
+        stream_id = self._active_stream_id()
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                UPDATE donations
+                SET platform = ?, kind = ?, author_name = ?, message = ?,
+                    amount_value = ?, amount_micros = ?, currency = ?, created_at = ?
+                WHERE id = ? AND stream_id = ? AND dedupe_key = ?
+                """,
+                (
+                    fields["platform"],
+                    fields["kind"],
+                    fields["author"],
+                    fields["message"],
+                    fields["amount"],
+                    int(round(fields["amount"] * 1_000_000)),
+                    fields["currency"],
+                    fields["created_at"],
+                    int(donation_id),
+                    stream_id,
+                    current["dedupe_key"],
+                ),
+            )
+            self._conn.commit()
+            changed = cursor.rowcount
+        saved = self.get_donation(donation_id)
+        # SQLite reports 0 rows when every new value matches the stored row.
+        unchanged = (
+            changed == 0
+            and saved is not None
+            and saved.get("dedupe_key") == current["dedupe_key"]
+        )
+        if changed != 1 and not unchanged:
+            return None
+        self.log(
+            "ledger",
+            "info",
+            f"Edited a manual {fields['kind']} from {fields['author']} for {fields['amount']:.2f} {fields['currency']}.",
+        )
+        return saved
 
     def delete_manual_entry(self, donation_id: int) -> bool:
         """Delete one hand-entered row. Automatic rows stay until the ledger is reset."""
@@ -1339,7 +1477,7 @@ class Store:
             "kind_label": KIND_LABELS.get(row["kind"], row["kind"]),
             "external_id": row["external_id"],
             "channel": row["channel"],
-            "author_name": row["author_name"],
+            "author_name": display_donor(row["author_name"]),
             "author_id": row["author_id"],
             "message": row["message"],
             "amount_value": row["amount_value"],
@@ -1358,6 +1496,14 @@ class Store:
         return payload
 
 
+class DuplicateManual(Exception):
+    """A hand-entered gift matches one already stored on the open ledger."""
+
+    def __init__(self, match: dict):
+        super().__init__("This ledger already has a matching gift.")
+        self.match = match
+
+
 def _checked_manual_fields(
     *,
     author_name: object,
@@ -1370,7 +1516,7 @@ def _checked_manual_fields(
     require_time: bool = False,
 ) -> dict:
     """Shared checks for a new manual gift and for putting a deleted one back."""
-    author = str(author_name or "").strip()
+    author = display_donor(author_name)
     if not author:
         raise ValueError("Donor name is required.")
     if len(author) > 200:
@@ -1432,7 +1578,7 @@ def _optional_row_id(value: object) -> int | None:
 def _last_line(row: dict | None) -> str:
     if not row:
         return ""
-    who = str(row.get("author_name") or "").strip() or "Someone"
+    who = display_donor(row.get("author_name")) or "Someone"
     amount = row.get("amount_usd")
     shown = format_usd(float(amount)) if isinstance(amount, (int, float)) else "—"
     platform = row.get("platform_label") or row.get("platform") or "a platform"

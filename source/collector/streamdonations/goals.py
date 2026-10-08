@@ -10,6 +10,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from .util import display_donor, mention_donor
+
 TIER_COUNT = 5
 REACHED_EPS = 0.01
 DONOR_BAR_THANKS = "Thank you for the support!"
@@ -149,7 +151,7 @@ def stream_chat_line(total: float, *, enabled: bool, tiers: list[GoalTier], extr
 def donor_leaderboard(rows: list[dict], limit: int = 10) -> dict:
     grouped: dict[str, dict] = {}
     for row in rows:
-        name = str(row.get("author_name") or "").strip() or "—"
+        name = display_donor(row.get("author_name") or row.get("donor")) or "—"
         key = name.casefold()
         slot = grouped.get(key)
         if slot is None:
@@ -175,14 +177,19 @@ def donor_leaderboard(rows: list[dict], limit: int = 10) -> dict:
     }
 
 
-def donor_bar_line(rows: list[dict]) -> str:
+def donor_bar_line(rows: list[dict], *, mentions: bool = False) -> str:
     names = ", ".join(
-        f"{one_line(row.get('donor')) or '—'}: {format_usd(float(row.get('usd') or 0))}"
+        f"{_bar_name(row.get('donor'), mentions)}: {format_usd(float(row.get('usd') or 0))}"
         for row in rows[:3]
     )
     if names:
         return f"Top Donors: {names}. {DONOR_BAR_THANKS}"
     return f"Top Donors: {DONOR_BAR_THANKS}"
+
+
+def _bar_name(value: object, mentions: bool) -> str:
+    shown = display_donor(value) or "—"
+    return mention_donor(shown) if mentions else shown
 
 
 def tier_breaches(rows: list[dict], tiers_enabled: bool, tiers: list[GoalTier]) -> list[dict]:
@@ -202,7 +209,7 @@ def tier_breaches(rows: list[dict], tiers_enabled: bool, tiers: list[GoalTier]) 
             index += 1
         if not crossed:
             continue
-        donor = str(row.get("author_name") or "").strip() or "Someone"
+        donor = display_donor(row.get("author_name")) or "Someone"
         for tier in crossed:
             found.append(
                 {
@@ -211,6 +218,7 @@ def tier_breaches(rows: list[dict], tiers_enabled: bool, tiers: list[GoalTier]) 
                     "id": row.get("id"),
                     "donor": donor,
                     "line": tier_thank_you_line(tier_label(tier), donor),
+                    "copy": tier_thank_you_line(tier_label(tier), mention_donor(donor)),
                 }
             )
     return found

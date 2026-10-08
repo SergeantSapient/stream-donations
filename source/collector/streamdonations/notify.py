@@ -16,11 +16,12 @@ import threading
 from collections.abc import Callable, Sequence
 
 from .goals import format_usd, one_line
+from .util import display_donor
 from .kinds import PLATFORM_LABELS
 from .money import quote
 from .normalize import Donation
 
-APP_NAME = "Stream Donations"
+APP_NAME = "SuperBerry"
 _ICON = "stream-donations"
 _DESKTOP_ENTRY = "stream-donations"
 _QUEUE_LIMIT = 200
@@ -175,7 +176,7 @@ def system_notifier(log: Log | None = None):
 
 def notification_text(donation: Donation, membership_price: float | None) -> tuple[str, str]:
     """Summary and body for one stored donation. No raw platform payload."""
-    who = _plain(donation.author_name, 80) or "Someone"
+    who = _plain(display_donor(donation.author_name), 80) or "Someone"
     platform = PLATFORM_LABELS.get(donation.platform, donation.platform or "a platform")
     priced = quote(_quote_row(donation), membership_price, {"USD": 1.0})
     amount = _amount_text(priced.amount, priced.currency)

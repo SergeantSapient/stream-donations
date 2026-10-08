@@ -102,4 +102,34 @@ class TierAndDonorTests(unittest.TestCase):
         found = tier_breaches(rows, True, [tier(25, "Bronze")])
         self.assertEqual(found[0]["donor"], "Ben")
         self.assertEqual(found[0]["line"], "Thank you for helping us reach Bronze, Ben!")
+        self.assertEqual(found[0]["copy"], "Thank you for helping us reach Bronze, @Ben!")
         self.assertEqual(tier_breaches(rows, False, [tier(25, "Bronze")]), [])
+
+    def test_at_stays_off_the_screen_and_returns_on_copy(self):
+        rows = [
+            {"author_name": "@Ada", "amount_usd": 5, "platform_label": "YouTube"},
+            {"author_name": "Ada", "amount_usd": 5, "platform_label": "Kick"},
+            {"author_name": "@Ben", "amount_usd": 3, "platform_label": "Rumble"},
+        ]
+        board = donor_leaderboard(rows)
+        self.assertEqual([item["donor"] for item in board["rows"]], ["Ada", "Ben"])
+        self.assertEqual(board["rows"][0]["usd"], 10)
+        shown = donor_bar_line(board["rows"])
+        copied = donor_bar_line(board["rows"], mentions=True)
+        self.assertEqual(shown, "Top Donors: Ada: $10.00, Ben: $3.00. Thank you for the support!")
+        self.assertEqual(copied, "Top Donors: @Ada: $10.00, @Ben: $3.00. Thank you for the support!")
+        self.assertNotIn("@", shown)
+        blank = tier_breaches(
+            [{"id": 1, "author_name": "@", "amount_usd": 25}],
+            True,
+            [tier(25, "Bronze")],
+        )
+        self.assertEqual(blank[0]["line"], "Thank you for helping us reach Bronze, Someone!")
+        self.assertEqual(blank[0]["copy"], blank[0]["line"])
+        named = tier_breaches(
+            [{"id": 2, "author_name": "@MapleFan", "amount_usd": 25}],
+            True,
+            [tier(25, "Bronze")],
+        )
+        self.assertEqual(named[0]["line"], "Thank you for helping us reach Bronze, MapleFan!")
+        self.assertEqual(named[0]["copy"], "Thank you for helping us reach Bronze, @MapleFan!")

@@ -60,7 +60,7 @@ def resolve_data_dir(
         candidate = candidate.resolve()
         if not _is_under(candidate, home_path):
             raise DataPathError(
-                "Stream Donations only stores its database inside the home directory. "
+                "SuperBerry only stores its database inside the home directory. "
                 f"Refusing {candidate}."
             )
         if not _inside_application_tree(candidate):
@@ -150,7 +150,10 @@ def _inside_application_tree(path: Path) -> bool:
         if (candidate / "source" / "collector" / "streamdonations" / "youtube.py").is_file():
             return True
         portable = candidate / "collector" / "streamdonations" / "youtube.py"
-        launcher = candidate / "StreamDonations"
-        if portable.is_file() and (launcher.is_file() or (candidate / "app" / "main.js").is_file()):
+        launcher = candidate / "SuperBerry"
+        legacy = candidate / "StreamDonations"
+        if portable.is_file() and (
+            launcher.is_file() or legacy.is_file() or (candidate / "app" / "main.js").is_file()
+        ):
             return True
     return False

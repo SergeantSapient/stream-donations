@@ -110,6 +110,22 @@ def channel_id_value(value: object) -> str:
     return str(value)
 
 
+def display_donor(value: object) -> str:
+    """Donor name as the app shows it. A leading @ is added only when copying into chat."""
+    text = " ".join(str(value or "").split())
+    while text.startswith("@"):
+        text = text[1:].lstrip()
+    return text
+
+
+def mention_donor(value: object) -> str:
+    """@name for a copied top-donor or thank-you line. Placeholders stay bare."""
+    name = display_donor(value)
+    if not name or name in {"—", "Someone"}:
+        return name
+    return f"@{name}"
+
+
 def csv_safe(value: object) -> str:
     """Stop spreadsheet apps from treating chat text as a formula."""
     if value is None:

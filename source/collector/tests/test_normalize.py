@@ -352,6 +352,32 @@ class NormalizeTests(unittest.TestCase):
         second = live.replace("222", "333")
         with self.assertRaises(ValueError):
             live_chat_id_from_channel_html(live + second)
+        upcoming = """
+        <rum-videos-grid><script type="application/json">
+        {"items":[
+          {"id":111,"title":"Old","live":false,"live_placeholder":false},
+          {"id":447215100,"title":"Soon","live":false,"live_placeholder":true}
+        ]}
+        </script></rum-videos-grid>
+        """
+        self.assertEqual(live_chat_id_from_channel_html(upcoming), "447215100")
+        self.assertEqual(
+            live_chat_id_from_channel_html(
+                upcoming.replace('"live":false,"live_placeholder":true', '"live":true,"live_placeholder":true')
+            ),
+            "447215100",
+        )
+        prefers_live = upcoming.replace(
+            '{"id":111,"title":"Old","live":false,"live_placeholder":false}',
+            '{"id":222,"title":"Now","live":true,"live_placeholder":false}',
+        )
+        self.assertEqual(live_chat_id_from_channel_html(prefers_live), "222")
+        two_upcoming = upcoming.replace(
+            '{"id":111,"title":"Old","live":false,"live_placeholder":false}',
+            '{"id":333,"title":"Later","live":false,"live_placeholder":true}',
+        )
+        with self.assertRaises(ValueError):
+            live_chat_id_from_channel_html(two_upcoming)
         self.assertEqual(
             rumble_channel_page_url("https://rumble.com/c/NewsmaxTV/livestreams"),
             "https://rumble.com/c/NewsmaxTV",

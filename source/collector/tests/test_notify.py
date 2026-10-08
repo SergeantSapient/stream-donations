@@ -130,7 +130,7 @@ class FreedesktopCommandTests(unittest.TestCase):
         notifier = FreedesktopNotifier(run=run, which=which, synchronous=True)
         notifier.donations_added([_chat("a")], membership_price=None)
         self.assertEqual(calls[0][0], "/usr/bin/notify-send")
-        self.assertIn("--app-name=Stream Donations", calls[0])
+        self.assertIn("--app-name=SuperBerry", calls[0])
         self.assertIn("Fan sent $1.00", calls[0])
         self.assertIn("Super Chat on YouTube\nhello", calls[0])
         self.assertEqual(calls[1][0], "/usr/bin/dbus-send")

@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
+from streamdonations.normalize import Donation
 from streamdonations.service import Service
 from streamdonations.store import Store
 from streamdonations.transport import HttpResult
@@ -139,6 +140,80 @@ class PauseTests(unittest.TestCase):
         notes = " ".join(row["message"] for row in self.store.recent_log())
         self.assertIn("Paused that ledger", notes)
         self.assertNotIn("This ledger's", notes)
+
+    def test_another_connected_ledger_keeps_collecting(self):
+        self.store.set_setting("youtube_watch", "abcdefghijk")
+        self.store.set_setting("collection_paused", "0")
+        second = self.store.add_stream()
+        self.store.set_setting("youtube_watch", "zzzzzzzzzzz")
+        self.store.set_setting("rumble_watch", "654321")
+        self.store.set_setting("kick_watch", "other-channel")
+        self.store.set_setting("youtube_access_token", "access")
+        self.store.set_setting("youtube_access_expiry", str(time.time() + 3600))
+        self.store.set_setting("rumble_api_url", "https://rumble.com/-livestream-api/example")
+        self.store.set_setting("collection_paused", "0")
+        first = next(tab["id"] for tab in self.store.stream_tabs()["tabs"] if tab["id"] != second)
+        self.store.switch_stream(first)
+        self.assertEqual(self.store.get_setting("youtube_watch"), "abcdefghijk")
+        self.assertEqual(self.store.get_setting("collection_paused"), "0")
+
+        started = {name: threading.Event() for name in ("youtube", "rumble", "kick")}
+        real_make = self.service._make_other
+
+        def make(tab_id):
+            bundle = real_make(tab_id)
+            bundle.youtube._public._loop = _hold(started["youtube"])
+            bundle.rumble._chat_loop = _hold(started["rumble"])
+            bundle.kick._public._loop = _hold(started["kick"])
+            self.background = bundle
+            return bundle
+
+        self.service._make_other = make
+        self.service._sync_other_ledgers()
+        self.assertTrue(started["youtube"].wait(1))
+        self.assertTrue(started["rumble"].wait(1))
+        self.assertTrue(started["kick"].wait(1))
+        self.assertEqual(self.transport.urls, [])
+        self.assertIsNone(self.background.youtube._public._chat_feed)
+        self.assertIsNone(self.background.rumble._chat_feed)
+        self.assertIsNone(self.background.kick._public._chat_feed)
+        self.background.tick()
+        self.assertEqual(self.transport.urls, [])
+
+        stored = self.background.view.add_many([
+            Donation(
+                dedupe_key="kick:public:sub:other-ledger",
+                platform="kick",
+                kind="subscription",
+                external_id="other-ledger",
+                channel="other-channel",
+                author_name="MaxResist",
+                author_id="10466179",
+                message="Subscribed",
+                amount_value=None,
+                amount_micros=None,
+                currency=None,
+                created_at="2026-10-06T05:52:15Z",
+                raw={},
+            )
+        ])
+        self.assertEqual(stored, 1)
+        with self.store._lock:
+            row = self.store._conn.execute(
+                "SELECT stream_id, author_name FROM donations WHERE dedupe_key = ?",
+                ("kick:public:sub:other-ledger",),
+            ).fetchone()
+        self.assertEqual(row["stream_id"], second)
+        self.assertEqual(row["author_name"], "MaxResist")
+        _rows, total = self.store.list_donations(include_hidden=True)
+        self.assertEqual(total, 0)
+
+        self.service.set_paused(True, second)
+        self.assertFalse(self.service.paused())
+        self.assertFalse(self.background.youtube._public._thread.is_alive())
+        self.assertFalse(self.background.rumble._chat_thread.is_alive())
+        self.assertFalse(self.background.kick._public._thread.is_alive())
+        self.assertEqual(self.transport.urls, [])
 
     def test_startup_skips_kick_key_refresh_while_paused(self):
         self.store.set_setting("collection_paused", "1")

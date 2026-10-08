@@ -132,11 +132,36 @@ def rumble_channel_page_url(value: str) -> str:
 
 
 def live_chat_id_from_channel_html(html: str) -> str | None:
-    """Numeric chat id of the one video whose badge says it is live.
+    """Numeric chat id of the one broadcast on now, or the one upcoming chat that is open.
 
     A channel page's other videos are not the chat to read. The stylesheet
     defines the live class for every page, so only a badge on a video card counts.
+    The channel grid is also a JSON list: live is on now, and live_placeholder is
+    a scheduled broadcast. A finished video is neither.
     """
+    live = _badge_live_ids(html)
+    grid_live, upcoming = _grid_broadcast_ids(html)
+    for video_id in grid_live:
+        if video_id not in live:
+            live.append(video_id)
+    if len(live) > 1:
+        raise ValueError(
+            "That Rumble channel lists more than one live video. Paste the live video's URL or turn off follow live."
+        )
+    if len(live) == 1:
+        return live[0]
+    upcoming = list(dict.fromkeys(upcoming))
+    if len(upcoming) > 1:
+        raise ValueError(
+            "That Rumble channel lists more than one upcoming video. "
+            "Paste that video's URL or turn off follow live."
+        )
+    if len(upcoming) == 1:
+        return upcoming[0]
+    return None
+
+
+def _badge_live_ids(html: str) -> list[str]:
     found: list[str] = []
     for part in re.split(r'<div\s+class="videostream thumbnail', html)[1:]:
         head, _, rest = part.partition(">")
@@ -144,13 +169,35 @@ def live_chat_id_from_channel_html(html: str) -> str | None:
         video = re.search(r'data-video-id="(\d+)"', head) or re.search(r'data-video-id="(\d+)"', blob[:1500])
         if video and 'videostream__status--live"' in blob and video.group(1) not in found:
             found.append(video.group(1))
-    if not found:
-        return None
-    if len(found) > 1:
-        raise ValueError(
-            "That Rumble channel lists more than one live video. Paste the live video's URL or turn off follow live."
-        )
-    return found[0]
+    return found
+
+
+def _grid_broadcast_ids(html: str) -> tuple[list[str], list[str]]:
+    """Live ids, then scheduled ids, from the channel's embedded video grid."""
+    live: list[str] = []
+    upcoming: list[str] = []
+    for match in re.finditer(r'<script type="application/json">\s*(\{.*?\})\s*</script>', html, re.S):
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            video_id = item.get("id")
+            if isinstance(video_id, bool) or not isinstance(video_id, (int, str)):
+                continue
+            text = str(video_id)
+            if not text.isdigit():
+                continue
+            if item.get("live") is True:
+                live.append(text)
+            elif item.get("live_placeholder") is True:
+                upcoming.append(text)
+    return live, upcoming
 
 
 def chat_id_from_html(html: str) -> str:
@@ -381,11 +428,13 @@ class RumbleClient:
         if thread is not None and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=2)
 
-    def tick(self, force: bool = False) -> None:
+    def tick(self, force: bool = False, public_only: bool = False) -> None:
         if self.store.collection_paused():
             self.rest()
             return
         self._ensure_chat()
+        if public_only:
+            return
         follow = self.store.get_setting("rumble_follow_live") == "1"
         if follow and not self.store.get_setting("rumble_channel"):
             note = (
@@ -545,7 +594,8 @@ class RumbleClient:
                         self._chat_error = ""
                         self._chat_level = "idle"
                         self._chat_detail = (
-                            "That channel is not live. Chat waits until the channel page shows one live video."
+                            "That channel is not live. Chat waits until the channel page shows a live video "
+                            "or an upcoming one whose chat is open."
                         )
                         self.store.set_status("rumble", "idle", self._chat_detail)
                         stop.wait(30)

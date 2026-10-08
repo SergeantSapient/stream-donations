@@ -9,6 +9,7 @@ from streamdonations.kick_public import (
     public_kick_detail,
     validate_kick_watch,
 )
+from streamdonations.money import quote
 
 
 class PublicKickTests(unittest.TestCase):
@@ -63,6 +64,40 @@ class PublicKickTests(unittest.TestCase):
         )
         self.assertEqual(
             donations_from_kick_public("LuckyUsersWhoGotGiftSubscriptionsEvent", {"users": ["a"]}, "creator"),
+            [],
+        )
+        subscribed = donations_from_kick_public(
+            r"App\Events\ChannelSubscriptionEvent",
+            {"user_ids": [10466179], "username": "MaxResist", "channel_id": 35522671},
+            "creator",
+        )[0]
+        self.assertEqual(subscribed.kind, "subscription")
+        self.assertEqual(subscribed.author_name, "MaxResist")
+        self.assertEqual(subscribed.message, "Subscribed")
+        self.assertIsNone(subscribed.amount_value)
+        self.assertIsNone(subscribed.currency)
+        # The dollar amount is the membership price from Settings, read when the row is shown.
+        for price in (4.99, 7.25):
+            priced = quote(
+                {
+                    "platform": subscribed.platform,
+                    "kind": subscribed.kind,
+                    "amount_value": subscribed.amount_value,
+                    "currency": subscribed.currency,
+                    "message": subscribed.message,
+                    "raw": subscribed.raw,
+                },
+                price,
+                {},
+            )
+            self.assertEqual(priced.usd, price)
+            self.assertEqual(priced.currency, "USD")
+        self.assertEqual(
+            donations_from_kick_public(
+                r"App\Events\FollowersUpdated",
+                {"username": "MaxResist", "followersCount": 12},
+                "creator",
+            ),
             [],
         )
 

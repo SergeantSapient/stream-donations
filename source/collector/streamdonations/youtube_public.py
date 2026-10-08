@@ -145,10 +145,11 @@ def youtube_channel_live_url(value: str) -> str:
 
 
 def live_video_from_channel_html(html: str) -> str | None:
-    """Video id only when this /live page is the broadcast that is on now.
+    """Video id for the broadcast this /live page is currently presenting.
 
-    A channel page lists many videos. The canonical watch link plus a live-now
-    marker is the current broadcast. A loose videoId is not.
+    That is the one on now, or the upcoming one whose waiting-room chat is
+    already open. A channel page lists many videos. The canonical watch link
+    has to be that broadcast. A loose videoId is not.
     """
     if "consent.youtube.com" in html and "ytInitialData" not in html:
         raise ValueError("YouTube returned a consent page instead of the channel.")
@@ -156,15 +157,25 @@ def live_video_from_channel_html(html: str) -> str | None:
         r'<link rel="canonical" href="https://(?:www\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]{11})(?:&[^"]*)?"',
         html,
     )
-    if not canon or '"isLiveNow":true' not in html:
+    if not canon:
         return None
     video_id = canon.group(1)
     details = re.search(r'"videoDetails":\{"videoId":"([A-Za-z0-9_-]{11})"', html)
     if details is None:
-        return video_id
+        if '"isLiveNow":true' in html or '"isUpcoming":true' in html:
+            return video_id
+        return None
     if details.group(1) != video_id:
         return None
-    window = html[details.end():details.end() + 2500]
+    window = html[details.end():details.end() + 12000]
+    next_details = window.find('"videoDetails"')
+    if next_details > 0:
+        window = window[:next_details]
+    # Scheduled broadcast. YouTube opens public chat before isLiveNow flips.
+    if '"isUpcoming":true' in window:
+        return video_id
+    if '"isLiveNow":true' not in html:
+        return None
     live_at = window.find('"isLive":true')
     offline_at = window.find('"isLive":false')
     if live_at < 0 or (offline_at >= 0 and offline_at < live_at):
@@ -524,7 +535,10 @@ class PublicChatFollower:
                     if not video_id:
                         if not self._live(stop):
                             return
-                        self._set_idle("That channel is not live. Chat waits until a broadcast is live.")
+                        self._set_idle(
+                            "That channel is not live. Chat waits until a broadcast is live "
+                            "or its waiting room is open."
+                        )
                         stop.wait(30)
                         continue
                 else:

@@ -134,11 +134,13 @@ class YouTubeClient:
     def rest(self) -> None:
         self._public.rest()
 
-    def tick(self, force: bool = False) -> None:
+    def tick(self, force: bool = False, public_only: bool = False) -> None:
         if self.store.collection_paused():
             self.rest()
             return
         self._public.ensure()
+        if public_only:
+            return
         follow = self.store.get_setting("youtube_follow_live") == "1"
         has_channel = bool(self.store.get_setting("youtube_channel"))
         has_watch = bool(self.store.get_setting("youtube_watch"))

@@ -13,6 +13,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from streamdonations.kick_sig import signed_payload
+from streamdonations.normalize import Donation
 from streamdonations.server import App, Handler, ThreadingServer, WebhookHandler
 from streamdonations.store import Store
 from streamdonations.transport import Transport
@@ -82,8 +83,17 @@ class ApiTests(unittest.TestCase):
 
         status, headers, body = self._request("/")
         self.assertEqual(status, 200)
-        self.assertIn(b"Stream Donations", body)
+        self.assertIn(b"<title>SuperBerry</title>", body)
+        self.assertIn(b'class="brand-mark" src="/icons/superberry.png"', body)
+        self.assertIn(b'class="brand-super">Super</span><span class="brand-berry">Berry</span>', body)
         self.assertIn("default-src 'self'", headers.get("Content-Security-Policy", ""))
+        status, _headers, css = self._request("/styles.css")
+        self.assertEqual(status, 200)
+        self.assertIn(b"font-family: Fredoka", css)
+        self.assertIn(b"/fonts/fredoka.woff2", css)
+        self.assertIn(b"--brand-blue: #002ed7", css)
+        self.assertIn(b"--brand-gold: #feb517", css)
+        self.assertRegex(css, rb"\.brand-mark \{[^}]*background: var\(--raise-2\)")
 
         status, _headers, body = self._request(
             "/api/settings",
@@ -164,7 +174,39 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn(b'data-tab="log"', page)
         self.assertIn(b'id="tab-ledger"', page)
         self.assertIn(b'id="reset-ledger"', page)
+        self.assertIn(b'id="export-button"', page)
+        self.assertIn(b'id="export-menu"', page)
+        self.assertIn(b'id="export-csv"', page)
+        self.assertIn(b'id="export-jsonl"', page)
+        self.assertIn(b'title="Export the open ledger"', page)
+        self.assertIn(b'title="Download the open ledger as CSV"', page)
+        self.assertIn(b'title="Download the open ledger as JSONL"', page)
+        self.assertIn(b'title="Menu"', page)
+        self.assertIn(b'title="Delete every donation on this ledger"', page)
+        self.assertLess(page.index(b'id="export-button"'), page.index(b'id="log-button"'))
+        self.assertLess(page.index(b'id="log-button"'), page.index(b'id="app-menu-button"'))
+        self.assertLess(page.index(b'id="app-menu"'), page.index(b'id="reset-ledger"'))
+        self.assertLess(page.index(b'id="reset-ledger"'), page.index(b'id="filters"'))
+        filters = page.split(b'id="filters"', 1)[1].split(b"</form>", 1)[0]
+        self.assertNotIn(b"Apply", filters)
+        help_button = page.split(b'id="ledger-help-button"', 1)[1].split(b"</button>", 1)[0]
+        self.assertIn(b'aria-label="Help"', help_button)
+        self.assertIn(b'title="Help"', help_button)
+        self.assertNotIn(b">Help<", help_button)
+        help_panel = page.split(b'id="ledger-help"', 1)[1].split(b"</div>", 1)[0]
+        self.assertIn(b'class="help-section"', help_panel)
+        self.assertIn(b"Hover an automatic entry", help_panel)
+        self.assertEqual(page.count(b"Hover an automatic entry"), 1)
+        self.assertNotIn(b"poll-now", page)
+        self.assertNotIn(b"Export CSV", page)
+        self.assertNotIn(b"Export JSONL", page)
         self.assertIn(b'id="log-button"', page)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        self.assertNotIn(b"poll-now", script)
+        self.assertIn(b'$("export-csv").href = "/api/export.csv?" + exportQuery', script)
+        self.assertIn(b'$("export-jsonl").href = "/api/export.jsonl?" + exportQuery', script)
+        self.assertIn(b'toggleMenu("ledger-help", "ledger-help-button")', script)
         self.assertIn(b'id="tab-log"', page)
         self.assertIn(b'id="tab-youtube"', page)
         self.assertIn(b'id="tab-settings"', page)
@@ -370,6 +412,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(report["scope"], "ledger")
         self.assertEqual(report["donors"]["rows"][0]["donor"], "Ada")
         self.assertIn("Ada: $12.50", report["donor_bar"])
+        self.assertNotIn("@", report["donor_bar"])
+        self.assertIn("@Ada: $12.50", report["donor_bar_copy"])
 
         status, _headers, body = self._request("/api/settings", method="PUT", body={
             "tiers_enabled": True,
@@ -410,6 +454,331 @@ class ApiTests(unittest.TestCase):
             body={"author_name": "", "platform": "other", "kind": "donation", "amount": 1},
         )
         self.assertEqual(missing, 400)
+
+    def test_manual_duplicate_asks_before_a_second_copy(self):
+        gift = {
+            "author_name": "@Ada",
+            "platform": "youtube",
+            "kind": "super_chat",
+            "amount": "5",
+            "currency": "USD",
+            "message": "Hello",
+        }
+        status, _headers, body = self._request("/api/donations", method="POST", body=gift)
+        self.assertEqual(status, 201)
+        status, _headers, body = self._request("/api/donations", method="POST", body=gift)
+        self.assertEqual(status, 409)
+        warning = json.loads(body)
+        self.assertTrue(warning["duplicate"])
+        self.assertEqual(warning["author_name"], "Ada")
+        self.assertEqual(warning["amount"], 5)
+        self.assertEqual(warning["currency"], "USD")
+        status, _headers, _body = self._request(
+            "/api/donations",
+            method="POST",
+            body={**gift, "message": "Thanks"},
+        )
+        self.assertEqual(status, 201)
+        status, _headers, _body = self._request(
+            "/api/donations",
+            method="POST",
+            body={**gift, "confirm_duplicate": "yes"},
+        )
+        self.assertEqual(status, 409)
+        status, _headers, body = self._request(
+            "/api/donations",
+            method="POST",
+            body={**gift, "confirm_duplicate": True},
+        )
+        self.assertEqual(status, 201)
+        listed = json.loads(self._request("/api/donations")[2])
+        self.assertEqual(listed["total"], 3)
+
+        first = json.loads(self._request("/api/stream")[2])["streams"]["active_id"]
+        status, _headers, _body = self._request("/api/streams", method="POST", body={"action": "add"})
+        self.assertEqual(status, 200)
+        status, _headers, _body = self._request("/api/donations", method="POST", body=gift)
+        self.assertEqual(status, 201)
+        status, _headers, _body = self._request(
+            "/api/streams", method="POST", body={"action": "switch", "id": first}
+        )
+        self.assertEqual(status, 200)
+        collected = Donation(
+            dedupe_key="yt:chat:1",
+            platform="youtube",
+            kind="super_chat",
+            external_id="1",
+            channel="",
+            author_name="@Fan",
+            author_id="",
+            message="Hello",
+            amount_value=1,
+            amount_micros=1_000_000,
+            currency="USD",
+            created_at="2024-06-01T12:00:00Z",
+            raw={},
+        )
+        again = Donation(
+            dedupe_key="yt:chat:2",
+            platform="youtube",
+            kind="super_chat",
+            external_id="2",
+            channel="",
+            author_name="Fan",
+            author_id="",
+            message="Hello",
+            amount_value=1,
+            amount_micros=1_000_000,
+            currency="USD",
+            created_at="2024-06-01T12:05:00Z",
+            raw={},
+        )
+        self.assertEqual(self.store.add_many([collected, again]), 2)
+        status, _headers, body = self._request(
+            "/api/donations",
+            method="POST",
+            body={
+                "author_name": "Fan",
+                "platform": "youtube",
+                "kind": "super_chat",
+                "amount": "1.00",
+                "message": "Hello",
+            },
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(body)["author_name"], "Fan")
+        _status, _headers, script = self._request("/app.js")
+        self.assertIn(b"confirm_duplicate: true", script)
+        self.assertIn(b"Save this one too?", script)
+
+    def test_manual_row_can_be_edited_from_the_ledger(self):
+        status, _headers, body = self._request("/api/donations", method="POST", body={
+            "author_name": "@Ada",
+            "platform": "youtube",
+            "kind": "super_chat",
+            "amount": "5.00",
+            "currency": "USD",
+            "message": "Hello",
+            "created_at": "2024-06-01T12:00:00Z",
+        })
+        self.assertEqual(status, 201)
+        created = json.loads(body)
+        donation_id = created["id"]
+        self.assertTrue(str(created["dedupe_key"]).startswith("manual:"))
+
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={"note": "keep me", "processed": True},
+        )
+        self.assertEqual(status, 200)
+        marked = json.loads(body)
+        self.assertEqual(marked["note"], "keep me")
+        self.assertTrue(marked["processed"])
+        self.assertTrue(marked["processed_at"])
+
+        edited_fields = {
+            "author_name": "@Bea",
+            "platform": "kick",
+            "kind": "donation",
+            "amount": "7.50",
+            "currency": "PHP",
+            "message": "Edited",
+        }
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body=edited_fields,
+        )
+        self.assertEqual(status, 200)
+        edited = json.loads(body)
+        self.assertEqual(edited["id"], donation_id)
+        self.assertEqual(edited["dedupe_key"], created["dedupe_key"])
+        self.assertEqual(edited["external_id"], created["external_id"])
+        self.assertEqual(edited["author_name"], "Bea")
+        self.assertEqual(edited["platform"], "kick")
+        self.assertEqual(edited["kind"], "donation")
+        self.assertEqual(edited["amount_value"], 7.5)
+        self.assertEqual(edited["amount_micros"], 7_500_000)
+        self.assertEqual(edited["currency"], "PHP")
+        self.assertEqual(edited["message"], "Edited")
+        self.assertEqual(edited["created_at"], created["created_at"])
+        self.assertEqual(edited["received_at"], created["received_at"])
+        self.assertEqual(edited["note"], "keep me")
+        self.assertTrue(edited["processed"])
+        self.assertEqual(edited["processed_at"], marked["processed_at"])
+        self.assertFalse(edited["hidden"])
+        listed = json.loads(self._request("/api/donations")[2])
+        self.assertEqual(listed["total"], 1)
+        log = json.loads(self._request("/api/status")[2])["log"]
+        self.assertTrue(any(
+            row["message"] == "Edited a manual donation from Bea for 7.50 PHP."
+            for row in log
+        ))
+
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body=edited_fields,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["id"], donation_id)
+        self.assertEqual(json.loads(self._request("/api/donations")[2])["total"], 1)
+
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={**edited_fields, "created_at": "2024-07-04T15:30:00Z"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["created_at"], "2024-07-04T15:30:00Z")
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={**edited_fields, "created_at": "  "},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["created_at"], "2024-07-04T15:30:00Z")
+
+        status, _headers, _body = self._request("/api/donations", method="POST", body={
+            "author_name": "Cara",
+            "platform": "youtube",
+            "kind": "super_chat",
+            "amount": "3.00",
+            "currency": "USD",
+            "message": "Other",
+        })
+        self.assertEqual(status, 201)
+        match = {
+            "author_name": "Cara",
+            "platform": "youtube",
+            "kind": "super_chat",
+            "amount": "3.00",
+            "currency": "USD",
+            "message": "Other",
+        }
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={**match, "confirm_duplicate": "yes"},
+        )
+        self.assertEqual(status, 409)
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body=match,
+        )
+        self.assertEqual(status, 409)
+        self.assertTrue(json.loads(body)["duplicate"])
+        self.assertEqual(json.loads(body)["author_name"], "Cara")
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={**match, "confirm_duplicate": True},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["id"], donation_id)
+        self.assertEqual(json.loads(body)["author_name"], "Cara")
+        self.assertEqual(json.loads(self._request("/api/donations")[2])["total"], 2)
+
+        self.store.add_many([Donation(
+            dedupe_key="yt:chat:edit-1",
+            platform="youtube",
+            kind="super_chat",
+            external_id="edit-1",
+            channel="",
+            author_name="HiddenFan",
+            author_id="",
+            message="automatic",
+            amount_value=10,
+            amount_micros=10_000_000,
+            currency="USD",
+            created_at="2024-06-01T12:00:00Z",
+            raw={},
+        )])
+        rows = json.loads(self._request("/api/donations")[2])["donations"]
+        automatic = next(row for row in rows if row["author_name"] == "HiddenFan")
+        self.assertFalse(automatic["manual"])
+        status, _headers, body = self._request(
+            f"/api/donations/{automatic['id']}",
+            method="PATCH",
+            body={"author_name": "Nope", "platform": "youtube", "kind": "super_chat", "amount": 1},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "Automatic entries cannot be edited.")
+        again = json.loads(self._request(f"/api/donations/{automatic['id']}")[2])
+        self.assertEqual(again["author_name"], "HiddenFan")
+        self.assertEqual(again["message"], "automatic")
+        self.assertEqual(again["amount_value"], 10)
+        status, _headers, body = self._request(
+            f"/api/donations/{automatic['id']}",
+            method="PATCH",
+            body={"note": "still a note"},
+        )
+        self.assertEqual(status, 200)
+        noted = json.loads(body)
+        self.assertEqual(noted["note"], "still a note")
+        self.assertEqual(noted["author_name"], "HiddenFan")
+
+        status, _headers, body = self._request(
+            "/api/donations/999999",
+            method="PATCH",
+            body={"author_name": "X", "platform": "other", "kind": "donation", "amount": 1},
+        )
+        self.assertEqual(status, 404)
+
+        original_stream = json.loads(self._request("/api/stream")[2])["streams"]["active_id"]
+        status, _headers, _body = self._request("/api/streams", method="POST", body={"action": "add"})
+        self.assertEqual(status, 200)
+        status, _headers, body = self._request(
+            f"/api/donations/{donation_id}",
+            method="PATCH",
+            body={"author_name": "Gone", "platform": "other", "kind": "donation", "amount": 1},
+        )
+        self.assertEqual(status, 404)
+        status, _headers, _body = self._request(
+            "/api/streams",
+            method="POST",
+            body={"action": "switch", "id": original_stream},
+        )
+        self.assertEqual(status, 200)
+        kept = json.loads(self._request(f"/api/donations/{donation_id}")[2])
+        self.assertEqual(kept["author_name"], "Cara")
+        self.assertEqual(kept["dedupe_key"], created["dedupe_key"])
+
+        status, _headers, page = self._request("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Hover a manual entry to edit or delete it.", page)
+        self.assertEqual(page.count(b"Hover an automatic entry"), 1)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        action = script.split(b"function rowAction(", 1)[1].split(b"\nfunction ", 1)[0]
+        manual, automatic_action = action.split(b"} else {", 1)
+        self.assertIn(b'aria-label", "Edit"', manual)
+        self.assertIn(b'aria-label", "Delete"', manual)
+        self.assertLess(manual.index(b'aria-label", "Edit"'), manual.index(b'aria-label", "Delete"'))
+        self.assertIn(b'icon("pencil")', manual)
+        self.assertIn(b'icon("trash")', manual)
+        self.assertNotIn(b"Edit", automatic_action)
+        self.assertNotIn(b"pencil", automatic_action)
+        self.assertIn(b"eye-off", automatic_action)
+        self.assertIn(b"M12 20h9", script)
+        self.assertIn(b"M5 12.5 9.5 17 19 7", script)
+        self.assertIn(b"function beginEdit(", script)
+        self.assertIn(b"function setManualEditing(", script)
+        self.assertIn(b"function saveManualEdit(", script)
+        self.assertIn(b"Saving updates this manual entry.", script)
+        self.assertIn(b': "Saved."', script)
+        self.assertIn(b"That entry is no longer in the ledger.", script)
+        refresh = script.split(b"async function refresh(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"cancelManualEdit()", refresh)
+        self.assertNotIn(b'manual-entry").reset()', refresh)
+        rows_fn = script.split(b"function renderRows(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"is-editing", rows_fn)
+        status, _headers, styles = self._request("/styles.css")
+        self.assertEqual(status, 200)
+        self.assertIn(b"tbody tr:hover .row-actions .icon-button", styles)
+        self.assertIn(b"tbody tr.is-editing .row-actions .icon-button", styles)
 
     def test_stream_tabs_round_trip(self):
         status, _headers, body = self._request("/api/settings", method="PUT", body={
@@ -481,11 +850,16 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="ledger-youtube-follow"', page)
         self.assertIn(b'id="ledger-rumble-follow"', page)
         self.assertNotIn(b'id="ledger-kick-follow"', page)
-        self.assertIn(b"Follow the YouTube live stream", page)
-        self.assertIn(b"Follow the Rumble live stream", page)
+        self.assertIn(b"Follow the ", page)
+        self.assertIn(b'class="platform-name" data-platform="youtube"', page)
+        self.assertIn(b'class="platform-name" data-platform="rumble"', page)
+        self.assertIn(b'class="platform-name" data-platform="kick"', page)
+        self.assertIn(b'src="/icons/youtube.svg"', page)
+        self.assertIn(b'src="/icons/rumble.svg"', page)
+        self.assertIn(b'src="/icons/kick.svg"', page)
         self.assertIn(b"YouTube public video URL or id", page)
         self.assertIn(b"Rumble public video URL or chat id", page)
-        self.assertIn(b"Kick public channel", page)
+        self.assertIn(b"public channel", page)
         self.assertIn(b'data-channel-label="YouTube channel URL"', page)
         self.assertIn(b'data-channel-label="Rumble channel URL"', page)
         self.assertIn(b'data-channel-placeholder="https://www.youtube.com/@channel"', page)
@@ -537,6 +911,8 @@ class ApiTests(unittest.TestCase):
             script,
         )
         self.assertIn(b'id="copy-donor-bar"', donor_head)
+        self.assertIn(b"function topDonorCopyText()", script)
+        self.assertIn(b"item.copy || item.line", script)
         self.assertIn(b'class="app-body"', page)
         self.assertIn(b'id="app-status"', page)
         self.assertIn(b'class="status-bar"', page)
@@ -619,9 +995,10 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("tiers_enabled", document["settings"])
         self.assertNotIn("goal_tiers", document["settings"])
         self.assertNotIn(b"Bronze", body)
+        self.assertEqual(document["settings"]["ledger_page_size"], 100)
         self.assertEqual(
             list(document["settings"]),
-            ["membership_price", "show_top_donors", "chat_extra"],
+            ["membership_price", "show_top_donors", "chat_extra", "ledger_page_size"],
         )
         kept = json.loads(self._request("/api/settings")[2])
         self.assertIs(kept["tiers_enabled"], True)
@@ -632,6 +1009,47 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"Export settings", page)
         self.assertIn(b"Import settings", page)
         self.assertIn(b"/api/settings/export", page)
+        self.assertIn(b'id="ledger-page-size"', page)
+        self.assertIn(b'value="custom"', page)
+
+    def test_ledger_page_size_is_shared_and_bounded(self):
+        status, _headers, body = self._request("/api/settings")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["ledger_page_size"], 100)
+        self.assertEqual(self.store.get_setting("ledger_page_size"), "")
+
+        for size in (10, 25, 50, 100, 40):
+            status, _headers, body = self._request("/api/settings", method="PUT", body={"ledger_page_size": size})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["ledger_page_size"], size)
+            self.assertEqual(self.store.get_setting("ledger_page_size"), str(size))
+
+        status, _headers, body = self._request("/api/streams", method="POST", body={"action": "add"})
+        self.assertEqual(status, 200)
+        report = json.loads(body)
+        second = report["streams"]["active_id"]
+        first = next(tab["id"] for tab in report["streams"]["tabs"] if tab["id"] != second)
+        self.assertEqual(json.loads(self._request("/api/settings")[2])["ledger_page_size"], 40)
+        status, _headers, body = self._request("/api/streams", method="POST", body={"action": "switch", "id": first})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(self._request("/api/settings")[2])["ledger_page_size"], 40)
+
+        status, _headers, body = self._request("/api/settings", method="PUT", body={
+            "membership_price": "4.99",
+            "ledger_page_size": 0,
+        })
+        self.assertEqual(status, 400)
+        self.assertIn(b"Ledger page size", body)
+        self.assertEqual(self.store.get_setting("ledger_page_size"), "40")
+        self.assertEqual(self.store.get_setting("membership_price"), "")
+        for bad in (501, "nope", 10.5, True):
+            status, _headers, body = self._request("/api/settings", method="PUT", body={"ledger_page_size": bad})
+            self.assertEqual(status, 400, bad)
+            self.assertEqual(self.store.get_setting("ledger_page_size"), "40")
+
+        status, _headers, page = self._request("/")
+        self.assertIn(b"syncLedgerPageSize", self._request("/app.js")[2])
+        self.assertIn(b"How many donations each page shows", page)
 
     def test_settings_file_import_applies_only_the_open_tab(self):
         self.store.set_setting("youtube_client_id", "kept-client")
@@ -734,7 +1152,7 @@ class ApiTests(unittest.TestCase):
 
         status, _headers, body = self._request("/api/settings/import", method="POST", raw=b'{"kind":"ledger","version":1}')
         self.assertEqual(status, 400)
-        self.assertIn(b"not a Stream Donations settings file", body)
+        self.assertIn(b"not a SuperBerry settings file", body)
         self.assertEqual(self.store.get_setting("membership_price"), "4.99")
 
     def test_manual_entry_keeps_php(self):
@@ -1440,16 +1858,40 @@ class ApiTests(unittest.TestCase):
             page,
         )
         self.assertNotIn(b"autoplay=1", page)
+        self.assertIn(b'id="watch-play"', page)
+        self.assertIn(b'id="watch-live"', page)
+        self.assertIn(b'id="watch-mute"', page)
+        self.assertIn(b'title="Playback"', page)
+        self.assertIn(b'title="Live"', page)
+        self.assertIn(b'title="Mute"', page)
+        self.assertLess(page.index(b'class="watch-stage"'), page.index(b'id="watch-play"'))
+        self.assertLess(page.index(b'id="watch-play"'), page.index(b'id="watch-live"'))
+        self.assertLess(page.index(b'id="watch-live"'), page.index(b'id="watch-mute"'))
+        self.assertLess(page.index(b'id="watch-mute"'), page.index(b'id="watch-chat-lines"'))
         status, _headers, script = self._request("/app.js")
         self.assertEqual(status, 200)
         self.assertIn(b"function watchPlayerUrl(", script)
+        self.assertIn(b"function watchPlaybackUrl(", script)
+        self.assertIn(b"function showWatchFrame(", script)
+        self.assertIn(b'url.searchParams.set("autoplay", "1")', script)
+        self.assertIn(b'url.searchParams.set("autoplay", autoplay ? "true" : "false")', script)
+        self.assertIn(b'url.searchParams.set("muted", muted ? "true" : "false")', script)
+        self.assertIn(b"stream-donations-watch-muted", script)
+        self.assertIn(b"if (url.search || url.hash) return \"\";", script)
         self.assertIn(b"function watchAddressSignature(", script)
         self.assertIn(b"stream-donations-watch-open", script)
         self.assertIn(b"stream-donations-watch-platform", script)
         self.assertIn(b"/api/embed?platform=", script)
         self.assertIn(b"www.youtube-nocookie.com", script)
         self.assertIn(b"player.kick.com", script)
-        self.assertNotIn(b"autoplay=1", script)
+        electron = Path(__file__).resolve().parents[2] / "electron"
+        main_js = (electron / "main.js").read_text(encoding="utf-8")
+        preload_js = (electron / "preload.js").read_text(encoding="utf-8")
+        self.assertIn('ipcMain.handle("stream-donations-player"', main_js)
+        self.assertIn("no-user-gesture-required", main_js)
+        self.assertIn("player.kick.com", main_js)
+        self.assertIn('contextBridge.exposeInMainWorld("streamDonationsPlayer"', preload_js)
+        self.assertIn('"stream-donations-player"', preload_js)
         refresh = script.split(b"async function refresh(", 1)[1].split(b"\nasync function ", 1)[0]
         self.assertNotIn(b"/api/embed", refresh)
         self.assertNotIn(b"loadWatch", refresh)
@@ -1555,7 +1997,19 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertIn("image/svg+xml", headers.get("Content-Type", ""))
             self.assertIn(b"<svg", icon)
+        status, headers, icon = self._request("/icons/superberry.png")
+        self.assertEqual(status, 200)
+        self.assertIn("image/png", headers.get("Content-Type", ""))
+        self.assertTrue(icon.startswith(b"\x89PNG"))
+        status, headers, font = self._request("/fonts/fredoka.woff2")
+        self.assertEqual(status, 200)
+        self.assertIn("font/woff2", headers.get("Content-Type", ""))
+        self.assertTrue(font.startswith(b"wOF2"))
         status, _headers, _body = self._request("/icons/youtube.svg", cookie=False)
+        self.assertEqual(status, 401)
+        status, _headers, _body = self._request("/icons/superberry.png", cookie=False)
+        self.assertEqual(status, 401)
+        status, _headers, _body = self._request("/fonts/fredoka.woff2", cookie=False)
         self.assertEqual(status, 401)
         status, _headers, _body = self._request("/icons/other.svg")
         self.assertEqual(status, 404)
@@ -1693,7 +2147,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="giveaway-redraw"', page)
         self.assertIn(b'id="giveaway-winners"', page)
         self.assertIn(b'id="giveaway-copy-keyword"', page)
-        self.assertIn(b'id="giveaway-copy-winner"', page)
+        self.assertNotIn(b'id="giveaway-copy-winner"', page)
         self.assertLess(page.index(b'id="watch-chat-times"'), page.index(b'id="watch-giveaway"'))
         self.assertLess(page.index(b'id="tab-button-streamers"'), page.index(b'id="tab-button-settings"'))
         self.assertLess(page.index(b'id="tab-giveaway"'), page.index(b'id="tab-settings"'))
@@ -1716,13 +2170,115 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b".giveaway-counts", styles)
         self.assertIn(b".giveaway-winner", styles)
+        self.assertIn(b"--ledger-youtube: #c4544a", styles)
+        self.assertIn(b"--ledger-rumble: #7aa3c4", styles)
+        self.assertIn(b"--ledger-kick: #53c47a", styles)
+        self.assertIn(b'.platform-name[data-platform="youtube"]', styles)
+        self.assertIn(b"function platformLabel(", script)
         self.assertIn(b".giveaway-winners", styles)
         rendered = script.split(b"function renderGiveaway(", 1)[1].split(b"\nfunction ", 1)[0]
         self.assertIn(b"giveaway-winners", rendered)
+        self.assertIn(b"giveawayWinnerText", rendered)
+        self.assertIn(b"Copy winner", rendered)
         self.assertNotIn(b"innerHTML", rendered)
         status, _headers, exported = self._request("/api/settings/export")
         self.assertEqual(status, 200)
         self.assertNotIn(b"giveaway", exported.lower())
+
+    def test_archive_opens_jsonl_without_writing_the_ledger(self):
+        from streamdonations.normalize import normalize_super_chat_event
+        from streamdonations.settings_file import export_settings
+
+        donation = normalize_super_chat_event(
+            {
+                "id": "archive-me",
+                "snippet": {
+                    "channelId": "UCb",
+                    "supporterDetails": {"displayName": "Fan"},
+                    "commentText": "thanks",
+                    "createdAt": "2024-06-01T12:00:00Z",
+                    "amountMicros": "5000000",
+                    "currency": "USD",
+                },
+            }
+        )
+        self.store.add_many([donation])
+        _stored, before = self.store.list_donations()
+        exported = json.loads(self.store.export_jsonl().strip())
+        exported["author_name"] = "@Ada"
+        exported["message"] = "from-the-archive-only"
+        exported["access_token"] = "ledger-archive-token"
+        exported["raw"] = {
+            "access_token": "ledger-archive-token",
+            "snippet": {"amountMicros": "5000000", "currency": "USD"},
+        }
+        status, _headers, body = self._request(
+            "/api/ledger/archive",
+            method="POST",
+            raw=(json.dumps(exported) + "\n").encode(),
+        )
+        self.assertEqual(status, 200)
+        view = json.loads(body)
+        stored, after = self.store.list_donations()
+        self.assertEqual(before, after)
+        self.assertEqual(after, 1)
+        self.assertEqual(stored[0]["author_name"], "Fan")
+        self.assertEqual(stored[0]["message"], "thanks")
+        self.assertEqual(view["count"], 1)
+        self.assertEqual(view["donations"][0]["author_name"], "Ada")
+        self.assertEqual(view["donations"][0]["message"], "from-the-archive-only")
+        self.assertEqual(view["donations"][0]["amount_value"], 5)
+        self.assertEqual(view["total_usd"], 5)
+        self.assertNotIn(b"ledger-archive-token", body)
+        self.assertNotIn("raw", view["donations"][0])
+        self.assertNotIn("access_token", view["donations"][0])
+        self.assertNotIn("dedupe_key", view["donations"][0])
+
+        status, _headers, body = self._request(
+            "/api/ledger/archive",
+            method="POST",
+            raw=export_settings({"membership_price": "4.99"}),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "This is a settings file, not a ledger.")
+        _stored, after_settings = self.store.list_donations()
+        self.assertEqual(after_settings, 1)
+
+        status, _headers, page = self._request("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b'id="archive-open"', page)
+        self.assertIn(b'id="tab-archive"', page)
+        self.assertIn(b'id="archive-file"', page)
+        self.assertIn(b'id="archive-rows"', page)
+        self.assertIn(b"The open ledger is not changed.", page)
+        self.assertLess(page.index(b'id="tab-button-settings"'), page.index(b'id="archive-open"'))
+        self.assertLess(page.index(b'id="archive-open"'), page.index(b'class="menu-sep"'))
+        self.assertLess(page.index(b'class="menu-sep"'), page.index(b'id="reset-ledger"'))
+        button = page.split(b'id="archive-open"', 1)[1].split(b"</button>", 1)[0]
+        self.assertIn(b"Open archive", button)
+        self.assertIn(b"View a JSONL export. It is not saved.", button)
+        self.assertNotIn(b"data-tab", button)
+        settings = page.split(b'id="tab-settings"', 1)[1].split(b"</dialog>", 1)[0]
+        self.assertNotIn(b"archive-open", settings)
+        self.assertNotIn(b"archive-file", settings)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"/api/ledger/archive", script)
+        self.assertIn(b'openSheet("archive")', script)
+        self.assertIn(b"Not saved.", script)
+        self.assertIn(b"That ledger file is too large.", script)
+        status, _headers, styles = self._request("/styles.css")
+        self.assertEqual(status, 200)
+        self.assertIn(b"#tab-archive.sheet", styles)
+        self.assertIn(b"min(72rem, calc(100vw - 2rem))", styles)
+        self.assertIn(b"#archive-rows tr", styles)
+
+    def test_meta_reports_the_published_version(self):
+        from streamdonations import __version__
+
+        status, _headers, body = self._request("/api/meta")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["version"], __version__)
 
     def _post_webhook(self, port, body, message_id, timestamp, signature, event_type="kicks.gifted"):
         request = urllib.request.Request(

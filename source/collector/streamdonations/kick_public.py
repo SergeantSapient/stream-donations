@@ -142,13 +142,17 @@ def _event_kind(name: str) -> str | None:
     leaf = name.strip().split("\\")[-1].lower().replace("_", "")
     if not leaf or "lucky" in leaf or leaf in {"chatmessage", "chatmessagesentevent", "messagedeleted"}:
         return None
+    # Follower notices are not a payment. A subscription is a membership,
+    # priced later from the membership price saved in Settings.
+    if "follow" in leaf:
+        return None
     if "kick" in leaf and "gift" in leaf:
         return "kicks"
     if "gift" in leaf and "sub" in leaf:
         return "gifted_subscriptions"
     if "renew" in leaf and "sub" in leaf:
         return "subscription_renewal"
-    if leaf in {"subscription", "subscriptionevent", "channelsubscriptionevent"} or leaf.endswith("subscriptionevent"):
+    if leaf in {"subscription", "subscriptionevent"} or leaf.endswith("subscriptionevent"):
         return "subscription"
     return None
 
