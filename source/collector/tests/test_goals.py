@@ -8,9 +8,13 @@ from streamdonations.goals import (
     donor_leaderboard,
     empty_tiers,
     is_tier_reached,
+    reached_tier,
     stream_chat_line,
+    tier_breach,
     tier_breaches,
+    tier_donor,
     tier_label,
+    tier_name,
     tier_thank_you_line,
 )
 
@@ -74,6 +78,39 @@ class TierAndDonorTests(unittest.TestCase):
             tier_thank_you_line("Bronze", "MapleFan"),
             "Thank you for helping us reach Bronze, MapleFan!",
         )
+
+    def test_reached_tier_counts_enabled_amounts_in_dollar_order(self):
+        tiers = [
+            tier(50, "Silver"),
+            tier(10, "Bronze"),
+            tier(10, "", enabled=False),
+            GoalTier(True, None, "Blank", ""),
+            GoalTier(True, 25, "   ", ""),
+        ]
+        self.assertEqual(reached_tier(0, True, tiers), 0)
+        self.assertEqual(reached_tier(9.99, True, tiers), 1)
+        self.assertEqual(reached_tier(9.98, True, tiers), 0)
+        self.assertEqual(reached_tier(25, True, tiers), 2)
+        self.assertEqual(reached_tier(50, True, tiers), 3)
+        self.assertEqual(reached_tier(500, False, tiers), 0)
+        self.assertEqual(reached_tier(10, True, [tier(10, "A"), tier(10, "B")]), 2)
+        self.assertEqual(tier_name(True, tiers, 0), "")
+        self.assertEqual(tier_name(True, tiers, 1), "Bronze")
+        self.assertEqual(tier_name(True, tiers, 2), "")
+        self.assertEqual(tier_name(True, tiers, 3), "Silver")
+        self.assertEqual(tier_name(False, tiers, 1), "")
+        rows = [
+            {"amount_usd": 10, "author_name": "@Ada"},
+            {"amount_usd": 40, "donor": "Bea"},
+        ]
+        self.assertEqual(tier_donor(rows, True, tiers, 0), "")
+        self.assertEqual(tier_donor(rows, True, tiers, 1), "Ada")
+        self.assertEqual(tier_donor(rows, True, tiers, 3), "Bea")
+        self.assertIsNone(tier_breach(rows, True, tiers, 0))
+        first = tier_breach([{**rows[0], "platform": "youtube"}], True, tiers, 1)
+        self.assertEqual(first["donor"], "Ada")
+        self.assertEqual(first["platform"], "youtube")
+        self.assertEqual(first["amount_usd"], 10)
 
     def test_donor_bar_and_board(self):
         rows = [

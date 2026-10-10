@@ -38,6 +38,9 @@ YT_HEADERS = {
     "Cookie": "SOCS=CAI; CONSENT=YES+cb",
 }
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# Observed entry for YouTube's own sign-in. It answers 303 to accounts.google.com.
+# The window loads this fixed page. The renderer does not choose the address.
+YOUTUBE_LOGIN_URL = "https://www.youtube.com/signin"
 
 
 def validate_youtube_watch(value: str) -> str:
@@ -55,6 +58,14 @@ def validate_youtube_watch(value: str) -> str:
     if host not in YOUTUBE_HOSTS:
         raise ValueError("YouTube link must be on youtube.com or youtu.be")
     return text
+
+
+def youtube_popup_chat_url(video_id: str) -> str:
+    """YouTube's own pop-out chat. Public chat already reads this live_chat page."""
+    text = str(video_id or "").strip()
+    if not _VIDEO_ID_RE.fullmatch(text):
+        raise ValueError("That YouTube chat could not be opened.")
+    return f"https://www.youtube.com/live_chat?is_popout=1&v={text}"
 
 
 def video_id_from_target(value: str) -> str | None:

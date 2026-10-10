@@ -5,8 +5,14 @@ Super Chats and Super Stickers:
 Memberships, milestones, and gifted memberships while a broadcast is live:
     GET https://www.googleapis.com/youtube/v3/liveBroadcasts
     GET https://www.googleapis.com/youtube/v3/liveChat/messages
-Both require an OAuth token with the youtube.readonly scope. The live chat
-call is skipped when the channel is offline, because YouTube closes the chat.
+A message posted as the signed-in account:
+    POST https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet
+Reading accepts youtube.readonly. Posting requires youtube.force-ssl, which
+superChatEvents.list also accepts, so the app requests force-ssl. A grant from
+before that change can still read and cannot post until Connect is used again.
+The live chat read is skipped when the channel is offline. Posting uses
+videos.list liveStreamingDetails.activeLiveChatId for the open ledger's video.
+That id exists while the broadcast is live.
 """
 
 from __future__ import annotations
@@ -19,16 +25,38 @@ import webbrowser
 from .normalize import normalize_live_chat_message, normalize_super_chat_event
 from .store import Store
 from .transport import HttpResult, Transport, api_error_message
-from .util import ApiError, AuthError, redact
-from .youtube_public import PublicChatFollower
+from .util import ApiError, AuthError, collapsed_chat_text, redact
+from .youtube_public import PublicChatFollower, video_id_from_target
 from .youtube_quota import QuotaPaused, YouTubeQuota, clamp_poll_seconds
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_ROOT = "https://www.googleapis.com/youtube/v3"
-SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+# The full youtube scope can also insert. youtube.readonly is a different scope
+# and is not a prefix check away from these two.
+_SEND_SCOPES = {
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube",
+}
+# https://developers.google.com/youtube/v3/live/docs/liveChatMessages/insert
+INSERT_COST = 20
 API_HOSTS = {"www.googleapis.com"}
 TOKEN_HOSTS = {"oauth2.googleapis.com"}
+_SEND_REASONS = {
+    "forbidden": "YouTube refused that message. The signed-in account may not be allowed to chat there.",
+    "insufficientPermissions": "Reconnect YouTube to allow chat. The current sign-in can only read.",
+    "liveChatDisabled": "That YouTube chat is turned off.",
+    "liveChatEnded": "That YouTube chat has ended.",
+    "liveChatNotFound": "YouTube has no live chat for that broadcast.",
+    "messageTextInvalid": "YouTube rejected that message.",
+    "rateLimitExceeded": "YouTube is limiting how often this account can post.",
+    "quotaExceeded": "YouTube Data API quota is used for today.",
+}
+
+
+def scope_can_send(scope: str) -> bool:
+    return bool(_SEND_SCOPES.intersection(str(scope or "").split()))
 
 
 class YouTubeClient:
@@ -61,6 +89,68 @@ class YouTubeClient:
         Uses the public /live page already fetched for chat. It does not spend Data API quota.
         """
         return self._public._resolve_live_channel(channel)
+
+    def can_send(self) -> bool:
+        return self.connected() and scope_can_send(self.store.get_setting("youtube_granted_scope"))
+
+    def sender_name(self) -> str:
+        """Channel title for the signed-in account. Fetched once per grant."""
+        cached = self.store.get_setting("youtube_sender_name").strip()
+        if cached or self.store.get_setting("youtube_sender_checked") == "1":
+            return cached
+        if not self.connected() or self._quota.paused():
+            return ""
+        self.store.set_setting("youtube_sender_checked", "1")
+        try:
+            payload = self._api("/channels", {"part": "snippet", "mine": "true"}, self._access_token())
+        except (ApiError, AuthError, QuotaPaused):
+            return ""
+        items = payload.get("items") or []
+        title = ""
+        if items and isinstance(items[0], dict):
+            snippet = items[0].get("snippet") or {}
+            if isinstance(snippet, dict):
+                title = str(snippet.get("title") or "").strip()
+        if title:
+            self.store.set_setting("youtube_sender_name", title)
+        return title
+
+    def send_message(self, text: str, video_id: str | None = None) -> None:
+        """Post as the signed-in account into a ledger's live chat.
+
+        Without video_id, that ledger is the one open on screen.
+        """
+        if not self.connected():
+            raise AuthError("Connect a YouTube account to send chat.")
+        if not scope_can_send(self.store.get_setting("youtube_granted_scope")):
+            raise AuthError("Reconnect YouTube to allow chat. The current sign-in can only read.")
+        message = collapsed_chat_text(text)
+        if self._quota.paused():
+            raise QuotaPaused(self._quota.status_detail())
+        video_id = (video_id or "").strip() or self._watched_video_id()
+        token = self._access_token()
+        live_chat_id = self._live_chat_id_for_video(token, video_id)
+        if not live_chat_id:
+            raise ApiError(
+                "That YouTube broadcast has no live chat to post into. "
+                "A waiting room can be read here before YouTube will accept a message."
+            )
+        url = API_ROOT + "/liveChat/messages?" + urllib.parse.urlencode({"part": "snippet"})
+        body = {
+            "snippet": {
+                "liveChatId": live_chat_id,
+                "type": "textMessageEvent",
+                "textMessageDetails": {"messageText": message},
+            }
+        }
+        result = self._post(url, token, body)
+        if result.status == 401:
+            self.store.delete_setting("youtube_access_token")
+            result = self._post(url, self._access_token(), body)
+        if result.status >= 400:
+            if _is_quota_response(result):
+                self._quota.note_exceeded()
+            raise ApiError(_send_failure(result), status=result.status)
 
     def interval(self) -> float:
         raw = self.store.get_setting("youtube_poll_seconds", "900")
@@ -113,7 +203,14 @@ class YouTubeClient:
 
     def disconnect(self) -> None:
         with self._auth_lock:
-            for key in ("youtube_refresh_token", "youtube_access_token", "youtube_access_expiry"):
+            for key in (
+                "youtube_refresh_token",
+                "youtube_access_token",
+                "youtube_access_expiry",
+                "youtube_granted_scope",
+                "youtube_sender_name",
+                "youtube_sender_checked",
+            ):
                 self.store.delete_setting(key)
         self._chat_tokens.clear()
         self._chats = []
@@ -339,7 +436,14 @@ class YouTubeClient:
             self.store.set_setting("youtube_refresh_token", str(payload["refresh_token"]))
         elif keep_refresh:
             self.store.set_setting("youtube_refresh_token", keep_refresh)
+        scope = payload.get("scope")
+        if isinstance(scope, str) and scope.strip():
+            self.store.set_setting("youtube_granted_scope", " ".join(scope.split()))
+        elif reset_backfill:
+            self.store.set_setting("youtube_granted_scope", SCOPE)
         if reset_backfill:
+            self.store.delete_setting("youtube_sender_name")
+            self.store.delete_setting("youtube_sender_checked")
             # A new grant should walk the 30-day Super Chat history again.
             # Dedupe keeps rows that were already stored. Refreshing an access
             # token must not restart that walk.
@@ -370,6 +474,43 @@ class YouTubeClient:
             headers={"Authorization": f"Bearer {token}"},
             allow_hosts=API_HOSTS,
         )
+
+    def _post(self, url: str, token: str, body: dict) -> HttpResult:
+        self._quota.reserve(INSERT_COST)
+        return self.transport.request(
+            "POST",
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json_body=body,
+            allow_hosts=API_HOSTS,
+        )
+
+    def _watched_video_id(self) -> str:
+        if self.store.get_setting("youtube_follow_live") == "1":
+            channel = self.store.get_setting("youtube_channel").strip()
+            if not channel:
+                raise ApiError("This ledger has no YouTube channel.")
+            video_id = self.public_live_video_id(channel)
+            if not video_id:
+                raise ApiError("That YouTube channel is not live, so there is no chat to post into.")
+            return str(video_id).strip()
+        watch = self.store.get_setting("youtube_watch").strip()
+        if not watch:
+            raise ApiError("This ledger has no YouTube video.")
+        video_id = video_id_from_target(watch)
+        if video_id:
+            return video_id
+        return self.public_video_id(watch)
+
+    def _live_chat_id_for_video(self, token: str, video_id: str) -> str:
+        payload = self._api("/videos", {"part": "liveStreamingDetails", "id": video_id}, token)
+        items = payload.get("items") or []
+        if not items or not isinstance(items[0], dict):
+            return ""
+        details = items[0].get("liveStreamingDetails") or {}
+        if not isinstance(details, dict):
+            return ""
+        return str(details.get("activeLiveChatId") or "")
 
     def _poll_super_chats(self, token: str) -> int:
         # Newest-first. The first run walks one page per poll and remembers
@@ -471,6 +612,23 @@ class YouTubeClient:
 
 def _live_streaming_disabled(exc: BaseException) -> bool:
     return "not enabled for live streaming" in str(exc).lower()
+
+
+def _send_failure(result: HttpResult) -> str:
+    reason = ""
+    try:
+        payload = result.json()
+    except ApiError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            rows = error.get("errors") or []
+            if rows and isinstance(rows[0], dict):
+                reason = str(rows[0].get("reason") or "")
+            if not reason:
+                reason = str(error.get("status") or "")
+    return _SEND_REASONS.get(reason) or "YouTube refused that message."
 
 
 def _is_quota_response(result: HttpResult) -> bool:

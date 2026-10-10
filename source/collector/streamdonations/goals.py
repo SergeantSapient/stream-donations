@@ -112,6 +112,69 @@ def is_tier_reached(total: float, amount: float) -> bool:
     return round2(total) >= round2(amount) - REACHED_EPS
 
 
+def reached_tier(total: float, enabled: bool, tiers: list[GoalTier]) -> int:
+    """How many enabled goal amounts this total has reached, from 0 to 5.
+
+    The count follows the amounts in ascending order, not the order of the
+    form. A disabled row, or a row with no positive amount, does not count.
+    A cent short of an amount still counts. Tiers that are off stay at 0.
+    """
+    if not enabled:
+        return 0
+    count = 0
+    for tier in amount_tiers(tiers):
+        if tier.amount is None or not is_tier_reached(total, tier.amount):
+            break
+        count += 1
+    return count
+
+
+def tier_breach(rows: list[dict], enabled: bool, tiers: list[GoalTier], tier: int) -> dict | None:
+    """The gift that first reached this tier. Tier 0 has none.
+
+    The result is that gift's donor, platform, and USD amount. A missing
+    amount stays missing rather than becoming zero.
+    """
+    if tier <= 0 or not enabled:
+        return None
+    pending = amount_tiers(tiers)
+    if tier > len(pending):
+        return None
+    running = 0.0
+    index = 0
+    for row in rows:
+        raw = row.get("amount_usd")
+        running = round2(running + float(raw or 0))
+        while index < len(pending) and pending[index].amount is not None and is_tier_reached(running, pending[index].amount):
+            index += 1
+            if index == tier:
+                return {
+                    "donor": display_donor(row.get("donor") or row.get("author_name")) or "",
+                    "platform": str(row.get("platform") or ""),
+                    "amount_usd": None if raw is None else float(raw),
+                }
+    return None
+
+
+def tier_donor(rows: list[dict], enabled: bool, tiers: list[GoalTier], tier: int) -> str:
+    """Name of the donor whose gift first reached this tier. Tier 0 has none."""
+    found = tier_breach(rows, enabled, tiers, tier)
+    return "" if found is None else found["donor"]
+
+
+def tier_name(enabled: bool, tiers: list[GoalTier], tier: int) -> str:
+    """The name set on this tier. Tier 0, a missing tier, and a blank name are empty.
+
+    Tier 1 is the lowest enabled amount, not the first row on the form.
+    """
+    if tier <= 0 or not enabled:
+        return ""
+    pending = amount_tiers(tiers)
+    if tier > len(pending):
+        return ""
+    return one_line(pending[tier - 1].name)
+
+
 def tier_label(tier: GoalTier) -> str:
     named = one_line(tier.name)
     if named:

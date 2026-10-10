@@ -1764,6 +1764,138 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("NightGoal", joined)
         self.assertNotIn("Keep", joined)
 
+    def test_blue_scripts_are_saved_and_left_out_of_the_export(self):
+        status, _headers, page = self._request("/")
+        self.assertEqual(status, 200)
+        self.assertLess(page.index(b'id="tab-button-streamers"'), page.index(b'id="tab-button-blue"'))
+        self.assertLess(page.index(b'id="tab-button-blue"'), page.index(b'id="tab-button-settings"'))
+        self.assertIn(b'id="tab-blue"', page)
+        self.assertIn(b'id="blue-source"', page)
+        self.assertIn(b'id="blue-import"', page)
+        self.assertIn(b'id="blue-export"', page)
+        self.assertIn(b'id="preset-script"', page)
+        self.assertIn(b"Berry Lexical User Events", page)
+        self.assertIn(b"Saving the preset itself does not change the ledger that is open.", page)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"BLUE_CHAT_GAP_MIN_MS = 2000", script)
+        self.assertIn(b"BLUE_CHAT_GAP_MAX_MS = 6000", script)
+        self.assertIn(b"function drainBlue(", script)
+        self.assertIn(b"new FileReader(", script)
+        refresh = script.split(b"async function refresh(", 1)[1].split(b"\nasync function ", 1)[0]
+        self.assertIn(b"drainBlue()", refresh)
+        self.assertNotIn(b"/api/chat", refresh)
+        self.assertNotIn(b"/api/blue", refresh)
+
+        status, _headers, body = self._request("/api/blue", cookie=False)
+        self.assertEqual(status, 401)
+        status, _headers, body = self._request("/api/blue")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["scripts"], [])
+        source = 'NOT A LINE\nON DONATION THEN SEND CHAT TO YOUTUBE "Hi {DONOR}."\n'
+        status, _headers, body = self._request("/api/blue", method="POST", body={
+            "action": "save",
+            "name": "  Thanks  ",
+            "source": source,
+        })
+        self.assertEqual(status, 200)
+        saved = json.loads(body)
+        self.assertEqual(saved["script"]["name"], "Thanks")
+        self.assertEqual(saved["problems"], [{"line": 1, "message": "A BLUE line starts with ON."}])
+        script_id = saved["script"]["id"]
+        status, _headers, body = self._request("/api/blue", method="POST", body={
+            "action": "save",
+            "name": "Empty",
+            "source": "   ",
+        })
+        self.assertEqual(status, 400)
+        self.assertIn(b"Write a BLUE script first.", body)
+        status, _headers, exported = self._request("/api/settings/export")
+        self.assertNotIn(b"blue_scripts", exported)
+        self.assertNotIn(b"Hi {DONOR}", exported)
+        self.assertNotIn(b"NOT A LINE", exported)
+
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "With script",
+            "kick_watch": "https://kick.com/presetstreamer",
+            "script_id": "missing",
+        })
+        self.assertEqual(status, 400)
+        self.assertIn(b"That BLUE script is not saved.", body)
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "With script",
+            "kick_watch": "https://kick.com/presetstreamer",
+            "script_id": script_id,
+        })
+        self.assertEqual(status, 200)
+        preset = json.loads(body)["preset"]
+        self.assertEqual(preset["script_id"], script_id)
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "With script",
+            "kick_watch": "https://kick.com/presetstreamer",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["preset"]["script_id"], "")
+        self.assertEqual(json.loads(body)["preset"]["id"], preset["id"])
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "With script",
+            "kick_watch": "https://kick.com/presetstreamer",
+            "script_id": script_id,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["preset"]["script_id"], script_id)
+
+        status, _headers, body = self._request("/api/settings", method="PUT", body={
+            "blue_script_id": script_id,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(self.store.get_setting("blue_script_id"), script_id)
+        self.assertNotIn(b"blue_script_id", self._request("/api/settings/export")[2])
+        status, _headers, body = self._request("/api/settings", method="PUT", body={
+            "blue_script_id": "missing",
+        })
+        self.assertEqual(status, 400)
+        self.assertEqual(self.store.get_setting("blue_script_id"), script_id)
+
+        status, _headers, body = self._request("/api/blue/pending")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["pending"], [])
+        status, _headers, body = self._request("/api/blue/result", method="POST", body={
+            "ok": False,
+            "script": "Thanks",
+            "line": 2,
+            "target": "rumble",
+            "reason": "Continue on the Rumble page before chat can be posted there.",
+            "text": "secret message body",
+        })
+        self.assertEqual(status, 200)
+        status, _headers, body = self._request("/api/blue/result", method="POST", body={
+            "ok": True,
+            "script": "Thanks",
+            "text": "secret message body",
+        })
+        self.assertEqual(status, 200)
+        joined = "\n".join(row["message"] for row in self.store.recent_log())
+        self.assertIn("BLUE Thanks line 2: Rumble chat was not sent.", joined)
+        self.assertIn("Continue on the Rumble page before chat can be posted there.", joined)
+        self.assertNotIn("secret message body", joined)
+
+        status, _headers, body = self._request("/api/blue", method="POST", body={
+            "action": "delete",
+            "id": script_id,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["scripts"], [])
+        self.assertEqual(self.store.get_setting("blue_script_id"), "")
+        self.assertEqual(self.store.streamer_presets()[0]["script_id"], "")
+        removed = "\n".join(row["message"] for row in self.store.recent_log())
+        self.assertIn("Removed BLUE script Thanks.", removed)
+        self.assertNotIn("NOT A LINE", removed)
+
     def test_embed_uses_the_open_ledger_without_a_live_lookup(self):
         from streamdonations.util import ApiError
 
@@ -1849,6 +1981,8 @@ class ApiTests(unittest.TestCase):
         self.assertLess(page.index(b'id="tab-ledger"'), page.index(b'id="stream-banner"'))
         self.assertLess(page.index(b'id="tab-ledger"'), page.index(b'id="tab-youtube"'))
         self.assertIn(b'class="watch-panel is-collapsed"', page)
+        self.assertIn(b'<select id="watch-platforms"', page)
+        self.assertLess(page.index(b'id="watch-platforms"'), page.index(b'id="watch-reload"'))
         self.assertIn(b'data-platform="youtube"', page)
         self.assertIn(b'data-platform="rumble"', page)
         self.assertIn(b'data-platform="kick"', page)

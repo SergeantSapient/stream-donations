@@ -61,6 +61,7 @@ def upsert_preset(
     kick_watch: object,
     tiers_enabled: object = False,
     goal_tiers: object = None,
+    script_id: object = "",
 ) -> tuple[list[dict], dict]:
     """Add a preset, or replace its channels and goals when the name already exists.
 
@@ -69,6 +70,7 @@ def upsert_preset(
     """
     fields = _preset_fields(name, youtube_channel, rumble_channel, kick_watch)
     fields.update(_goal_fields(tiers_enabled, goal_tiers))
+    fields["script_id"] = _script_id(script_id)
     key = fields["name"].casefold()
     for preset in presets:
         if preset["name"].casefold() == key:
@@ -174,6 +176,7 @@ def _stored_preset(item: object) -> dict | None:
         "kick_watch": _stored_url(item.get("kick_watch")),
         "tiers_enabled": goals["tiers_enabled"],
         "goal_tiers": goals["goal_tiers"],
+        "script_id": _script_id(item.get("script_id")),
     }
 
 
@@ -185,6 +188,16 @@ def _stored_goals(item: dict) -> dict:
         "tiers_enabled": _flag(item.get("tiers_enabled")),
         "goal_tiers": [tier.as_dict() for tier in tiers],
     }
+
+
+def _script_id(value: object) -> str:
+    """A saved script id, or none. A broken id is dropped rather than the preset."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text or len(text) > 64 or any(char not in _ID_CHARS for char in text):
+        return ""
+    return text
 
 
 def _stored_url(value: object) -> str:

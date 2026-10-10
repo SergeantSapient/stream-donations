@@ -29,11 +29,23 @@ from .transport import RUMBLE_UA, Transport, api_error_message
 from .util import ApiError, amount_from_cents, as_int, host_allowed, redact, stable_key, to_utc_iso
 
 RUMBLE_HOSTS = {"rumble.com"}
+# Observed redirect target of https://rumble.com/login. The window loads this
+# fixed page. The renderer does not choose the address.
+RUMBLE_LOGIN_URL = "https://rumble.com/login.php"
 CHAT_API_BASE = "https://web7.rumble.com/chat/api"
+_POPUP_CHAT_ID_RE = re.compile(r"[0-9]{1,20}")
 _VIDEO_ID_RE = re.compile(r'data-video-id="(\d+)"')
 _EMBED_RE = re.compile(r"""["']video["']\s*:\s*["']v([0-9a-z]+)["']""")
 _EMBED_URL_RE = re.compile(r"rumble\.com/embed/(?:[0-9a-z]+\.)?v([0-9a-z]+)")
 _CHAT_ID_IN_URL_RE = re.compile(r"/chat/(?:api/chat|popup)/([0-9a-z]+)")
+
+
+def rumble_popup_chat_url(chat_id: str) -> str:
+    """Rumble's own pop-out chat. Only a numeric chat id is accepted."""
+    text = str(chat_id or "").strip()
+    if not _POPUP_CHAT_ID_RE.fullmatch(text):
+        raise ValueError("That Rumble chat could not be opened.")
+    return f"https://rumble.com/chat/popup/{text}"
 
 
 def validate_rumble_api_url(url: str) -> str:

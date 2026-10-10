@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import unicodedata
 import urllib.parse
 
 from .kick_sig import (
@@ -26,18 +27,18 @@ from .kick_sig import (
     verify_rsa_sha256,
     webhook_is_fresh,
 )
-from .kick_public import PublicKickChat
+from .kick_public import PublicKickChat, kick_slug
 from .normalize import normalize_kick_event
 from .store import Store
-from .transport import Transport, api_error_message
-from .util import ApiError, AuthError, display_donor, redact
+from .transport import HttpResult, Transport, api_error_message
+from .util import ApiError, AuthError, collapsed_chat_text, display_donor, redact
 
 AUTH_URL = "https://id.kick.com/oauth/authorize"
 TOKEN_URL = "https://id.kick.com/oauth/token"
 API_ROOT = "https://api.kick.com"
 API_HOSTS = {"api.kick.com"}
 TOKEN_HOSTS = {"id.kick.com"}
-SCOPES = "user:read channel:read events:subscribe kicks:read"
+SCOPES = "user:read channel:read events:subscribe kicks:read chat:write"
 DONATION_EVENTS = [
     {"name": "channel.subscription.new", "version": 1},
     {"name": "channel.subscription.renewal", "version": 1},
@@ -69,6 +70,60 @@ class KickClient:
     def connected(self) -> bool:
         return self.client_saved() and bool(self.store.get_setting("kick_refresh_token"))
 
+    def can_send(self) -> bool:
+        granted = set(self.store.get_setting("kick_granted_scope").split())
+        return self.connected() and "chat:write" in granted
+
+    def sender_name(self) -> str:
+        """Display name of the signed-in Kick account. The email is not stored."""
+        cached = self.store.get_setting("kick_sender_name").strip()
+        if cached or self.store.get_setting("kick_sender_checked") == "1":
+            return cached
+        if not self.connected():
+            return ""
+        self.store.set_setting("kick_sender_checked", "1")
+        try:
+            payload = self._get_json("/public/v1/users", self._access_token())
+        except (ApiError, AuthError):
+            return ""
+        data = payload.get("data")
+        row = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+        name = str(row.get("name") or "").strip()
+        user_id = row.get("user_id")
+        if name:
+            self.store.set_setting("kick_sender_name", name)
+        if isinstance(user_id, int) and not isinstance(user_id, bool) and user_id > 0:
+            self.store.set_setting("kick_sender_id", str(user_id))
+        return name
+
+    def send_message(self, text: str, slug: str | None = None) -> None:
+        """Post as the signed-in user into a ledger's Kick channel.
+
+        Without slug, that ledger is the one open on screen.
+        """
+        if not self.connected():
+            raise AuthError("Connect a Kick account to send chat.")
+        if not self.can_send():
+            raise AuthError("Reconnect Kick to allow chat. The current sign-in cannot post.")
+        message = collapsed_chat_text(text)
+        if len(message.encode("utf-8")) > 2048 or _grapheme_count(message) > 500:
+            raise ValueError("Kick chat allows 500 characters.")
+        slug = (slug or "").strip() or kick_slug(self.store.get_setting("kick_watch"))
+        if not slug:
+            raise ValueError("This ledger has no Kick channel.")
+        token = self._access_token()
+        broadcaster = self._broadcaster_user_id(token, slug)
+        result = self._post_chat(token, broadcaster, message)
+        if result.status == 401:
+            self.store.delete_setting("kick_access_token")
+            result = self._post_chat(self._access_token(), broadcaster, message)
+        if result.status >= 400:
+            raise ApiError(_kick_status_message(result.status), status=result.status)
+        payload = result.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or data.get("is_sent") is False:
+            raise ApiError("Kick did not accept that message.")
+
     def authorization_url(self, redirect_uri: str, state: str, challenge: str) -> str:
         # Order is part of the 127.0.0.1 workaround: `redirect` must come first.
         pairs = [
@@ -98,11 +153,19 @@ class KickClient:
                 },
                 allow_hosts=TOKEN_HOSTS,
             )
-            self._store_token_result(result)
+            self._store_token_result(result, granted_scope=SCOPES)
 
     def disconnect(self) -> None:
         with self._auth_lock:
-            for key in ("kick_refresh_token", "kick_access_token", "kick_access_expiry"):
+            for key in (
+                "kick_refresh_token",
+                "kick_access_token",
+                "kick_access_expiry",
+                "kick_granted_scope",
+                "kick_sender_name",
+                "kick_sender_id",
+                "kick_sender_checked",
+            ):
                 self.store.delete_setting(key)
         if self.store.get_setting("kick_watch"):
             self.store.set_status("kick", "idle", "Kick account disconnected. The public chat is unchanged.")
@@ -357,7 +420,7 @@ class KickClient:
             return ""
         return token
 
-    def _store_token_result(self, result, keep_refresh: str = "") -> None:
+    def _store_token_result(self, result, keep_refresh: str = "", granted_scope: str = "") -> None:
         if result.status >= 400:
             raise AuthError(api_error_message(result))
         payload = result.json()
@@ -370,3 +433,89 @@ class KickClient:
             self.store.set_setting("kick_refresh_token", str(payload["refresh_token"]))
         elif keep_refresh:
             self.store.set_setting("kick_refresh_token", keep_refresh)
+        scope = payload.get("scope")
+        if isinstance(scope, str) and scope.strip():
+            self.store.set_setting("kick_granted_scope", " ".join(scope.split()))
+        elif granted_scope:
+            self.store.set_setting("kick_granted_scope", granted_scope)
+        if granted_scope:
+            self.store.delete_setting("kick_sender_name")
+            self.store.delete_setting("kick_sender_id")
+            self.store.delete_setting("kick_sender_checked")
+
+    def _get_json(self, path: str, token: str) -> dict:
+        result = self.transport.request(
+            "GET",
+            API_ROOT + path,
+            headers={"Authorization": f"Bearer {token}"},
+            allow_hosts=API_HOSTS,
+        )
+        if result.status == 401:
+            self.store.delete_setting("kick_access_token")
+            token = self._access_token()
+            result = self.transport.request(
+                "GET",
+                API_ROOT + path,
+                headers={"Authorization": f"Bearer {token}"},
+                allow_hosts=API_HOSTS,
+            )
+        if result.status >= 400:
+            raise ApiError(_kick_status_message(result.status), status=result.status)
+        payload = result.json()
+        if not isinstance(payload, dict):
+            raise ApiError("Kick returned a response that was not an object")
+        return payload
+
+    def _broadcaster_user_id(self, token: str, slug: str) -> int:
+        query = urllib.parse.urlencode({"slug": slug})
+        payload = self._get_json("/public/v1/channels?" + query, token)
+        data = payload.get("data")
+        rows = data if isinstance(data, list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw = row.get("broadcaster_user_id")
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+                continue
+            row_slug = str(row.get("slug") or "").lower()
+            if row_slug and row_slug != slug:
+                continue
+            return raw
+        raise ApiError("Kick did not return a channel id for that name.")
+
+    def _post_chat(self, token: str, broadcaster_user_id: int, content: str) -> HttpResult:
+        return self.transport.request(
+            "POST",
+            API_ROOT + "/public/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json_body={
+                "broadcaster_user_id": broadcaster_user_id,
+                "content": content,
+                "type": "user",
+            },
+            allow_hosts=API_HOSTS,
+        )
+
+
+def _grapheme_count(text: str) -> int:
+    """User-perceived characters. Combining marks do not add to the count."""
+    count = 0
+    for char in text:
+        if unicodedata.combining(char):
+            continue
+        count += 1
+    return count
+
+
+def _kick_status_message(status: int) -> str:
+    if status == 401:
+        return "Reconnect Kick to allow chat."
+    if status == 403:
+        return "Kick refused that message. This account may not be allowed to chat there."
+    if status == 404:
+        return "Kick has no channel for that name."
+    if status == 429:
+        return "Kick is limiting how often this account can post."
+    if status == 400:
+        return "Kick rejected that message."
+    return "Kick refused that message."

@@ -126,6 +126,16 @@ def mention_donor(value: object) -> str:
     return f"@{name}"
 
 
+def collapsed_chat_text(value: object, limit: int = 2000) -> str:
+    """One line for a chat post. Blank text is refused. The limit is characters, not bytes."""
+    text = " ".join(str(value or "").split())
+    if not text:
+        raise ValueError("Type a message.")
+    if len(text) > limit:
+        raise ValueError("That message is too long.")
+    return text
+
+
 def csv_safe(value: object) -> str:
     """Stop spreadsheet apps from treating chat text as a formula."""
     if value is None:

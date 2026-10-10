@@ -169,7 +169,10 @@ def quote(row: dict, membership_price: float | None, rates: dict[str, float]) ->
         # The recipient's notice is not a second payment.
         return Quote(None, None, None, label)
     if is_member_anniversary(row):
-        # Complementary Super Chat. YouTube does not put a price on it.
+        # Complementary Super Chat. YouTube leaves the amount blank.
+        # A Kick subscription celebration is the same kind and shows $0.00.
+        if str(row.get("platform") or "") == "kick":
+            return Quote(0.0, "USD", 0.0, DISPLAY_LABELS["super_chat"])
         return Quote(None, None, None, DISPLAY_LABELS["super_chat"])
     if kind == "kicks" or str(row.get("currency") or "").upper() == "KICKS":
         dollars = _kick_dollars(row.get("amount_value"))

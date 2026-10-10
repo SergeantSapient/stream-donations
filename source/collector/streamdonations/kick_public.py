@@ -27,6 +27,9 @@ from .transport import Transport, api_error_message
 from .util import ApiError, as_int, redact, stable_key, to_utc_iso
 
 KICK_HOSTS = {"kick.com"}
+# Observed Kick website login. The window loads this fixed page.
+# The renderer does not choose the address.
+KICK_LOGIN_URL = "https://kick.com/login"
 PUSHER_HOST = "ws-us2.pusher.com"
 PUSHER_PATH = "/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false"
 KICK_UA = (
@@ -70,6 +73,14 @@ def kick_slug(value: str) -> str:
 
 def _slug_ok(value: str) -> bool:
     return bool(value) and all(ch.isalnum() or ch in "_-" for ch in value) and len(value) <= 50
+
+
+def kick_popup_chat_url(slug: str) -> str:
+    """Kick's own pop-out chat for one channel slug."""
+    text = str(slug or "").strip().lower()
+    if not _slug_ok(text):
+        raise ValueError("That Kick chat could not be opened.")
+    return f"https://kick.com/popout/{text}/chat"
 
 
 def kick_live_status(payload: dict) -> tuple[bool, str] | None:
@@ -124,6 +135,9 @@ def donations_from_kick_public(event_name: str, data: object, channel_slug: str)
     payload = _object(data)
     if payload is None:
         return []
+    celebration = _subscription_celebration(payload, channel_slug)
+    if celebration is not None:
+        return [celebration]
     kind = _event_kind(event_name) or _event_kind(str(payload.get("type") or ""))
     if kind == "kicks":
         donation = _kicks(payload, channel_slug)
@@ -155,6 +169,68 @@ def _event_kind(name: str) -> str | None:
     if leaf in {"subscription", "subscriptionevent"} or leaf.endswith("subscriptionevent"):
         return "subscription"
     return None
+
+
+def _metadata_object(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _subscription_celebration(payload: dict, channel_slug: str) -> Donation | None:
+    """Kick chat banner: someone celebrates a subscription month count.
+
+    That notice is not a payment. It is a complimentary Super Chat at $0.00.
+    Ordinary chat, and any celebration that is not a subscription, stays out.
+    """
+    if str(payload.get("type") or "").strip().lower() != "celebration":
+        return None
+    metadata = _metadata_object(payload.get("metadata"))
+    celebration = _metadata_object(metadata.get("celebration"))
+    label = str(celebration.get("type") or "").strip().lower()
+    if label and "sub" not in label:
+        return None
+    months = as_int(
+        celebration.get("total_months")
+        if celebration.get("total_months") is not None
+        else celebration.get("months")
+    )
+    if not months or months < 1:
+        return None
+    sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
+    author = str(sender.get("username") or payload.get("username") or "")
+    author_id = str(sender.get("id") or sender.get("user_id") or "")
+    unit = "month" if months == 1 else "months"
+    message = f"Subscribed for {months} {unit}"
+    content = " ".join(str(payload.get("content") or payload.get("message") or "").split())
+    if content:
+        message = f"{message}. {content}"
+    external = str(celebration.get("id") or payload.get("id") or "")
+    dedupe = f"kick:public:celebration:{external}" if external else stable_key(
+        "kick:public:celebration:", [channel_slug, author, months, payload.get("created_at")]
+    )
+    created = to_utc_iso(celebration.get("created_at") or payload.get("created_at"))
+    return Donation(
+        dedupe_key=dedupe,
+        platform="kick",
+        kind="member_milestone",
+        external_id=external,
+        channel=channel_slug,
+        author_name=author,
+        author_id=author_id,
+        message=message,
+        amount_value=0.0,
+        amount_micros=None,
+        currency="USD",
+        created_at=created,
+        raw=payload,
+    )
 
 
 def _kicks(payload: dict, channel_slug: str) -> Donation | None:

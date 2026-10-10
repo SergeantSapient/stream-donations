@@ -3,7 +3,8 @@
 Google's default project quota is 10,000 units per day for every method
 except search.list and videos.insert, which have their own buckets. The day
 resets at midnight Pacific Time. The published list cost used here is 1 unit
-for superChatEvents.list, liveBroadcasts.list, and liveChatMessages.list.
+for superChatEvents.list, liveBroadcasts.list, liveChatMessages.list, and
+videos.list. liveChatMessages.insert is 20 units and is reserved by the sender.
 A quotaExceeded response, or a local count that reaches 10,000, pauses
 signed-in calls until that reset. Public innertube chat is not this API and
 is not counted.
@@ -91,18 +92,21 @@ class YouTubeQuota:
         except ValueError:
             return 0
 
-    def reserve(self) -> None:
+    def reserve(self, cost: int = CALL_COST) -> None:
+        # bool is an int. A mistaken True would add 1 and hide the caller's cost.
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost < 1:
+            raise ValueError("quota cost must be at least 1")
         if self.paused():
             raise QuotaPaused(self.status_detail())
         used = self.units_used()
-        if used + CALL_COST > DAILY_LIMIT:
+        if used + cost > DAILY_LIMIT:
             self._block(BUDGET_LOG)
             raise QuotaPaused(self.status_detail())
         day = pacific_day()
         if self.store.get_setting("youtube_quota_day") != day:
             used = 0
         self.store.set_setting("youtube_quota_day", day)
-        self.store.set_setting("youtube_quota_units", str(used + CALL_COST))
+        self.store.set_setting("youtube_quota_units", str(used + cost))
 
     def note_exceeded(self) -> None:
         self._block(QUOTA_LOG)

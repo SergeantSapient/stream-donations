@@ -23,6 +23,9 @@ class SettingsFileTests(unittest.TestCase):
         self.assertNotIn("rumble_channel", TAB_KEYS)
         self.assertNotIn("kick_follow_live", TAB_KEYS)
         self.assertNotIn("streamer_presets", TAB_KEYS)
+        self.assertNotIn("blue_scripts", TAB_KEYS)
+        self.assertNotIn("blue_script_id", TAB_KEYS)
+        self.assertNotIn("blue_goal_tier", TAB_KEYS)
         self.assertNotIn("collection_paused", TAB_KEYS)
         body = export_settings({
             "membership_price": "4.99",

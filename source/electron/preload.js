@@ -21,4 +21,26 @@ contextBridge.exposeInMainWorld("desktop", {
   readClipboard() {
     return clipboard.readText();
   },
+  rumbleSignIn() {
+    return ipcRenderer.invoke("stream-donations-rumble", { action: "login" });
+  },
+  rumbleChat(url) {
+    return ipcRenderer.invoke("stream-donations-rumble", { action: "chat", url });
+  },
+  rumbleSend(text, url) {
+    if (typeof text !== "string" || typeof url !== "string") return Promise.resolve("refused");
+    return ipcRenderer.invoke("stream-donations-rumble", { action: "send", text, url });
+  },
+  youtubeSignIn() {
+    return ipcRenderer.invoke("stream-donations-youtube", { action: "login" });
+  },
+  youtubeChat(url) {
+    return ipcRenderer.invoke("stream-donations-youtube", { action: "chat", url });
+  },
+  kickSignIn() {
+    return ipcRenderer.invoke("stream-donations-kick", { action: "login" });
+  },
+  kickChat(url) {
+    return ipcRenderer.invoke("stream-donations-kick", { action: "chat", url });
+  },
 });

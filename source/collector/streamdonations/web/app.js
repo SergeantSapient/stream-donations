@@ -19,6 +19,7 @@ const state = {
   },
   stream: null,
   presets: [],
+  blueScripts: [],
 };
 
 const highlightTimers = new Map();
@@ -112,6 +113,7 @@ function icon(name) {
     plug: '<path d="M9 7V3.5M15 7V3.5"></path><path d="M7.5 7h9v5a4.5 4.5 0 0 1-9 0V7z"></path><path d="M12 16.5V21"></path>',
     unplug: '<path d="M9 6V2.5M15 6V2.5"></path><path d="M7.5 6h9v4.2a4.5 4.5 0 0 1-9 0V6z"></path><path d="M12 15v2M12 19.5V22"></path>',
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
+    send: '<path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path>',
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -614,6 +616,7 @@ function renderRows(page) {
     .replace(/^&/, "");
   $("export-csv").href = "/api/export.csv?" + exportQuery;
   $("export-jsonl").href = "/api/export.jsonl?" + exportQuery;
+  renderUtilityRows();
   return true;
 }
 
@@ -831,6 +834,437 @@ function cancelManualEdit() {
   setManualEditing(null);
 }
 
+const CHAT_TARGETS_KEY = "stream-donations-chat-targets";
+const RUMBLE_CHAT_KEY = "stream-donations-rumble-chat";
+const CHAT_TARGET_ORDER = ["youtube", "rumble", "kick"];
+const RUMBLE_CHAT_BLOCK = "Continue on the Rumble page before chat can be posted there.";
+let chatSendBusy = false;
+let chatDestinationsLoaded = false;
+let chatDestinations = { youtube: {}, kick: {} };
+let rumbleAckBound = false;
+
+function rumbleChatAllowed() {
+  try {
+    return localStorage.getItem(RUMBLE_CHAT_KEY) === "1";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function setRumbleChatAllowed(on) {
+  try {
+    if (on) localStorage.setItem(RUMBLE_CHAT_KEY, "1");
+    else localStorage.removeItem(RUMBLE_CHAT_KEY);
+  } catch (_error) {
+    // The choice stays off when this browser store is blocked.
+  }
+  applyRumbleChatAck();
+  applyChatTargets();
+}
+
+function applyRumbleChatAck() {
+  const on = rumbleChatAllowed();
+  const button = $("rumble-chat-continue");
+  const note = $("rumble-chat-ack");
+  if (button) {
+    button.textContent = on ? "Turn off" : "Continue";
+    if (!rumbleAckBound) {
+      rumbleAckBound = true;
+      button.addEventListener("click", () => setRumbleChatAllowed(!rumbleChatAllowed()));
+    }
+  }
+  if (note) note.hidden = !on;
+}
+
+function readChatTargets() {
+  let stored = "";
+  try {
+    stored = sessionStorage.getItem(CHAT_TARGETS_KEY) || "";
+  } catch (_error) {
+    stored = "";
+  }
+  if (!stored) return { youtube: true, kick: true, rumble: true };
+  try {
+    const parsed = JSON.parse(stored);
+    return {
+      youtube: !parsed || parsed.youtube !== false,
+      kick: !parsed || parsed.kick !== false,
+      rumble: !parsed || parsed.rumble !== false,
+    };
+  } catch (_error) {
+    return { youtube: true, kick: true, rumble: true };
+  }
+}
+
+function writeChatTargets(targets) {
+  try {
+    sessionStorage.setItem(CHAT_TARGETS_KEY, JSON.stringify({
+      youtube: Boolean(targets.youtube),
+      kick: Boolean(targets.kick),
+      rumble: Boolean(targets.rumble),
+    }));
+  } catch (_error) {
+    // The choice is for this tab. A blocked session store still sends the buttons on screen.
+  }
+}
+
+function applyChatTargets() {
+  applyRumbleChatAck();
+  const targets = readChatTargets();
+  const notes = [];
+  CHAT_TARGET_ORDER.forEach((platform) => {
+    const button = $("chat-target-" + platform);
+    if (!button) return;
+    if (platform === "rumble") {
+      const allowed = rumbleChatAllowed();
+      button.disabled = !allowed;
+      button.setAttribute("aria-pressed", allowed && targets.rumble ? "true" : "false");
+      button.title = allowed ? "Rumble" : RUMBLE_CHAT_BLOCK;
+      if (!allowed) notes.push(RUMBLE_CHAT_BLOCK);
+      const span = button.querySelector("span");
+      if (span) span.textContent = "Rumble";
+      return;
+    }
+    const info = chatDestinations[platform] || {};
+    const fallback = platform === "youtube" ? "YouTube" : "Kick";
+    const span = button.querySelector("span");
+    if (span) span.textContent = info.name || fallback;
+    button.setAttribute("aria-pressed", targets[platform] ? "true" : "false");
+    const blocked = chatDestinationsLoaded && !info.can_send;
+    button.disabled = blocked;
+    if (blocked && info.reason) {
+      button.title = info.reason;
+      notes.push(info.reason);
+    } else {
+      button.title = info.name || fallback;
+    }
+  });
+  const note = $("chat-target-note");
+  if (note) note.textContent = notes.join(" ");
+}
+
+function loadChatDestinations() {
+  return api("/api/chat/destinations").then((payload) => {
+    chatDestinations = {
+      youtube: (payload && payload.youtube) || {},
+      kick: (payload && payload.kick) || {},
+    };
+    chatDestinationsLoaded = true;
+    applyChatTargets();
+  }).catch(() => {});
+}
+
+function selectedChatPlatforms() {
+  const names = [];
+  CHAT_TARGET_ORDER.forEach((platform) => {
+    const button = $("chat-target-" + platform);
+    if (!button || button.disabled) return;
+    if (button.getAttribute("aria-pressed") === "true") names.push(platform);
+  });
+  return names;
+}
+
+function chatPlatformName(id) {
+  if (id === "youtube") return "YouTube";
+  if (id === "rumble") return "Rumble";
+  if (id === "kick") return "Kick";
+  return id;
+}
+
+function chatSentLabel(names) {
+  if (names.length <= 1) return names[0] || "";
+  if (names.length === 2) return names[0] + " and " + names[1];
+  return names.slice(0, -1).join(", ") + ", and " + names[names.length - 1];
+}
+
+function rumbleSendError(result) {
+  if (result === "signed-out") return "Sign in to Rumble chat first.";
+  if (result === "too-long") return "That message is too long for Rumble chat.";
+  if (result === "no-composer") return "Rumble chat is not ready.";
+  if (result === "empty") return "Type a message.";
+  if (result === "overlong") return "That message is too long.";
+  return "That Rumble chat could not be opened.";
+}
+
+function postRumbleChat(message, streamId) {
+  if (!rumbleChatAllowed()) {
+    return Promise.resolve({ platform: "rumble", ok: false, error: RUMBLE_CHAT_BLOCK });
+  }
+  const desktop = window.desktop;
+  if (!desktop || typeof desktop.rumbleSend !== "function") {
+    return Promise.resolve({
+      platform: "rumble",
+      ok: false,
+      error: "Open SuperBerry to use the Rumble window.",
+    });
+  }
+  const rumblePath = streamId
+    ? "/api/chat/rumble?stream=" + encodeURIComponent(streamId)
+    : "/api/chat/rumble";
+  return api(rumblePath).then((payload) => {
+    const url = payload && payload.url;
+    if (!url) throw new Error("That Rumble chat could not be opened.");
+    return desktop.rumbleSend(message, url);
+  }).then((result) => {
+    if (result === "sent") return { platform: "rumble", ok: true };
+    return { platform: "rumble", ok: false, error: rumbleSendError(result) };
+  }).catch((error) => ({
+    platform: "rumble",
+    ok: false,
+    error: (error && error.message) || "Rumble chat was not sent.",
+  }));
+}
+
+function sendChatText(text, options) {
+  const fromComposer = Boolean(options && options.fromComposer);
+  const platforms = selectedChatPlatforms();
+  if (!platforms.length) {
+    const note = $("chat-target-note");
+    toast((note && note.textContent) || "Choose a chat.", true);
+    return Promise.resolve();
+  }
+  const message = oneLine(text);
+  if (!message) {
+    toast("Type a message.", true);
+    return Promise.resolve();
+  }
+  if (message.length > 2000) {
+    toast("That message is too long.", true);
+    return Promise.resolve();
+  }
+  if (chatSendBusy) return Promise.resolve();
+  chatSendBusy = true;
+  const send = $("chat-send");
+  if (send) send.disabled = true;
+  const apiPlatforms = platforms.filter((name) => name !== "rumble");
+  const jobs = [];
+  if (apiPlatforms.length) {
+    jobs.push(api("/api/chat/send", {
+      method: "POST",
+      body: JSON.stringify({ text: message, platforms: apiPlatforms }),
+    }).then((payload) => (payload && payload.results) || []).catch((error) => (
+      apiPlatforms.map((platform) => ({
+        platform,
+        ok: false,
+        error: (error && error.message) || "Chat was not sent.",
+      }))
+    )));
+  }
+  if (platforms.indexOf("rumble") !== -1) jobs.push(postRumbleChat(message).then((row) => [row]));
+  return Promise.all(jobs).then((groups) => {
+    const order = { youtube: 0, rumble: 1, kick: 2 };
+    const results = groups.reduce((all, group) => all.concat(group), []);
+    results.sort((left, right) => (order[left.platform] ?? 9) - (order[right.platform] ?? 9));
+    const sent = results.filter((row) => row.ok).map((row) => chatPlatformName(row.platform));
+    const failed = results.filter((row) => !row.ok);
+    if (sent.length && !failed.length) {
+      toast("Sent to " + chatSentLabel(sent) + ".");
+      if (fromComposer) {
+        const box = $("chat-compose");
+        if (box) box.value = "";
+      }
+      return;
+    }
+    const problem = failed.map((row) => row.error || "Chat was not sent.").join(" ");
+    if (sent.length) toast("Sent to " + chatSentLabel(sent) + ". " + problem, true);
+    else toast(problem || "Chat was not sent.", true);
+  }).finally(() => {
+    chatSendBusy = false;
+    if (send) send.disabled = false;
+  });
+}
+
+function requireRumbleDesktop() {
+  const desktop = window.desktop;
+  if (!desktop || typeof desktop.rumbleSignIn !== "function" || typeof desktop.rumbleChat !== "function") {
+    toast("Open SuperBerry to use the Rumble window.", true);
+    return null;
+  }
+  return desktop;
+}
+
+function openRumbleSignIn() {
+  const desktop = requireRumbleDesktop();
+  if (!desktop) return;
+  Promise.resolve(desktop.rumbleSignIn()).catch((error) => {
+    toast((error && error.message) || "Rumble sign-in could not open.", true);
+  });
+}
+
+function openRumbleChat() {
+  const desktop = requireRumbleDesktop();
+  if (!desktop) return;
+  api("/api/chat/rumble").then((payload) => {
+    const url = payload && payload.url;
+    if (!url) throw new Error("That Rumble chat could not be opened.");
+    return desktop.rumbleChat(url);
+  }).then((result) => {
+    if (result === "refused") toast("That Rumble chat could not be opened.", true);
+  }).catch((error) => {
+    toast((error && error.message) || "That Rumble chat could not be opened.", true);
+  });
+}
+
+function requireYoutubeDesktop() {
+  const desktop = window.desktop;
+  if (!desktop || typeof desktop.youtubeSignIn !== "function" || typeof desktop.youtubeChat !== "function") {
+    toast("Open SuperBerry to use the YouTube window.", true);
+    return null;
+  }
+  return desktop;
+}
+
+function openYoutubeSignIn() {
+  const desktop = requireYoutubeDesktop();
+  if (!desktop) return;
+  Promise.resolve(desktop.youtubeSignIn()).catch((error) => {
+    toast((error && error.message) || "YouTube sign-in could not open.", true);
+  });
+}
+
+function openYoutubeChat() {
+  const desktop = requireYoutubeDesktop();
+  if (!desktop) return;
+  api("/api/chat/youtube").then((payload) => {
+    const url = payload && payload.url;
+    if (!url) throw new Error("That YouTube chat could not be opened.");
+    return desktop.youtubeChat(url);
+  }).then((result) => {
+    if (result === "refused") toast("That YouTube chat could not be opened.", true);
+  }).catch((error) => {
+    toast((error && error.message) || "That YouTube chat could not be opened.", true);
+  });
+}
+
+function requireKickDesktop() {
+  const desktop = window.desktop;
+  if (!desktop || typeof desktop.kickSignIn !== "function" || typeof desktop.kickChat !== "function") {
+    toast("Open SuperBerry to use the Kick window.", true);
+    return null;
+  }
+  return desktop;
+}
+
+function openKickSignIn() {
+  const desktop = requireKickDesktop();
+  if (!desktop) return;
+  Promise.resolve(desktop.kickSignIn()).catch((error) => {
+    toast((error && error.message) || "Kick sign-in could not open.", true);
+  });
+}
+
+function openKickChat() {
+  const desktop = requireKickDesktop();
+  if (!desktop) return;
+  api("/api/chat/kick").then((payload) => {
+    const url = payload && payload.url;
+    if (!url) throw new Error("That Kick chat could not be opened.");
+    return desktop.kickChat(url);
+  }).then((result) => {
+    if (result === "refused") toast("That Kick chat could not be opened.", true);
+  }).catch((error) => {
+    toast((error && error.message) || "That Kick chat could not be opened.", true);
+  });
+}
+
+const BLUE_CHAT_GAP_MIN_MS = 2000;
+const BLUE_CHAT_GAP_MAX_MS = 6000;
+const blueSeenIds = new Set();
+const blueSeenOrder = [];
+let blueChain = Promise.resolve();
+
+function rememberBlue(id) {
+  if (!id || blueSeenIds.has(id)) return false;
+  blueSeenIds.add(id);
+  blueSeenOrder.push(id);
+  while (blueSeenOrder.length > 200) blueSeenIds.delete(blueSeenOrder.shift());
+  return true;
+}
+
+function blueChatGap() {
+  const span = BLUE_CHAT_GAP_MAX_MS - BLUE_CHAT_GAP_MIN_MS + 1;
+  return BLUE_CHAT_GAP_MIN_MS + Math.floor(Math.random() * span);
+}
+
+function drainBlue() {
+  blueChain = blueChain
+    .then(() => api("/api/blue/pending"))
+    .then((payload) => runBlueBatch((payload && payload.pending) || []))
+    .catch(() => {});
+}
+
+function runBlueBatch(items) {
+  let chain = Promise.resolve();
+  let sentChat = false;
+  (items || []).forEach((item) => {
+    if (!item || !item.id || !rememberBlue(item.id)) return;
+    const chat = item.kind === "chat";
+    const wait = Boolean(chat && sentChat);
+    if (chat) sentChat = true;
+    chain = chain.then(() => {
+      const pause = wait
+        ? new Promise((resolve) => window.setTimeout(resolve, blueChatGap()))
+        : Promise.resolve();
+      return pause.then(() => performBlue(item)).catch(() => {});
+    });
+  });
+  return chain;
+}
+
+function performBlue(item) {
+  if (item.kind === "notice" && item.target === "app") {
+    toast(item.text || "");
+    return Promise.resolve();
+  }
+  if (item.kind === "chat") return sendBlueChat(item);
+  return reportBlue(item, "That action could not be completed.");
+}
+
+function sendBlueChat(item) {
+  if (item.target === "rumble") return sendBlueRumble(item);
+  if (item.target !== "youtube" && item.target !== "kick") {
+    return reportBlue(item, "That action could not be completed.");
+  }
+  return api("/api/chat/send", {
+    method: "POST",
+    body: JSON.stringify({
+      text: item.text,
+      platforms: [item.target],
+      stream_id: item.stream_id || "",
+    }),
+  }).then((payload) => {
+    const results = (payload && payload.results) || [];
+    const row = results.find((entry) => entry.platform === item.target) || results[0];
+    if (row && row.ok) return null;
+    return reportBlue(item, (row && row.error) || "Chat was not sent.");
+  }).catch((error) => reportBlue(item, (error && error.message) || "Chat was not sent."));
+}
+
+function sendBlueRumble(item) {
+  if (!rumbleChatAllowed()) return reportBlue(item, RUMBLE_CHAT_BLOCK);
+  const desktop = window.desktop;
+  if (!desktop || typeof desktop.rumbleSend !== "function") {
+    return reportBlue(item, "Open SuperBerry to use the Rumble window.");
+  }
+  return postRumbleChat(item.text, item.stream_id).then((row) => {
+    if (row && row.ok) return null;
+    return reportBlue(item, (row && row.error) || "Rumble chat was not sent.");
+  });
+}
+
+function reportBlue(item, reason) {
+  return api("/api/blue/result", {
+    method: "POST",
+    body: JSON.stringify({
+      ok: false,
+      script: item.script || "",
+      line: item.line,
+      target: item.target || "",
+      reason: reason || "That action could not be completed.",
+    }),
+  }).catch(() => {});
+}
+
 async function refresh(options) {
   const serial = ++refreshSerial;
   const [summary, status, page, stream] = await Promise.all([
@@ -848,6 +1282,8 @@ async function refresh(options) {
   renderStatus(status);
   const painted = renderRows(page);
   renderStream(stream);
+  loadChatDestinations();
+  drainBlue();
   if (!painted) {
     await refresh(options);
     return;
@@ -1260,6 +1696,8 @@ function renderPresetList(presets) {
       });
       if (preset.tiers_enabled) channels.appendChild(document.createTextNode(" · goals"));
     }
+    const script = (state.blueScripts || []).find((item) => item.id === preset.script_id);
+    if (script && script.name) channels.appendChild(document.createTextNode(" · " + script.name));
     meta.appendChild(channels);
     const edit = el("button", null, "Edit");
     edit.type = "button";
@@ -1275,6 +1713,164 @@ function renderPresetList(presets) {
     row.appendChild(actions);
     list.appendChild(row);
   });
+}
+
+function fillPresetScriptSelect(scripts) {
+  const select = $("preset-script");
+  if (!select) return;
+  const current = select.value;
+  select.replaceChildren();
+  const none = el("option", null, "None");
+  none.value = "";
+  select.appendChild(none);
+  (scripts || []).forEach((script) => {
+    const option = el("option", null, script.name);
+    option.value = script.id;
+    select.appendChild(option);
+  });
+  const kept = [...select.options].some((option) => option.value === current);
+  select.value = kept ? current : "";
+}
+
+function renderBlueList(scripts) {
+  const list = $("blue-list");
+  const empty = $("blue-empty");
+  if (!list) return;
+  list.replaceChildren();
+  const items = scripts || [];
+  if (empty) empty.hidden = items.length > 0;
+  items.forEach((script) => {
+    const row = el("li");
+    const meta = el("div", "preset-meta");
+    meta.appendChild(el("p", "preset-name", script.name));
+    const edit = el("button", null, "Edit");
+    edit.type = "button";
+    edit.setAttribute("aria-label", "Edit " + script.name);
+    edit.addEventListener("click", () => editBlue(script));
+    const remove = el("button", null, "Remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove " + script.name);
+    remove.addEventListener("click", () => deleteBlue(script));
+    const actions = el("div", "preset-actions");
+    actions.append(edit, remove);
+    row.appendChild(meta);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+function showBlueProblems(problems) {
+  const node = $("blue-problems");
+  if (!node) return;
+  const items = problems || [];
+  if (!items.length) {
+    node.hidden = true;
+    node.textContent = "";
+    return;
+  }
+  node.hidden = false;
+  node.textContent = items.map((item) => "Line " + item.line + ": " + item.message).join(" ");
+}
+
+function refreshBlueScripts() {
+  return api("/api/blue").then((payload) => {
+    state.blueScripts = (payload && payload.scripts) || [];
+    renderBlueList(state.blueScripts);
+    fillPresetScriptSelect(state.blueScripts);
+    renderPresetList(state.presets);
+    return state.blueScripts;
+  });
+}
+
+function saveBlue() {
+  const form = $("blue-form");
+  const saving = form ? form.querySelector("button.primary") : null;
+  if (saving) saving.disabled = true;
+  const name = ($("blue-name") && $("blue-name").value) || "";
+  const source = ($("blue-source") && $("blue-source").value) || "";
+  api("/api/blue", {
+    method: "POST",
+    body: JSON.stringify({ action: "save", name, source }),
+  })
+    .then((payload) => {
+      state.blueScripts = (payload && payload.scripts) || [];
+      renderBlueList(state.blueScripts);
+      fillPresetScriptSelect(state.blueScripts);
+      if (form) form.reset();
+      showBlueProblems(payload && payload.problems);
+      toast("Saved BLUE script " + ((payload.script && payload.script.name) || name) + ".");
+    })
+    .catch((error) => toast(error.message, true))
+    .finally(() => {
+      if (saving) saving.disabled = false;
+    });
+}
+
+function editBlue(script) {
+  showBlueProblems([]);
+  const name = $("blue-name");
+  const source = $("blue-source");
+  if (name) name.value = script.name || "";
+  if (source) source.value = script.source || "";
+  if (name) name.focus();
+}
+
+function deleteBlue(script) {
+  const sure = window.confirm(
+    "Remove " + script.name + "? Presets and ledgers that use it stop running it.",
+  );
+  if (!sure) return;
+  api("/api/blue", {
+    method: "POST",
+    body: JSON.stringify({ action: "delete", id: script.id }),
+  })
+    .then((payload) => {
+      state.blueScripts = (payload && payload.scripts) || [];
+      renderBlueList(state.blueScripts);
+      fillPresetScriptSelect(state.blueScripts);
+      return refreshPresets();
+    })
+    .then(() => toast("Removed BLUE script " + script.name + "."))
+    .catch((error) => toast(error.message, true));
+}
+
+function readBlueFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("That file could not be read.")));
+    reader.readAsText(file);
+  });
+}
+
+function importBlueFile(file) {
+  if (!file) return;
+  readBlueFile(file)
+    .then((text) => {
+      if (text.length > 16000) {
+        toast("That BLUE script is too long.", true);
+        return;
+      }
+      const source = $("blue-source");
+      if (source) source.value = text;
+      showBlueProblems([]);
+    })
+    .catch((error) => toast(error.message, true));
+}
+
+function exportBlue() {
+  const source = ($("blue-source") && $("blue-source").value) || "";
+  const raw = (($("blue-name") && $("blue-name").value) || "script").trim() || "script";
+  const safe = raw.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "script";
+  const blob = new Blob([source], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = safe + ".blue";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function refreshPresets() {
@@ -1302,6 +1898,7 @@ function savePreset() {
     kick_watch: $("preset-kick").value.trim(),
     tiers_enabled: $("tiers-enabled").checked,
     goal_tiers: collectTiers(),
+    script_id: ($("preset-script") && $("preset-script").value) || "",
   };
   api("/api/presets", { method: "POST", body: JSON.stringify(body) })
     .then((payload) => {
@@ -1309,6 +1906,7 @@ function savePreset() {
       renderPresetList(state.presets);
       if (form) form.reset();
       renderTierFields([]);
+      fillPresetScriptSelect(state.blueScripts);
       toast("Saved streamer preset " + ((payload.preset && payload.preset.name) || body.name) + ".");
     })
     .catch((err) => {
@@ -1334,6 +1932,8 @@ function editPreset(preset) {
   $("preset-youtube").value = preset.youtube_channel || "";
   $("preset-rumble").value = preset.rumble_channel || "";
   $("preset-kick").value = preset.kick_watch || "";
+  const script = $("preset-script");
+  if (script) script.value = preset.script_id || "";
   if ($("tiers-enabled")) $("tiers-enabled").checked = Boolean(preset.tiers_enabled);
   renderTierFields(preset.goal_tiers);
   const name = $("preset-name");
@@ -1409,6 +2009,7 @@ function ledgerAddressPayload() {
   if (preset) {
     body.tiers_enabled = Boolean(preset.tiers_enabled);
     body.goal_tiers = Array.isArray(preset.goal_tiers) ? preset.goal_tiers : [];
+    body.blue_script_id = preset.script_id || "";
   }
   return body;
 }
@@ -1603,10 +2204,23 @@ function renderStream(report) {
     button.title = "Copy thank you";
     button.appendChild(icon("copy"));
     button.addEventListener("click", () => copyText(item.copy || item.line, "Thank you copied."));
-    row.append(el("p", null, item.line), button);
+    const send = document.createElement("button");
+    send.type = "button";
+    send.className = "icon-button";
+    send.setAttribute("aria-label", "Send thank you");
+    send.title = "Send thank you";
+    send.appendChild(icon("send"));
+    send.addEventListener("click", () => sendChatText(item.copy || item.line));
+    row.append(el("p", null, item.line), button, send);
     thanksList.appendChild(row);
   });
   updateStreamPreview();
+  renderUtility(report);
+  const activeLedger = report.streams && report.streams.active_id;
+  if (utilityOn() && activeLedger && activeLedger !== utilityLedgerId) {
+    utilityLedgerId = activeLedger;
+    syncUtilityChats();
+  }
 }
 
 function syncManualUsd() {
@@ -1631,6 +2245,11 @@ function updateStreamPreview() {
   if (statusTotal) {
     statusTotal.textContent = $("chat-line").value;
     statusTotal.title = statusTotal.textContent;
+  }
+  const utilityTotal = $("utility-total");
+  if (utilityTotal) {
+    utilityTotal.textContent = $("chat-line").value;
+    utilityTotal.title = utilityTotal.textContent;
   }
 }
 
@@ -1696,6 +2315,7 @@ const WATCH_OPEN_KEY = "stream-donations-watch-open";
 const WATCH_PLATFORM_KEY = "stream-donations-watch-platform";
 const WATCH_TIMES_KEY = "stream-donations-watch-times";
 const WATCH_MUTED_KEY = "stream-donations-watch-muted";
+const UTILITY_KEY = "stream-donations-utility";
 const WATCH_RESERVED = ["api", "settings", "dashboard", "browse", "categories", "following"];
 
 const WATCH_CHAT_ICONS = PLATFORM_ICONS;
@@ -1712,6 +2332,10 @@ let watchChatTimer = 0;
 let watchChatCursor = 0;
 let watchChatGeneration = -1;
 let watchChatLoading = false;
+let utilityLedgerId = "";
+const utilityChatUrls = { youtube: "", kick: "", rumble: "" };
+let utilityChatSerial = 0;
+let utilityLedgerTail = "";
 
 function watchAddressSignature(settings) {
   const source = settings || {};
@@ -1728,19 +2352,35 @@ function watchAddressSignature(settings) {
 }
 
 function selectedWatchPlatform() {
-  const button = document.querySelector("#watch-platforms .pill.is-active");
-  const platform = button && button.getAttribute("data-platform");
+  const select = $("watch-platforms");
+  const platform = select && select.value;
   return WATCH_PLATFORMS.includes(platform) ? platform : "";
 }
 
+function markSourceSelect(select, mark, chosen) {
+  if (select) {
+    select.value = chosen;
+    select.dataset.platform = chosen;
+    select.setAttribute("data-platform", chosen);
+  }
+  if (mark) {
+    const icon = PLATFORM_ICONS[chosen];
+    if (icon) {
+      mark.hidden = false;
+      mark.src = icon;
+    } else {
+      mark.hidden = true;
+      mark.removeAttribute("src");
+    }
+  }
+}
+
 function markWatchPlatform(platform) {
-  document.querySelectorAll("#watch-platforms .pill").forEach((button) => {
-    const on = button.getAttribute("data-platform") === platform;
-    button.classList.toggle("is-active", on);
-    button.setAttribute("aria-pressed", on ? "true" : "false");
-  });
+  const chosen = WATCH_PLATFORMS.includes(platform) ? platform : "";
+  markSourceSelect($("watch-platforms"), $("watch-source-mark"), chosen);
+  markSourceSelect($("utility-source"), $("utility-source-mark"), chosen);
   try {
-    if (platform) sessionStorage.setItem(WATCH_PLATFORM_KEY, platform);
+    if (chosen) sessionStorage.setItem(WATCH_PLATFORM_KEY, chosen);
     else sessionStorage.removeItem(WATCH_PLATFORM_KEY);
   } catch (_error) {
     /* The panel still works if the window cannot store the choice. */
@@ -1802,26 +2442,34 @@ function watchPlaybackUrl(value, autoplay, muted) {
 }
 
 function setWatchControls(enabled) {
-  ["watch-play", "watch-live", "watch-mute"].forEach((id) => {
+  ["watch-play", "watch-live", "watch-mute", "utility-play", "utility-live", "utility-mute"].forEach((id) => {
     const button = $(id);
     if (button) button.disabled = !enabled;
   });
 }
 
+function setPressed(ids, pressed) {
+  const value = pressed ? "true" : "false";
+  ids.forEach((id) => {
+    const button = $(id);
+    if (button) button.setAttribute("aria-pressed", value);
+  });
+}
+
 function setWatchPlaying(playing) {
   watchPlaying = Boolean(playing);
-  const button = $("watch-play");
-  if (button) button.setAttribute("aria-pressed", watchPlaying ? "true" : "false");
+  setPressed(["watch-play", "utility-play"], watchPlaying);
 }
 
 function setWatchMuted(muted) {
   const next = Boolean(muted);
   const button = $("watch-mute");
   if (next === watchMuted && button && button.getAttribute("aria-pressed") === (next ? "true" : "false")) {
+    setPressed(["utility-mute"], next);
     return;
   }
   watchMuted = next;
-  if (button) button.setAttribute("aria-pressed", next ? "true" : "false");
+  setPressed(["watch-mute", "utility-mute"], next);
   try {
     sessionStorage.setItem(WATCH_MUTED_KEY, next ? "1" : "0");
   } catch (_error) {
@@ -1829,8 +2477,29 @@ function setWatchMuted(muted) {
   }
 }
 
+function utilityOn() {
+  const shell = document.querySelector(".app-shell");
+  return Boolean(shell && shell.classList.contains("is-utility"));
+}
+
+function activeWatchFrame() {
+  return $(utilityOn() ? "utility-frame" : "watch-frame");
+}
+
+function blankWatchFrame(frame) {
+  if (!frame) return;
+  frame.hidden = true;
+  frame.removeAttribute("src");
+}
+
+function watchSurfaceOpen() {
+  if (utilityOn()) return true;
+  const panel = $("watch-panel");
+  return Boolean(panel && !panel.classList.contains("is-collapsed"));
+}
+
 function postYouTubeCommand(action) {
-  const frame = $("watch-frame");
+  const frame = activeWatchFrame();
   if (!frame || !frame.contentWindow || frame.hidden) return false;
   let url;
   try {
@@ -1879,7 +2548,7 @@ function nudgeWatchPlayback(serial) {
   [400, 1200, 2500].forEach((delay) => {
     window.setTimeout(() => {
       if (serial !== watchSerial || !watchPlaying) return;
-      const frame = $("watch-frame");
+      const frame = activeWatchFrame();
       if (!frame || frame.hidden) return;
       commandPlayer(watchMuted ? "mute" : "unmute");
       commandPlayer("play");
@@ -1888,9 +2557,10 @@ function nudgeWatchPlayback(serial) {
 }
 
 function showWatchFrame(bare, autoplay, force, serial) {
-  const frame = $("watch-frame");
+  const frame = activeWatchFrame();
   const src = watchPlaybackUrl(bare, autoplay, watchMuted);
   if (!frame || !src) return false;
+  blankWatchFrame(frame.id === "utility-frame" ? $("watch-frame") : $("utility-frame"));
   watchBareUrl = watchPlayerUrl(bare);
   const changed = Boolean(force) || watchFrameSrc !== src;
   if (changed) {
@@ -1937,15 +2607,16 @@ function stopWatchFrame() {
   watchFrameSrc = "";
   setWatchPlaying(false);
   setWatchControls(false);
-  const frame = $("watch-frame");
-  if (!frame) return;
-  frame.hidden = true;
-  frame.removeAttribute("src");
+  blankWatchFrame($("watch-frame"));
+  blankWatchFrame($("utility-frame"));
 }
 
 function setWatchNote(message) {
+  const text = message || "";
   const note = $("watch-note");
-  if (note) note.textContent = message || "";
+  if (note) note.textContent = text;
+  const utility = $("utility-note");
+  if (utility) utility.textContent = text;
 }
 
 function setWatchChatNote(message) {
@@ -2080,7 +2751,7 @@ function renderWatchChat(result) {
 function loadWatchChat() {
   if (watchChatLoading) return;
   const panel = $("watch-panel");
-  if (!panel || panel.classList.contains("is-collapsed") || document.hidden) return;
+  if (!panel || panel.classList.contains("is-collapsed") || utilityOn() || document.hidden) return;
   watchChatLoading = true;
   const generation = watchChatGeneration < 0 ? 0 : watchChatGeneration;
   const path = "/api/chat?after=" + encodeURIComponent(String(watchChatCursor))
@@ -2088,7 +2759,7 @@ function loadWatchChat() {
   api(path)
     .then((result) => {
       const still = $("watch-panel");
-      if (!still || still.classList.contains("is-collapsed")) return;
+      if (!still || still.classList.contains("is-collapsed") || utilityOn()) return;
       renderWatchChat(result);
     })
     .catch(() => {
@@ -2115,7 +2786,7 @@ function setWatchOpen(open) {
     /* The panel still opens. The choice is not kept after a reload. */
   }
   if (!open) {
-    stopWatchFrame();
+    if (!utilityOn()) stopWatchFrame();
     stopWatchChat();
     return;
   }
@@ -2130,25 +2801,21 @@ function setWatchOpen(open) {
 
 function loadWatch(platform, force) {
   if (!WATCH_PLATFORMS.includes(platform)) return;
-  const panel = $("watch-panel");
-  if (!panel || panel.classList.contains("is-collapsed")) return;
+  if (!watchSurfaceOpen()) return;
   const serial = ++watchSerial;
   setWatchNote("");
   api("/api/embed?platform=" + encodeURIComponent(platform))
     .then((result) => {
       if (serial !== watchSerial) return;
-      if ($("watch-panel").classList.contains("is-collapsed")) return;
+      if (!watchSurfaceOpen()) return;
       const safe = watchPlayerUrl(result && result.url);
       if (!safe) {
         watchBareUrl = "";
         watchFrameSrc = "";
         setWatchPlaying(false);
         setWatchControls(false);
-        const frame = $("watch-frame");
-        if (frame) {
-          frame.hidden = true;
-          frame.removeAttribute("src");
-        }
+        blankWatchFrame($("watch-frame"));
+        blankWatchFrame($("utility-frame"));
         setWatchNote((result && result.message) || "No stream video for that source.");
         return;
       }
@@ -2164,8 +2831,14 @@ function loadWatch(platform, force) {
 
 function chooseWatchPlatform(platform) {
   if (!WATCH_PLATFORMS.includes(platform)) return;
-  const same = selectedWatchPlatform() === platform;
+  const select = $("watch-platforms");
+  const same = Boolean(select) && (select.dataset.platform || "") === platform;
   markWatchPlatform(platform);
+  if (utilityOn()) {
+    if (!same) stopWatchFrame();
+    loadWatch(platform, true);
+    return;
+  }
   const panel = $("watch-panel");
   if (!panel || panel.classList.contains("is-collapsed")) {
     setWatchOpen(true);
@@ -2173,6 +2846,240 @@ function chooseWatchPlatform(platform) {
   }
   if (!same) stopWatchFrame();
   loadWatch(platform, true);
+}
+
+const UTILITY_CHATS = [
+  { platform: "youtube", partition: "persist:stream-donations-youtube", path: "/api/chat/youtube" },
+  { platform: "kick", partition: "persist:stream-donations-kick", path: "/api/chat/kick" },
+  { platform: "rumble", partition: "persist:stream-donations-rumble", path: "/api/chat/rumble" },
+];
+
+function renderUtility(report) {
+  const source = report || {};
+  const total = $("utility-total");
+  if (total && $("chat-line")) total.textContent = $("chat-line").value;
+  const card = $("utility-donors-card");
+  if (card) card.hidden = source.show_top_donors === false;
+  const line = $("utility-donor-line");
+  if (line) {
+    line.textContent = source.donor_bar_copy || source.donor_bar || "";
+    line.title = line.textContent;
+  }
+  const list = $("utility-donors");
+  if (!list) return;
+  list.replaceChildren();
+  const rows = ((source.donors && source.donors.rows) || []).slice(0, 3);
+  rows.forEach((donor, index) => {
+    const item = document.createElement("li");
+    item.append(
+      el("span", "donor-rank", String(index + 1)),
+      el("span", "donor-name", donorName(donor.donor)),
+      el("span", "donor-usd", formatStreamUsd(donor.usd)),
+    );
+    list.appendChild(item);
+  });
+}
+
+function utilityUsd(row) {
+  if (row.amount_usd == null || row.amount_usd === "") return "—";
+  const number = Number(row.amount_usd);
+  if (!Number.isFinite(number)) return "—";
+  return formatStreamUsd(number);
+}
+
+function renderUtilityRows() {
+  const body = $("utility-rows");
+  if (!body) return;
+  const scroller = body.closest(".utility-ledger");
+  const kept = scroller ? scroller.scrollTop : 0;
+  body.replaceChildren();
+  // The open page arrives newest first. This view keeps earliest first.
+  const rows = state.rows.slice().reverse();
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.dataset.platform = row.platform || "other";
+    if (row.hidden) tr.classList.add("is-hidden");
+    const when = localParts(row.created_at);
+    const timeCell = el("td", "num", when.time);
+    timeCell.title = row.created_at || "";
+    const donor = donorName(row.author_name);
+    const donorCell = el("td", null, donor);
+    if (donor !== "—") donorCell.title = donor;
+    const bits = [];
+    if (when.date && when.date !== "—") bits.push(when.date);
+    if (row.message) bits.push(row.message);
+    if (bits.length) tr.title = bits.join(" · ");
+    tr.append(
+      timeCell,
+      donorCell,
+      el("td", "num", utilityUsd(row)),
+      platformCell(row),
+      el("td", null, row.kind_label || row.kind || "—"),
+    );
+    body.appendChild(tr);
+  });
+  const empty = $("utility-empty");
+  if (empty) empty.hidden = rows.length !== 0;
+  const tail = rows.length ? String(rows[rows.length - 1].id || "") : "";
+  if (scroller) {
+    if (tail !== utilityLedgerTail) scroller.scrollTop = scroller.scrollHeight;
+    else scroller.scrollTop = kept;
+  }
+  utilityLedgerTail = tail;
+}
+
+function setUtilityChatNote(platform, message) {
+  const note = $("utility-chat-" + platform + "-note");
+  if (note) note.textContent = message || "";
+}
+
+function clearUtilityChat(platform) {
+  const host = $("utility-chat-" + platform);
+  if (host) host.replaceChildren();
+  utilityChatUrls[platform] = "";
+}
+
+function mountUtilityChat(platform, partition, url) {
+  const host = $("utility-chat-" + platform);
+  if (!host || !url) return;
+  const current = host.querySelector("webview");
+  if (utilityChatUrls[platform] === url && current && current.getAttribute("src") === url) return;
+  utilityChatUrls[platform] = url;
+  host.replaceChildren();
+  if (!window.desktop) {
+    setUtilityChatNote(platform, "Open SuperBerry to use this chat.");
+    return;
+  }
+  const view = document.createElement("webview");
+  view.setAttribute("partition", partition);
+  view.src = url;
+  host.appendChild(view);
+  setUtilityChatNote(platform, "");
+}
+
+function syncUtilityChats() {
+  if (!utilityOn()) return;
+  const serial = ++utilityChatSerial;
+  UTILITY_CHATS.forEach((spec) => {
+    api(spec.path)
+      .then((result) => {
+        if (serial !== utilityChatSerial || !utilityOn()) return;
+        const url = result && result.url;
+        if (!url) {
+          clearUtilityChat(spec.platform);
+          setUtilityChatNote(spec.platform, "That chat could not be opened.");
+          return;
+        }
+        mountUtilityChat(spec.platform, spec.partition, url);
+        setUtilityChatNote(spec.platform, window.desktop ? "" : "Open SuperBerry to use this chat.");
+      })
+      .catch((error) => {
+        if (serial !== utilityChatSerial || !utilityOn()) return;
+        clearUtilityChat(spec.platform);
+        setUtilityChatNote(spec.platform, (error && error.message) || "That chat could not be opened.");
+      });
+  });
+}
+
+function stopUtilityChats() {
+  utilityChatSerial += 1;
+  UTILITY_CHATS.forEach((spec) => {
+    clearUtilityChat(spec.platform);
+    setUtilityChatNote(spec.platform, "");
+  });
+}
+
+function setUtility(on) {
+  const shell = document.querySelector(".app-shell");
+  const view = $("utility-view");
+  const toggle = $("utility-toggle");
+  if (!shell || !view || !toggle) return;
+  shell.classList.toggle("is-utility", Boolean(on));
+  view.hidden = !on;
+  toggle.setAttribute("aria-pressed", on ? "true" : "false");
+  try {
+    if (on) sessionStorage.setItem(UTILITY_KEY, "1");
+    else sessionStorage.removeItem(UTILITY_KEY);
+  } catch (_error) {
+    /* The view still switches for this window. */
+  }
+  if (!on) {
+    stopUtilityChats();
+    utilityLedgerId = "";
+    blankWatchFrame($("utility-frame"));
+    const watchToggle = $("watch-toggle");
+    const watchOpen = watchToggle && watchToggle.getAttribute("aria-expanded") === "true";
+    const platform = selectedWatchPlatform();
+    if (watchOpen && platform) loadWatch(platform, true);
+    else stopWatchFrame();
+    return;
+  }
+  blankWatchFrame($("watch-frame"));
+  const report = state.stream;
+  utilityLedgerId = (report && report.streams && report.streams.active_id) || "";
+  renderUtility(report);
+  utilityLedgerTail = "";
+  renderUtilityRows();
+  syncUtilityChats();
+  const platform = selectedWatchPlatform();
+  if (!platform) {
+    stopWatchFrame();
+    setWatchNote("Choose YouTube, Rumble, or Kick.");
+    return;
+  }
+  loadWatch(platform, true);
+}
+
+function bindUtility() {
+  const toggle = $("utility-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      setUtility(toggle.getAttribute("aria-pressed") !== "true");
+    });
+  }
+  const source = $("utility-source");
+  if (source) {
+    source.addEventListener("change", () => {
+      const platform = source.value;
+      if (!WATCH_PLATFORMS.includes(platform)) {
+        markWatchPlatform("");
+        stopWatchFrame();
+        setWatchNote("Choose YouTube, Rumble, or Kick.");
+        return;
+      }
+      chooseWatchPlatform(platform);
+    });
+  }
+  const reload = $("utility-reload");
+  if (reload) {
+    reload.addEventListener("click", () => {
+      const selected = selectedWatchPlatform();
+      if (!selected) {
+        setWatchNote("Choose YouTube, Rumble, or Kick.");
+        return;
+      }
+      loadWatch(selected, true);
+    });
+  }
+  const copyTotal = $("utility-copy-total");
+  if (copyTotal) {
+    copyTotal.addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
+  }
+  const copyDonors = $("utility-copy-donors");
+  if (copyDonors) {
+    copyDonors.addEventListener("click", () => copyText(topDonorCopyText(), "Top donors copied."));
+  }
+  const sendTotal = $("utility-send-total");
+  if (sendTotal) sendTotal.addEventListener("click", () => sendChatText($("chat-line").value));
+  const sendDonors = $("utility-send-donors");
+  if (sendDonors) sendDonors.addEventListener("click", () => sendChatText(topDonorCopyText()));
+  let on = false;
+  try {
+    on = sessionStorage.getItem(UTILITY_KEY) === "1";
+  } catch (_error) {
+    on = false;
+  }
+  if (on) setUtility(true);
 }
 
 function bindWatch() {
@@ -2193,8 +3100,9 @@ function bindWatch() {
   }
   setWatchMuted(watchMuted);
   setWatchTimes(watchTimesOn());
-  const play = $("watch-play");
-  if (play) {
+  ["watch-play", "utility-play"].forEach((id) => {
+    const play = $(id);
+    if (!play) return;
     play.addEventListener("click", () => {
       if (play.disabled) return;
       const playing = play.getAttribute("aria-pressed") === "true";
@@ -2204,9 +3112,10 @@ function bindWatch() {
         else if (!playing) reloadWatchPlayer();
       });
     });
-  }
-  const live = $("watch-live");
-  if (live) {
+  });
+  ["watch-live", "utility-live"].forEach((id) => {
+    const live = $(id);
+    if (!live) return;
     live.addEventListener("click", () => {
       if (live.disabled) return;
       commandPlayer("live").then((result) => {
@@ -2217,9 +3126,10 @@ function bindWatch() {
         reloadWatchPlayer();
       });
     });
-  }
-  const mute = $("watch-mute");
-  if (mute) {
+  });
+  ["watch-mute", "utility-mute"].forEach((id) => {
+    const mute = $(id);
+    if (!mute) return;
     mute.addEventListener("click", () => {
       if (mute.disabled) return;
       const muted = mute.getAttribute("aria-pressed") === "true";
@@ -2232,7 +3142,7 @@ function bindWatch() {
         }
       });
     });
-  }
+  });
   window.addEventListener("message", onYouTubePlayerMessage);
   const times = $("watch-chat-times");
   if (times) {
@@ -2246,11 +3156,19 @@ function bindWatch() {
       setWatchOpen(toggle.getAttribute("aria-expanded") !== "true");
     });
   }
-  document.querySelectorAll("#watch-platforms .pill").forEach((button) => {
-    button.addEventListener("click", () => {
-      chooseWatchPlatform(button.getAttribute("data-platform") || "");
+  const source = $("watch-platforms");
+  if (source) {
+    source.addEventListener("change", () => {
+      const platform = source.value;
+      if (!WATCH_PLATFORMS.includes(platform)) {
+        markWatchPlatform("");
+        stopWatchFrame();
+        setWatchNote("Choose YouTube, Rumble, or Kick.");
+        return;
+      }
+      chooseWatchPlatform(platform);
     });
-  });
+  }
   const reload = $("watch-reload");
   if (reload) {
     reload.addEventListener("click", () => {
@@ -2342,9 +3260,11 @@ function applySettingsToForm(settings) {
   const nextSignature = watchAddressSignature(settings);
   const addressesChanged = watchBound && nextSignature !== watchSignature;
   watchSignature = nextSignature;
-  if (addressesChanged && $("watch-toggle") && $("watch-toggle").getAttribute("aria-expanded") === "true") {
+  if (addressesChanged) {
     const platform = selectedWatchPlatform();
-    if (platform) loadWatch(platform);
+    const watchOpen = $("watch-toggle") && $("watch-toggle").getAttribute("aria-expanded") === "true";
+    if (platform && (watchOpen || utilityOn())) loadWatch(platform);
+    if (utilityOn()) syncUtilityChats();
   }
 }
 
@@ -2460,6 +3380,10 @@ function bind() {
   });
   $("copy-chat-line").addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
   $("copy-donor-bar").addEventListener("click", () => copyText(topDonorCopyText(), "Top donors copied."));
+  const sendChatLine = $("send-chat-line");
+  if (sendChatLine) sendChatLine.addEventListener("click", () => sendChatText($("chat-line").value));
+  const sendDonorBar = $("send-donor-bar");
+  if (sendDonorBar) sendDonorBar.addEventListener("click", () => sendChatText(topDonorCopyText()));
   const statusCopyTotal = $("status-copy-total");
   if (statusCopyTotal) {
     statusCopyTotal.addEventListener("click", () => copyText($("chat-line").value, "Stream total copied."));
@@ -2468,6 +3392,51 @@ function bind() {
   if (statusCopyDonors) {
     statusCopyDonors.addEventListener("click", () => copyText(topDonorCopyText(), "Top donors copied."));
   }
+  const statusSendTotal = $("status-send-total");
+  if (statusSendTotal) statusSendTotal.addEventListener("click", () => sendChatText($("chat-line").value));
+  const statusSendDonors = $("status-send-donors");
+  if (statusSendDonors) statusSendDonors.addEventListener("click", () => sendChatText(topDonorCopyText()));
+  applyChatTargets();
+  CHAT_TARGET_ORDER.forEach((platform) => {
+    const button = $("chat-target-" + platform);
+    if (!button) return;
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      const targets = readChatTargets();
+      targets[platform] = button.getAttribute("aria-pressed") !== "true";
+      writeChatTargets(targets);
+      applyChatTargets();
+    });
+  });
+  const compose = $("watch-chat-compose");
+  if (compose) {
+    compose.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const box = $("chat-compose");
+      sendChatText(box ? box.value : "", { fromComposer: true });
+    });
+  }
+  const composeBox = $("chat-compose");
+  if (composeBox) {
+    composeBox.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        if (compose) compose.requestSubmit();
+      }
+    });
+  }
+  const youtubeSignIn = $("youtube-sign-in");
+  if (youtubeSignIn) youtubeSignIn.addEventListener("click", openYoutubeSignIn);
+  const youtubePopout = $("youtube-popout");
+  if (youtubePopout) youtubePopout.addEventListener("click", openYoutubeChat);
+  const kickSignIn = $("kick-sign-in");
+  if (kickSignIn) kickSignIn.addEventListener("click", openKickSignIn);
+  const kickPopout = $("kick-popout");
+  if (kickPopout) kickPopout.addEventListener("click", openKickChat);
+  const rumbleSignIn = $("rumble-sign-in");
+  if (rumbleSignIn) rumbleSignIn.addEventListener("click", openRumbleSignIn);
+  const rumblePopout = $("rumble-popout");
+  if (rumblePopout) rumblePopout.addEventListener("click", openRumbleChat);
   $("manual-native").addEventListener("input", syncManualUsd);
   $("manual-currency").addEventListener("change", syncManualUsd);
   $("manual-amount").addEventListener("input", () => {
@@ -2707,6 +3676,25 @@ function bind() {
       savePreset();
     });
   }
+  const blueForm = $("blue-form");
+  if (blueForm) {
+    blueForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveBlue();
+    });
+  }
+  const blueImport = $("blue-import");
+  const blueFile = $("blue-import-file");
+  if (blueImport && blueFile) {
+    blueImport.addEventListener("click", () => blueFile.click());
+    blueFile.addEventListener("change", () => {
+      const file = blueFile.files && blueFile.files[0];
+      blueFile.value = "";
+      importBlueFile(file);
+    });
+  }
+  const blueExport = $("blue-export");
+  if (blueExport) blueExport.addEventListener("click", () => exportBlue());
   document.querySelectorAll("dialog.sheet").forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
@@ -2814,6 +3802,7 @@ function bind() {
       .catch((error) => toast(error.message, true));
   });
   bindWatch();
+  bindUtility();
   bindGiveaway();
 }
 
@@ -3107,7 +4096,16 @@ function openSheet(name) {
   const logButton = $("log-button");
   if (logButton) logButton.setAttribute("aria-expanded", name === "log" ? "true" : "false");
   if (name === "streamers") {
-    refreshPresets().catch((error) => toast(error.message, true));
+    refreshBlueScripts()
+      .catch(() => {
+        state.blueScripts = [];
+        return [];
+      })
+      .then(() => refreshPresets())
+      .catch((error) => toast(error.message, true));
+  }
+  if (name === "blue") {
+    refreshBlueScripts().catch((error) => toast(error.message, true));
   }
   if (name === "giveaway") startGiveawayPoll();
   const field = dialog.querySelector("input, select, textarea");

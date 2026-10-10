@@ -13,11 +13,15 @@
   <button type="button" id="watch-toggle" class="watch-rail" aria-expanded="false" aria-controls="watch-body" aria-label="Show stream" title="Show stream">Stream</button>
   <div id="watch-body" class="watch-body" hidden>
     <div class="watch-toolbar">
-      <div id="watch-platforms" class="watch-platforms" role="group" aria-label="Stream source">
-        <button type="button" class="pill" data-platform="youtube" aria-pressed="false"><span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span></button>
-        <button type="button" class="pill" data-platform="rumble" aria-pressed="false"><span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span></button>
-        <button type="button" class="pill" data-platform="kick" aria-pressed="false"><span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span></button>
-      </div>
+      <label class="watch-source">
+        <img id="watch-source-mark" class="platform-mark" alt="" hidden>
+        <select id="watch-platforms" aria-label="Stream source">
+          <option value="">Source</option>
+          <option value="youtube">YouTube</option>
+          <option value="rumble">Rumble</option>
+          <option value="kick">Kick</option>
+        </select>
+      </label>
       <button type="button" id="watch-reload" class="icon-button" aria-label="Reload stream" title="Reload stream">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
       </button>
@@ -39,7 +43,7 @@
     </div>
     <div class="watch-chat">
       <div class="watch-chat-head">
-        <p id="watch-chat-note" class="watch-chat-note">Chat from the open ledger shows here.</p>
+        <p id="watch-chat-note" class="watch-chat-note">Chat from the open ledger shows here. Send posts as the YouTube or Kick account you connected. Rumble posts as the signed-in chat on this computer after you continue on the Rumble page.</p>
         <div class="watch-chat-tools">
           <button type="button" id="watch-chat-times" class="icon-button watch-chat-times" aria-pressed="true" aria-label="Timestamps" title="Timestamps"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4.5l2.5 1.5"></path></svg></button>
           <button type="button" id="watch-giveaway" class="icon-button" data-tab="giveaway" aria-haspopup="dialog" aria-controls="tab-giveaway" aria-label="Giveaway" title="Giveaway"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14.2 9H20l-4.6 3.4L17.2 18 12 14.8 6.8 18l1.8-5.6L4 9h5.8L12 3.5z"></path></svg></button>
@@ -48,6 +52,41 @@
       <div id="watch-chat-scroll" class="watch-chat-scroll">
         <ol id="watch-chat-lines" class="watch-chat-lines is-times" aria-label="Chat"></ol>
       </div>
+      <form id="watch-chat-compose" class="watch-chat-compose">
+        <div class="watch-chat-targets" role="group" aria-label="Send to">
+          <button type="button" id="chat-target-youtube" class="chat-target" aria-pressed="true" aria-label="YouTube">
+            <img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">
+            <span class="platform-name" data-platform="youtube">YouTube</span>
+          </button>
+          <button type="button" id="chat-target-rumble" class="chat-target" aria-pressed="false" disabled aria-label="Rumble">
+            <img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">
+            <span class="platform-name" data-platform="rumble">Rumble</span>
+          </button>
+          <button type="button" id="chat-target-kick" class="chat-target" aria-pressed="true" aria-label="Kick">
+            <img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">
+            <span class="platform-name" data-platform="kick">Kick</span>
+          </button>
+        </div>
+        <p id="chat-target-note" class="chat-send-note"></p>
+        <div class="watch-chat-entry">
+          <textarea id="chat-compose" maxlength="2000" rows="2" placeholder="Message" aria-label="Message"></textarea>
+          <button type="submit" id="chat-send" class="icon-button" aria-label="Send" title="Send"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+        </div>
+        <div class="watch-chat-rumble" role="group" aria-label="Pop-out chat">
+          <span class="watch-chat-site">
+            <button type="button" id="youtube-sign-in" class="icon-button" aria-label="YouTube sign-in" title="YouTube sign-in"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
+            <button type="button" id="youtube-popout" class="icon-button" aria-label="Open YouTube chat" title="Open YouTube chat"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
+          </span>
+          <span class="watch-chat-site">
+            <button type="button" id="kick-sign-in" class="icon-button" aria-label="Kick sign-in" title="Kick sign-in"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
+            <button type="button" id="kick-popout" class="icon-button" aria-label="Open Kick chat" title="Open Kick chat"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
+          </span>
+          <span class="watch-chat-site">
+            <button type="button" id="rumble-sign-in" class="icon-button" aria-label="Rumble sign-in" title="Rumble sign-in"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
+            <button type="button" id="rumble-popout" class="icon-button" aria-label="Open Rumble chat" title="Open Rumble chat"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
+          </span>
+        </div>
+      </form>
     </div>
   </div>
 </aside>
@@ -59,6 +98,9 @@
   </div>
   <p class="mast-note">A local ledger of Super Chats, Super Stickers, and memberships. Nothing here is sent anywhere except the platform you connect.</p>
   <div class="mast-actions">
+    <button type="button" id="utility-toggle" class="icon-button" aria-pressed="false" aria-label="Kiosk view" title="Kiosk view">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="7" height="6.5" rx="1"></rect><rect x="3.5" y="13" width="7" height="7" rx="1"></rect><rect x="13" y="4" width="7.5" height="16" rx="1"></rect></svg>
+    </button>
     <div class="menu-wrap">
       <button type="button" id="export-button" class="icon-button" aria-label="Export" title="Export the open ledger" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"></path><path d="M8 10l4 4 4-4"></path><path d="M5 19h14"></path></svg>
@@ -75,11 +117,12 @@
     <button type="button" id="app-menu-button" class="icon-button" aria-label="Menu" title="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu">
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
     </button>
-    <div id="app-menu" class="dropdown" role="menu" aria-label="Platforms, streamers, and settings" hidden>
+    <div id="app-menu" class="dropdown" role="menu" aria-label="Platforms, streamers, BLUE, and settings" hidden>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-youtube" data-tab="youtube" aria-haspopup="dialog" aria-controls="tab-youtube"><span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span></button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-rumble" data-tab="rumble" aria-haspopup="dialog" aria-controls="tab-rumble"><span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span></button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-kick" data-tab="kick" aria-haspopup="dialog" aria-controls="tab-kick"><span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span></button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-streamers" data-tab="streamers" aria-haspopup="dialog" aria-controls="tab-streamers"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"></circle><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0"></path></svg>Streamers</button>
+      <button type="button" class="menu-item" role="menuitem" id="tab-button-blue" data-tab="blue" aria-haspopup="dialog" aria-controls="tab-blue"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8 4 12l4 4"></path><path d="m16 8 4 4-4 4"></path><path d="m13 6-2 12"></path></svg>BLUE</button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-settings" data-tab="settings" aria-haspopup="dialog" aria-controls="tab-settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path></svg>Settings</button>
       <button type="button" class="menu-item" role="menuitem" id="archive-open" title="View a JSONL export. It is not saved."><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"></path><path d="M14 3.5V8h4.5"></path><path d="M8 13h8M8 17h5"></path></svg>Open archive</button>
       <div class="menu-sep" role="separator"></div>
@@ -106,6 +149,88 @@
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
     </button>
   </div>
+  <div id="utility-view" class="utility-view" hidden>
+    <div class="utility-stage">
+      <iframe id="utility-frame" title="Kiosk video" hidden referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      <div class="utility-overlay">
+        <label class="watch-source">
+          <img id="utility-source-mark" class="platform-mark" alt="" hidden>
+          <select id="utility-source" aria-label="Stream source">
+            <option value="">Source</option>
+            <option value="youtube">YouTube</option>
+            <option value="rumble">Rumble</option>
+            <option value="kick">Kick</option>
+          </select>
+        </label>
+        <button type="button" id="utility-play" class="icon-button" aria-pressed="false" aria-label="Playback" title="Playback" disabled>
+          <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6v12l10-6-10-6z"></path></svg>
+          <svg class="icon icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6v12M16 6v12"></path></svg>
+        </button>
+        <button type="button" id="utility-live" class="watch-live" aria-label="Live" title="Live" disabled>Live</button>
+        <button type="button" id="utility-mute" class="icon-button" aria-pressed="false" aria-label="Mute" title="Mute" disabled>
+          <svg class="icon icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.5v-13L7.2 9.5H4z"></path><path d="M15.5 10a3.2 3.2 0 0 1 0 4"></path></svg>
+          <svg class="icon icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.5v-13L7.2 9.5H4z"></path><path d="M16 10.5 20 14.5M20 10.5 16 14.5"></path></svg>
+        </button>
+        <button type="button" id="utility-reload" class="icon-button" aria-label="Reload stream" title="Reload stream">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
+        </button>
+      </div>
+      <p id="utility-note" class="utility-note" aria-live="polite"></p>
+    </div>
+    <div class="utility-side">
+      <div class="utility-blurbs">
+        <section class="utility-blurb" aria-label="Stream total">
+          <p class="kicker">Stream total</p>
+          <p id="utility-total" class="utility-blurb-text">$0.00 total for stream.</p>
+          <span class="utility-blurb-actions">
+            <button type="button" id="utility-copy-total" class="icon-button" aria-label="Copy stream total" title="Copy stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+            <button type="button" id="utility-send-total" class="icon-button" aria-label="Send stream total" title="Send stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+          </span>
+        </section>
+        <section id="utility-donors-card" class="utility-blurb" aria-label="Top 3 donors">
+          <p class="kicker">Top 3</p>
+          <p id="utility-donor-line" class="utility-blurb-text"></p>
+          <span class="utility-blurb-actions">
+            <button type="button" id="utility-copy-donors" class="icon-button" aria-label="Copy top 3 donors" title="Copy top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+            <button type="button" id="utility-send-donors" class="icon-button" aria-label="Send top 3 donors" title="Send top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+          </span>
+          <ol id="utility-donors" class="utility-donors"></ol>
+        </section>
+      </div>
+      <div class="utility-ledger">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Donor</th>
+              <th>Amount</th>
+              <th>Platform</th>
+              <th>Type</th>
+            </tr>
+          </thead>
+          <tbody id="utility-rows"></tbody>
+        </table>
+        <p id="utility-empty" class="empty" hidden>Nothing on this page yet.</p>
+      </div>
+    </div>
+    <div class="utility-chats">
+      <section class="utility-chat" aria-label="YouTube chat">
+        <header class="utility-chat-head"><span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span></header>
+        <div id="utility-chat-youtube" class="utility-chat-frame"></div>
+        <p id="utility-chat-youtube-note" class="utility-chat-note"></p>
+      </section>
+      <section class="utility-chat" aria-label="Rumble chat">
+        <header class="utility-chat-head"><span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span></header>
+        <div id="utility-chat-rumble" class="utility-chat-frame"></div>
+        <p id="utility-chat-rumble-note" class="utility-chat-note"></p>
+      </section>
+      <section class="utility-chat" aria-label="Kick chat">
+        <header class="utility-chat-head"><span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span></header>
+        <div id="utility-chat-kick" class="utility-chat-frame"></div>
+        <p id="utility-chat-kick-note" class="utility-chat-note"></p>
+      </section>
+    </div>
+  </div>
   <section id="stream-banner" class="card stream-banner is-collapsed" aria-live="polite">
     <div class="section-head">
       <div class="section-head-main">
@@ -114,6 +239,7 @@
       </div>
       <div class="section-actions">
         <button type="button" id="copy-chat-line" class="icon-button" aria-label="Copy stream total" title="Copy stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+        <button type="button" id="send-chat-line" class="icon-button" aria-label="Send stream total" title="Send stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
         <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="stream-banner-body" data-section="stream total" aria-label="Expand stream total" title="Expand stream total">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
         </button>
@@ -138,6 +264,7 @@
       </div>
       <div class="section-actions">
         <button type="button" id="copy-donor-bar" class="icon-button" aria-label="Copy top 3 donors" title="Copy top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+        <button type="button" id="send-donor-bar" class="icon-button" aria-label="Send top 3 donors" title="Send top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
         <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="top-donors-body" data-section="top donors" aria-label="Expand top donors" title="Expand top donors">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
         </button>
@@ -267,10 +394,12 @@
   <div class="status-slot" id="status-total">
     <p id="status-total-line" class="status-line">$0.00 total for stream.</p>
     <button type="button" id="status-copy-total" class="icon-button" aria-label="Copy stream total" title="Copy stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+    <button type="button" id="status-send-total" class="icon-button" aria-label="Send stream total" title="Send stream total"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
   </div>
   <div class="status-slot" id="status-donors">
     <p id="status-donor-line" class="status-line"></p>
     <button type="button" id="status-copy-donors" class="icon-button" aria-label="Copy top 3 donors" title="Copy top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+    <button type="button" id="status-send-donors" class="icon-button" aria-label="Send top 3 donors" title="Send top 3 donors"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
   </div>
   <div id="status-ephemeral" class="status-ephemeral" aria-live="polite"></div>
 </footer>
@@ -293,8 +422,9 @@
       <label>OAuth client id <input id="youtube-client-id" name="youtube_client_id" autocomplete="off" spellcheck="false"></label>
       <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Super Chat history poll (seconds) <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="300" max="3600" step="60" value="900"></label>
-      <p class="hint">Google sign-in is optional. It only reads your own channel’s Super Chats from the last 30 days. YouTube’s default Data API quota is 10,000 units a day, each history or broadcast check costs 1 unit, and the day resets at midnight Pacific Time. The shortest interval is 5 minutes. If the quota is used up, signed-in calls wait for that reset. Public live chat does not spend this quota. While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
+      <p class="hint">Google sign-in reads your own channel’s Super Chats from the last 30 days and can post into a live chat as that account. A sign-in from before chat was added can still read. Click Connect again so posting is allowed. YouTube’s default Data API quota is 10,000 units a day. A history or broadcast check costs 1 unit. Posting one message costs 20. The day resets at midnight Pacific Time. The shortest history interval is 5 minutes. If the quota is used up, signed-in calls wait for that reset. Public live chat does not spend this quota. A waiting room can be read here before YouTube will accept a message. While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
       <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
+      <p class="hint">YouTube sign-in, under the chat, opens YouTube’s own sign-in and keeps that website session on this computer. The password is not stored. Open YouTube chat is YouTube’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <p class="hint">Register this redirect URI on the Google client:</p>
       <input id="youtube-redirect" class="copy" readonly>
       <div class="row">
@@ -324,6 +454,12 @@
       <label>Owner API URL, optional <input id="rumble-url" type="password" autocomplete="off" placeholder="Leave blank to keep the saved URL"></label>
       <label>Poll seconds <input id="rumble-poll" type="number" min="5" max="120" step="1" value="8"></label>
       <p class="hint">The URL from rumble.com/account/livestream-api only works for a channel you own. It adds subscriber dollar amounts the public chat does not include.</p>
+      <p class="hint">Rumble sign-in, under the chat, opens Rumble’s own login and keeps that website session on this computer. The password is not stored. Open Rumble chat is Rumble’s pop-out chat for this ledger.</p>
+      <p id="rumble-chat-warning" class="hint">Rumble’s terms do not allow a script to type or send chat. Using this can restrict the account. Continuing is your choice. After that, combined chat posts into the signed-in Rumble chat for this stream.</p>
+      <p id="rumble-chat-ack" class="hint" hidden>Rumble chat posting is on for this computer.</p>
+      <div class="row">
+        <button type="button" id="rumble-chat-continue" aria-describedby="rumble-chat-warning">Continue</button>
+      </div>
       <div class="row">
         <button type="submit" class="primary">Save</button>
         <button type="button" id="rumble-clear">Remove URL</button>
@@ -342,7 +478,8 @@
         <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
       <label>Public channel <input id="kick-watch" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
-      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below. This address belongs to the open ledger. The client id and secret are shared.</p>
+      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below. This address belongs to the open ledger. The client id and secret are shared. Click Connect again after this update so the same account can post into that channel’s chat. The message is sent as that Kick user. The account email is not saved.</p>
+      <p class="hint">Kick sign-in, under the chat, opens Kick’s own login and keeps that website session on this computer. The password is not stored. Open Kick chat is Kick’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <label class="check"><input id="kick-follow-live" type="checkbox"> Show whether this channel is live</label>
       <p class="hint">Chat is read either way. When this is on, the status also says whether a broadcast is live. That does not change the chat. This belongs to the open ledger.</p>
       <label>Client id <input id="kick-client-id" autocomplete="off" spellcheck="false"></label>
@@ -374,12 +511,14 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">Save a streamer's channels and goal tiers. Choosing that preset and saving the ledger's addresses writes those goals onto that ledger. Saving the preset itself does not change the ledger that is open. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels and goals.</p>
+    <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script. Choosing that preset and saving the ledger's addresses writes those goals and that script onto that ledger. Saving the preset itself does not change the ledger that is open. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels, goals, and BLUE script. Leaving the script on None clears it.</p>
     <form id="preset-form">
       <label>Name <input id="preset-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="youtube">YouTube</span> channel URL</span> <input id="preset-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"></label>
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="rumble">Rumble</span> channel URL</span> <input id="preset-rumble" autocomplete="off" spellcheck="false" placeholder="https://rumble.com/c/channel"></label>
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="kick">Kick</span> channel URL</span> <input id="preset-kick" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
+      <label>BLUE script <select id="preset-script"><option value="">None</option></select></label>
+      <p class="hint">Optional. The script runs while a ledger that saved this preset is connected. None stores no script on the preset.</p>
       <label class="check"><input id="tiers-enabled" type="checkbox"> Goal tiers on the stream total</label>
       <div id="goal-tiers"></div>
       <p class="hint">Up to five goals. The chat line names the next one that still has a name, and how many dollars are left. A cent short of a goal still counts as reached. Turn tiers off when this streamer has none. Goals alone do not save a preset; add at least one channel.</p>
@@ -391,6 +530,34 @@
     <p class="endpoint">Saved</p>
     <p id="preset-empty" class="hint">No streamer presets yet.</p>
     <ul id="preset-list" class="preset-list"></ul>
+  </div>
+</dialog>
+
+<dialog id="tab-blue" class="sheet" aria-labelledby="blue-title">
+  <div class="sheet-body">
+    <header class="sheet-head">
+      <div>
+        <h2 id="blue-title">BLUE</h2>
+        <p class="endpoint">Berry Lexical User Events</p>
+      </div>
+      <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </header>
+    <p class="hint">A script runs while a ledger that uses it is connected. Soft disconnect stops it, and connecting that ledger starts it over, including the minute timer. Each line is its own command. A line that cannot be read is skipped. An action that cannot be sent is written to the log, and the next line still runs. Chat to more than one platform waits a few seconds between those sends. Rumble still needs Continue on the Rumble page.</p>
+    <form id="blue-form">
+      <label>Name <input id="blue-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
+      <label>Script <textarea id="blue-source" rows="12" spellcheck="false" placeholder="ON DONATION THEN SEND CHAT TO YOUTUBE &quot;Thanks @{DONOR}.&quot;"></textarea></label>
+      <p class="hint">A line starts with ON DONATION, ON TIMER, or ON GOAL. IF can compare PLATFORM, AMOUNT, TOTAL, DONOR, TYPE, TIME, MINUTES, TIER, and NAME. A word that is not a keyword, such as is, is ignored. TOTAL is this ledger's total. TIER is how many goal amounts that total has reached, from 0 through 5, on every line. ON GOAL runs once when the script starts, then again for each new tier, and on that line TIER is the tier just reached. DONOR is who reached that tier, NAME is the name set on it, and PLATFORM and AMOUNT are that donation. Those are empty at tier 0. THEN SEND CHAT TO YOUTUBE, RUMBLE, KICK, or ALL, or NOTICE TO APP, LOG, or SYSTEM. The message stays in double quotes. {TOTAL}, {TIER}, {DONOR}, {AMOUNT}, {PLATFORM}, {TYPE}, {TIME}, {MINUTES}, and {NAME} are filled in. {NAME} is filled in on ON GOAL.</p>
+      <p id="blue-problems" class="hint" hidden></p>
+      <div class="row">
+        <button type="submit" class="primary">Save script</button>
+        <button type="button" id="blue-import">Import</button>
+        <button type="button" id="blue-export">Export</button>
+        <input id="blue-import-file" type="file" accept=".blue,.txt,text/plain" hidden>
+      </div>
+    </form>
+    <p class="endpoint">Saved</p>
+    <p id="blue-empty" class="hint">No BLUE scripts yet.</p>
+    <ul id="blue-list" class="preset-list"></ul>
   </div>
 </dialog>
 
@@ -538,7 +705,7 @@
     <h2 id="ledger-urls-title">Addresses for this ledger</h2>
     <p id="ledger-urls-intro" class="hint">This ledger starts with a blank name and no donations. Each ledger keeps its own <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span>, <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span>, and <span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span> address. API keys stay shared. For <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span> or <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span>, turn on Follow the live stream and that field asks for a channel URL instead of a video. <span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span> is already a channel. Leave any of these blank and fill them in later.</p>
     <label>Streamer preset <select id="ledger-preset"><option value="">None</option></select></label>
-    <p class="hint">Choosing a preset fills the channel fields. None clears them. Save presets from Streamers in the menu.</p>
+    <p class="hint">Choosing a preset fills the channel fields. None clears them. Saving while a preset is chosen writes its goals and BLUE script onto this ledger. None, then Save, leaves the ledger's goals and script as they are. Save presets from Streamers in the menu.</p>
     <label class="check"><input id="ledger-youtube-follow" type="checkbox" aria-controls="ledger-youtube"> Follow the <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span> live stream</label>
     <label><span id="ledger-youtube-label" class="platform-phrase"></span> <input id="ledger-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…" data-video-label="YouTube public video URL or id" data-channel-label="YouTube channel URL" data-video-placeholder="https://www.youtube.com/watch?v=…" data-channel-placeholder="https://www.youtube.com/@channel"></label>
     <label class="check"><input id="ledger-rumble-follow" type="checkbox" aria-controls="ledger-rumble"> Follow the <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span> live stream</label>

@@ -32,6 +32,9 @@ class NullNotifier:
     def donations_added(self, donations: Sequence[Donation], *, membership_price: float | None) -> None:
         return
 
+    def post(self, summary: str, body: str = "") -> bool:
+        return False
+
 
 class UnavailableNotifier(NullNotifier):
     """Keeps the call site stable until a platform backend exists."""
@@ -96,6 +99,26 @@ class FreedesktopNotifier:
             except queue.Full:
                 self._note_failure("System notifications are backed up.")
                 return
+
+    def post(self, summary: str, body: str = "") -> bool:
+        """Queue one notice the same way a donation notice is queued."""
+        text = _plain(summary, 180)
+        if not text:
+            return False
+        note = (text, _plain(body, 240))
+        if self._synchronous:
+            self._send(note[0], note[1])
+            return True
+        if not self._candidates() and self._preferred is None:
+            self._note_failure("System notifications need notify-send, dbus-send, or busctl.")
+            return False
+        self._ensure_worker()
+        try:
+            self._queue.put_nowait(note)
+        except queue.Full:
+            self._note_failure("System notifications are backed up.")
+            return False
+        return True
 
     def _ensure_worker(self) -> None:
         with self._thread_lock:

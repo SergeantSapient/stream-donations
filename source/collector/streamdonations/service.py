@@ -11,18 +11,27 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
+from .blue_host import BlueHost
 from .chat_feed import ChatFeed
 from .giveaway import Giveaway
 from .goals import dump_tiers, normalize_tiers
 from .kick import KickClient
-from .kick_public import validate_kick_watch
-from .rumble import RumbleClient, validate_rumble_api_url, validate_rumble_channel, validate_rumble_watch
+from .kick_public import kick_popup_chat_url, kick_slug, validate_kick_watch
+from .rumble import (
+    RumbleClient,
+    rumble_popup_chat_url,
+    validate_rumble_api_url,
+    validate_rumble_channel,
+    validate_rumble_watch,
+)
 from .store import Store
 from .transport import Transport
-from .util import redact
+from .util import ApiError, AuthError, collapsed_chat_text, redact
 from .youtube import YouTubeClient
-from .youtube_public import validate_youtube_channel, validate_youtube_watch
-from .youtube_quota import clamp_poll_seconds
+from .youtube_public import validate_youtube_channel, validate_youtube_watch, youtube_popup_chat_url
+from .youtube_quota import QuotaPaused, clamp_poll_seconds
+
+_CHAT_PLATFORMS = ("youtube", "kick")
 
 _HOST_NAME = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
@@ -52,6 +61,7 @@ _ALLOWED_SETTINGS = {
     "show_top_donors",
     "chat_extra",
     "goal_tiers",
+    "blue_script_id",
 }
 
 PAUSED_DETAIL = (
@@ -163,6 +173,8 @@ class Service:
         self.youtube = YouTubeClient(store, shared, chat_feed=self.chat)
         self.rumble = RumbleClient(store, shared, chat_feed=self.chat)
         self.kick = KickClient(store, shared, chat_feed=self.chat)
+        self.blue = BlueHost(self)
+        self.store.on_fresh_donations = self.blue.on_donations
         self._others: dict[str, _OtherLedger] = {}
         self.on_listen_change = None
         self._stop = threading.Event()
@@ -205,6 +217,10 @@ class Service:
                     finally:
                         if name == "youtube":
                             self._sync_other_ledgers()
+                            try:
+                                self.blue.tick()
+                            except Exception:
+                                self.store.log("blue", "error", "BLUE could not check the timer.")
             except Exception as exc:
                 message = redact(str(exc))
                 self.store.log(name, "error", message)
@@ -215,6 +231,195 @@ class Service:
     def paused(self) -> bool:
         return self.store.collection_paused()
 
+    def chat_destinations(self) -> dict:
+        """Whether the signed-in YouTube and Kick accounts can post.
+
+        Names are cached on the client. This does not look up a pop-out chat.
+        """
+        return {
+            "youtube": self._chat_destination(
+                self.youtube,
+                "Connect a YouTube account to send chat.",
+                "Reconnect YouTube to allow chat. The current sign-in can only read.",
+            ),
+            "kick": self._chat_destination(
+                self.kick,
+                "Connect a Kick account to send chat.",
+                "Reconnect Kick to allow chat. The current sign-in cannot post.",
+            ),
+        }
+
+    def send_chat(self, text: object, platforms: object, stream_id: object = None) -> dict:
+        """Post one line as the signed-in account. One failure does not skip the other."""
+        if isinstance(platforms, str) or not isinstance(platforms, list):
+            raise ValueError("Choose YouTube, Kick, or both.")
+        chosen: list[str] = []
+        for item in platforms:
+            name = str(item or "").strip().lower()
+            if name == "rumble":
+                # The desktop window posts into the signed-in Rumble chat. This process does not.
+                raise ValueError("Rumble chat opens in its own window.")
+            if name not in _CHAT_PLATFORMS:
+                raise ValueError("Choose YouTube, Kick, or both.")
+            if name not in chosen:
+                chosen.append(name)
+        if not chosen:
+            raise ValueError("Choose YouTube, Kick, or both.")
+        tab = self._chat_tab(stream_id)
+        if tab is not None and str(tab.get("collection_paused") or "") != "0":
+            return {
+                "results": [
+                    {"platform": name, "ok": False, "error": "That ledger is disconnected."}
+                    for name in chosen
+                ]
+            }
+        message = collapsed_chat_text(text)
+        return {"results": [self._send_chat_one(name, message, tab) for name in chosen]}
+
+    def rumble_popup(self, stream_id: str | None = None) -> dict:
+        """Pop-out URL for one ledger. Resolved when that button, or a BLUE line, is used."""
+        tab = None
+        if stream_id:
+            tab = self._ledger_tab(stream_id)
+            if tab is None:
+                raise ValueError("Unknown stream tab.")
+            if str(tab.get("collection_paused") or "") != "0":
+                raise ValueError("That ledger is disconnected.")
+        try:
+            chat_id = self._rumble_chat_id(tab)
+            url = rumble_popup_chat_url(chat_id)
+        except ApiError:
+            raise ApiError("That Rumble chat could not be opened.")
+        return {"url": url}
+
+    def youtube_popup(self) -> dict:
+        """Pop-out URL for the open ledger. Resolved when that button is used."""
+        try:
+            video_id = self._youtube_popup_video_id()
+            url = youtube_popup_chat_url(video_id)
+        except ApiError:
+            raise ApiError("That YouTube chat could not be opened.")
+        return {"url": url}
+
+    def kick_popup(self) -> dict:
+        """Pop-out URL for the open ledger's Kick channel. No live lookup."""
+        watch = self.store.get_setting("kick_watch").strip()
+        if not watch:
+            raise ValueError("This ledger has no Kick channel.")
+        slug = kick_slug(watch)
+        if not slug:
+            raise ValueError("This ledger has no Kick channel.")
+        return {"url": kick_popup_chat_url(slug)}
+
+    def _youtube_popup_video_id(self) -> str:
+        if self.store.get_setting("youtube_follow_live") == "1":
+            channel = self.store.get_setting("youtube_channel").strip()
+            if not channel:
+                raise ValueError("This ledger has no YouTube channel.")
+            video_id = self.youtube.public_live_video_id(channel)
+            if not video_id:
+                raise ValueError("That YouTube channel has no chat open.")
+            return str(video_id)
+        watch = self.store.get_setting("youtube_watch").strip()
+        if not watch:
+            raise ValueError("This ledger has no YouTube video.")
+        return self.youtube.public_video_id(watch)
+
+    def _chat_destination(self, client, connect_reason: str, scope_reason: str) -> dict:
+        connected = bool(client.connected())
+        can_send = bool(client.can_send()) if connected else False
+        name = ""
+        if connected:
+            try:
+                name = client.sender_name() or ""
+            except (QuotaPaused, ApiError, AuthError, ValueError):
+                name = ""
+        if not connected:
+            reason = connect_reason
+        elif not can_send:
+            reason = scope_reason
+        else:
+            reason = ""
+        return {"connected": connected, "can_send": can_send, "name": name, "reason": reason}
+
+    def _send_chat_one(self, platform: str, message: str, tab: dict | None = None) -> dict:
+        try:
+            if platform == "youtube":
+                if tab is None:
+                    self.youtube.send_message(message)
+                else:
+                    self.youtube.send_message(message, video_id=self._youtube_video_for_tab(tab))
+            elif tab is None:
+                self.kick.send_message(message)
+            else:
+                slug = kick_slug(str(tab.get("kick_watch") or ""))
+                if not slug:
+                    raise ValueError("This ledger has no Kick channel.")
+                self.kick.send_message(message, slug=slug)
+        except (QuotaPaused, ApiError, AuthError, ValueError) as exc:
+            detail = str(exc).strip() or "Chat was not sent."
+            self.store.log(platform, "info", "Chat was not sent. " + detail)
+            return {"platform": platform, "ok": False, "error": detail}
+        self.store.log(platform, "info", "Sent a chat message.")
+        return {"platform": platform, "ok": True}
+
+    def _rumble_chat_id(self, tab: dict | None = None) -> str:
+        def field(key: str) -> str:
+            if tab is None:
+                return self.store.get_setting(key).strip()
+            return str(tab.get(key) or "").strip()
+
+        if field("rumble_follow_live") == "1":
+            channel = field("rumble_channel")
+            if not channel:
+                raise ValueError("This ledger has no Rumble channel.")
+            chat_id = self.rumble.resolve_live_channel(channel)
+            if not chat_id:
+                raise ValueError("That Rumble channel has no chat open.")
+            return str(chat_id)
+        watch = field("rumble_watch")
+        if not watch:
+            raise ValueError("This ledger has no Rumble video.")
+        return self.rumble.resolve_chat_id(watch)
+
+    def _youtube_video_for_tab(self, tab: dict) -> str:
+        if str(tab.get("youtube_follow_live") or "") == "1":
+            channel = str(tab.get("youtube_channel") or "").strip()
+            if not channel:
+                raise ApiError("This ledger has no YouTube channel.")
+            video_id = self.youtube.public_live_video_id(channel)
+            if not video_id:
+                raise ApiError("That YouTube channel is not live, so there is no chat to post into.")
+            return str(video_id).strip()
+        watch = str(tab.get("youtube_watch") or "").strip()
+        if not watch:
+            raise ApiError("This ledger has no YouTube video.")
+        from .youtube_public import video_id_from_target
+
+        found = video_id_from_target(watch)
+        if found:
+            return found
+        return self.youtube.public_video_id(watch)
+
+    def _chat_tab(self, stream_id: object) -> dict | None:
+        if stream_id is None:
+            return None
+        if not isinstance(stream_id, str):
+            raise ValueError("Unknown stream tab.")
+        text = stream_id.strip()
+        if not text:
+            return None
+        tab = self._ledger_tab(text)
+        if tab is None:
+            raise ValueError("Unknown stream tab.")
+        return tab
+
+    def _ledger_tab(self, stream_id: str) -> dict | None:
+        for tab in self.store.ledger_snapshots():
+            if tab["id"] == stream_id:
+                return tab
+        return None
+
     def set_paused(self, paused: bool, tab_id: str | None = None) -> None:
         """Stop or resume one ledger without signing out.
 
@@ -224,7 +429,13 @@ class Service:
             # Read this before the ledger document is opened. Migration writes
             # "1", which would hide the first pause and skip stopping chat.
             already = self.paused()
+            active_before = self.store._active_stream_id()
+            wanted = tab_id.strip() if isinstance(tab_id, str) and tab_id.strip() else active_before
+            previous = self._ledger_tab(wanted)
+            was_paused = previous is None or str(previous.get("collection_paused") or "") != "0"
             target = self.store.set_stream_paused(tab_id, paused)
+            if bool(paused) != was_paused:
+                self.blue.on_connection(target, bool(paused))
             active = self.store._active_stream_id()
             if target != active:
                 self._sync_other_ledgers()
@@ -380,6 +591,7 @@ class Service:
         unknown = sorted(set(payload) - _ALLOWED_SETTINGS)
         if unknown:
             raise ValueError("Unknown settings: " + ", ".join(unknown))
+        previous_script = self.store.get_setting("blue_script_id") if "blue_script_id" in payload else ""
         updates: dict[str, str] = {}
         clears: list[str] = []
         webhook_changed = False
@@ -456,6 +668,14 @@ class Service:
                 if not isinstance(value, list):
                     raise ValueError("Goal tiers must be a list.")
                 updates[key] = dump_tiers(normalize_tiers(value))
+            elif key == "blue_script_id":
+                script_id = str(value or "").strip()
+                if script_id and not any(script["id"] == script_id for script in self.store.blue_scripts()):
+                    raise ValueError("That BLUE script is not saved.")
+                if script_id:
+                    updates[key] = script_id
+                else:
+                    clears.append(key)
             elif key == "kick_public_base":
                 text = str(value or "").strip()
                 if text and not _valid_public_base(text):
@@ -474,6 +694,8 @@ class Service:
             self.store.set_setting(key, value)
         for key in clears:
             self.store.delete_setting(key)
+        if "blue_script_id" in payload:
+            self.blue.note_script(self.store._active_stream_id(), previous_script)
         if webhook_changed and self.on_listen_change is not None:
             self.on_listen_change()
         # Pick up new credentials on the next loop instead of waiting out the interval.

@@ -44,6 +44,20 @@ def usd_rates(
     return rates
 
 
+def cached_usd_rates(store: Store) -> dict[str, float]:
+    """Rates already saved. This does not ask the network."""
+    with _cache_lock:
+        state = _remember(store)
+        rates = state.get("rates")
+    if isinstance(rates, dict) and rates:
+        return {str(code): float(value) for code, value in rates.items() if _rate_ok(value)}
+    return {"USD": 1.0}
+
+
+def _rate_ok(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) > 0
+
+
 def refresh_rates(store: Store, transport: Transport | None = None, now: float | None = None) -> dict:
     """One manual check. Automatic callers should use usd_rates instead."""
     _rates, outcome = _load(store, transport, now, force=True)

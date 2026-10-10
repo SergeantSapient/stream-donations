@@ -51,7 +51,12 @@ _STREAM_FIELDS = (
     "kick_watch",
     "kick_follow_live",
     "collection_paused",
+    "blue_script_id",
+    "blue_started_at",
+    "blue_timer_minute",
+    "blue_goal_tier",
 )
+_BLUE_FIELDS = ("blue_script_id", "blue_started_at", "blue_timer_minute", "blue_goal_tier")
 # A new ledger copies presentation only. Title, donations, addresses, follow-live,
 # goal tiers, and the pause are not copied. A new ledger starts paused, with tiers off.
 _COPIED_ON_NEW_LEDGER = (
@@ -126,6 +131,7 @@ class Store:
         self._lock = threading.Lock()
         self._log_file_lock = threading.Lock()
         self._notifier = None
+        self.on_fresh_donations = None
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -272,6 +278,12 @@ class Store:
         self._tighten()
         self._log_new_payloads(fresh)
         self._notify_automated(fresh)
+        callback = self.on_fresh_donations
+        if fresh and callback is not None:
+            try:
+                callback(stream_id, fresh)
+            except Exception:
+                self.log("blue", "error", "BLUE could not read a new donation.")
         return inserted
 
     def enable_system_notifications(self) -> None:
@@ -512,10 +524,14 @@ class Store:
         kick_watch,
         tiers_enabled=False,
         goal_tiers=None,
+        script_id="",
     ) -> dict:
         """Store a shared preset. The open ledger's addresses and goals stay as they are."""
         from .presets import PRESETS_KEY, dump_presets, parse_presets, upsert_preset
 
+        chosen = str(script_id or "").strip()
+        if chosen and not any(script["id"] == chosen for script in self.blue_scripts()):
+            raise ValueError("That BLUE script is not saved.")
         presets = parse_presets(self.get_setting(PRESETS_KEY))
         presets, saved = upsert_preset(
             presets,
@@ -525,6 +541,7 @@ class Store:
             kick_watch,
             tiers_enabled,
             goal_tiers,
+            chosen,
         )
         self.set_setting(PRESETS_KEY, dump_presets(presets))
         return saved
@@ -539,6 +556,74 @@ class Store:
         else:
             self.delete_setting(PRESETS_KEY)
         return removed["name"]
+
+    def blue_scripts(self) -> list[dict]:
+        from .blue_scripts import SCRIPTS_KEY, parse_scripts, public_scripts
+
+        return public_scripts(parse_scripts(self.get_setting(SCRIPTS_KEY)))
+
+    def save_blue_script(self, name, source) -> dict:
+        """Store a shared script. The open ledger keeps the script it already has."""
+        from .blue_scripts import SCRIPTS_KEY, dump_scripts, parse_scripts, upsert_script
+
+        scripts = parse_scripts(self.get_setting(SCRIPTS_KEY))
+        scripts, saved = upsert_script(scripts, name, source)
+        self.set_setting(SCRIPTS_KEY, dump_scripts(scripts))
+        return saved
+
+    def delete_blue_script(self, script_id: str) -> str:
+        """Remove a script and clear it from presets and ledgers. Channels stay."""
+        from .blue_scripts import SCRIPTS_KEY, dump_scripts, parse_scripts, remove_script
+        from .presets import PRESETS_KEY, dump_presets, parse_presets
+
+        scripts = parse_scripts(self.get_setting(SCRIPTS_KEY))
+        scripts, removed = remove_script(scripts, script_id)
+        if scripts:
+            self.set_setting(SCRIPTS_KEY, dump_scripts(scripts))
+        else:
+            self.delete_setting(SCRIPTS_KEY)
+        presets = parse_presets(self.get_setting(PRESETS_KEY))
+        if any(preset.get("script_id") == removed["id"] for preset in presets):
+            for preset in presets:
+                if preset.get("script_id") == removed["id"]:
+                    preset["script_id"] = ""
+            self.set_setting(PRESETS_KEY, dump_presets(presets))
+        doc = self._stream_doc()
+        changed = False
+        for tab in doc["tabs"]:
+            if tab.get("blue_script_id") != removed["id"]:
+                continue
+            tab["blue_script_id"] = ""
+            changed = True
+            if tab["id"] == doc["active_id"]:
+                self._drop_setting("blue_script_id")
+        if changed:
+            self._save_stream_doc(doc)
+        return removed["name"]
+
+    def set_stream_values(self, tab_id: str, values: dict) -> None:
+        """Write BLUE fields on one ledger. Other ledgers stay as they are."""
+        cleaned: dict[str, str] = {}
+        for key, value in dict(values or {}).items():
+            if key not in _BLUE_FIELDS:
+                raise ValueError("Unknown ledger field.")
+            cleaned[key] = str(value or "")
+        if not cleaned:
+            return
+        doc = self._stream_doc()
+        tab = next((item for item in doc["tabs"] if item["id"] == tab_id), None)
+        if tab is None:
+            return
+        for key, value in cleaned.items():
+            tab[key] = value
+        self._save_stream_doc(doc)
+        if tab_id != doc["active_id"]:
+            return
+        for key, value in cleaned.items():
+            if value:
+                self._put_setting(key, value)
+            else:
+                self._drop_setting(key)
 
     def _stream_doc(self) -> dict:
         raw = self.get_setting(_STREAMS_KEY)
@@ -606,6 +691,12 @@ class Store:
             tab["tiers_enabled"] = "0"
         if tab["show_top_donors"] not in {"0", "1"}:
             tab["show_top_donors"] = "1"
+        tab["blue_script_id"] = tab["blue_script_id"].strip()[:64]
+        tab["blue_started_at"] = tab["blue_started_at"].strip()[:40]
+        minute = tab["blue_timer_minute"].strip()
+        tab["blue_timer_minute"] = minute if minute.isdigit() and len(minute) <= 8 else ""
+        goal_tier = tab["blue_goal_tier"].strip()
+        tab["blue_goal_tier"] = goal_tier if goal_tier in {"0", "1", "2", "3", "4", "5"} else ""
         return tab
 
     def _tab_from_globals(self) -> dict:
@@ -760,14 +851,56 @@ class Store:
             "last": _last_line(last),
         }
 
+    def stream_total_usd(self, stream_id: str, rates: dict[str, float]) -> float:
+        """This ledger's USD total. Rates already saved are used, and nothing is fetched."""
+        rows = self._goal_rows(stream_id, rates)
+        return running_usd(rows)
+
+    def stream_goal_amounts(
+        self,
+        stream_id: str,
+        rates: dict[str, float],
+    ) -> list[tuple[str, float | None, str, str]]:
+        """(dedupe key, USD or none, donor, platform) for rows in this ledger's total, oldest first."""
+        found = []
+        for row in self._goal_rows(stream_id, rates):
+            usd = row.get("amount_usd")
+            found.append((
+                str(row.get("dedupe_key") or ""),
+                None if usd is None else float(usd),
+                display_donor(row.get("author_name")) or "",
+                str(row.get("platform") or ""),
+            ))
+        return found
+
+    def _goal_rows(self, stream_id: str, rates: dict[str, float]) -> list[dict]:
+        tab = next((item for item in self.ledger_snapshots() if item["id"] == stream_id), None)
+        if tab is None:
+            return []
+        return self._presented_stream_rows(
+            stream_id,
+            parse_membership_price(tab.get("membership_price")),
+            rates,
+            "",
+        )
+
     def _stream_rows(
         self,
         started: str,
         membership_price: float | None,
         rates: dict[str, float],
     ) -> list[dict]:
+        return self._presented_stream_rows(self._active_stream_id(), membership_price, rates, started)
+
+    def _presented_stream_rows(
+        self,
+        stream_id: str,
+        membership_price: float | None,
+        rates: dict[str, float],
+        started: str,
+    ) -> list[dict]:
         clauses = ["kind != ?", "hidden = 0", "stream_id = ?"]
-        params: list[object] = ["gift_membership_received", self._active_stream_id()]
+        params: list[object] = ["gift_membership_received", stream_id]
         if started:
             clauses.append("created_at >= ?")
             params.append(started)

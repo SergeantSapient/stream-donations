@@ -374,6 +374,22 @@ class MoneyTests(unittest.TestCase):
         )
         self.assertIsNone(year.usd)
         self.assertEqual(year.label, "Super Chat")
+        kick_celebration = quote(
+            {
+                "platform": "kick",
+                "kind": "member_milestone",
+                "amount_value": 0,
+                "currency": "USD",
+                "message": "Subscribed for 15 months",
+                "raw": {},
+            },
+            4.99,
+            RATES,
+        )
+        self.assertEqual(kick_celebration.amount, 0.0)
+        self.assertEqual(kick_celebration.usd, 0.0)
+        self.assertEqual(kick_celebration.currency, "USD")
+        self.assertEqual(kick_celebration.label, "Super Chat")
         fresh = quote(
             {
                 "platform": "youtube",

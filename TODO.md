@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.0.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.6.1` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -22,6 +22,8 @@ The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
 7. **Version classification.** A shipped change is recorded with `python3 scripts/version.py`. The number is major.considerable.minor. Minor raises the last number, considerable raises the middle number, and major raises the first. A peripheral fix does not change the number. Wishlist work is considerable unless the request says it is major. The collector and Electron keep the same number. See Version rules.
 
+8. **BLUE scripts.** Berry Lexical User Events. BLUE in the menu saves, imports, and exports a script. A streamer preset can select one. The script runs while a ledger that uses it is connected, and a soft disconnect stops it. Connecting that ledger starts it over. Each line is its own command. A line that cannot be read is skipped. An action that cannot be sent is written to the log. ON GOAL runs when the script starts, including tier 0, and again when a goal tier from 1 to 5 is reached. DONOR is who reached that tier, NAME is the name set on it, and PLATFORM and AMOUNT are that donation. Those are empty at tier 0. TOTAL is the ledger total on every line. TIER is how many goals that total has reached, also on every line. On a goal line, TIER is the tier that line is about. A word that is not a keyword, such as is, is ignored.
+
 ## To do
 
 Nothing is queued. The next work is the wishlist. Each wishlist item is considerable unless the request says it is a major update.
@@ -32,7 +34,7 @@ Do not implement these without an understanding of the complications, and do not
 
 Each item is a **considerable** version change unless the request says it is major. If several are requested at once, they can share one bump. Gently remind that packing several wishlist items into one release is probably a bad idea.
 
-1. **Chat injection.** Option to inject "Stream Total", "Thank You", and "Top Donor" blurbs into chat. Session handling per platform will likely mean simulating a logged-in user. That session material must not be hard-coded into the app.
+1. **Chat send.** Done. YouTube and Kick messages are posted as the signed-in account from the combined chat. Toggles choose which of those chats, and Rumble after Continue on the Rumble page. Stream total, thank-you, and top-donor lines use those same toggles. A sign-in from before this change can still read and cannot post until Connect is used again. YouTube, Kick, and Rumble each open their own pop-out chat after a website sign-in on this computer. Those windows are separate from Connect. The password is not stored. SuperBerry does not type into the YouTube or Kick windows. Rumble combined chat types into Rumble's own chat box and presses the send button on the row under that box as the signed-in user. A chat window that just opened is given a moment to connect before that button is pressed, and a refused submit is tried once more. It does not press the rant, gift, or subscribe controls. It counts as sent only after the line leaves the box. Rumble's terms do not allow that, and Continue on the Rumble page is the choice to take that risk. The choice stays on this computer and is not part of the settings export.
 
 2. **Database viewer and editor.** View and edit archived ledgers, and generate data points from them. Possibly deterministic algorithms that suggest what could be improved for donations based on trends.
 

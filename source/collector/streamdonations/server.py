@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import __version__
+from .blue import inspect_script
 from .currencies import SUPPORTED_CURRENCIES
 from .embed import FRAME_SRC, player_for_ledger
 from .fx import rate_status, refresh_rates, usd_rates
@@ -26,7 +27,8 @@ from .ledger_file import parse_ledger_jsonl, present_archive
 from .settings_file import export_settings, parse_settings_file
 from .store import DuplicateManual, Store, _checked_manual_fields
 from .util import ApiError, redact, utc_now_iso
-from .youtube import open_browser
+from .kick import SCOPES as KICK_SCOPES
+from .youtube import SCOPE as YOUTUBE_SCOPE, open_browser
 from .youtube_quota import clamp_poll_seconds
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -221,6 +223,7 @@ class App:
                     payload.get("kick_watch"),
                     payload.get("tiers_enabled", False),
                     payload.get("goal_tiers"),
+                    payload.get("script_id", ""),
                 )
                 self.store.log("ledger", "info", f"Saved streamer preset {saved['name']}.")
                 return json_response(200, {
@@ -232,6 +235,31 @@ class App:
                 self.store.log("ledger", "info", f"Removed streamer preset {name}.")
                 return json_response(200, {"presets": self.store.streamer_presets()})
             raise ValueError("Streamer preset action must be save or delete.")
+        if path == "/api/blue" and method == "GET":
+            return json_response(200, {"scripts": self.store.blue_scripts()})
+        if path == "/api/blue" and method == "POST":
+            payload = _object(body)
+            action = str(payload.get("action") or "").strip().lower()
+            if action == "save":
+                saved = self.store.save_blue_script(payload.get("name"), payload.get("source"))
+                self.store.log("ledger", "info", f"Saved BLUE script {saved['name']}.")
+                return json_response(200, {
+                    "script": saved,
+                    "scripts": self.store.blue_scripts(),
+                    "problems": inspect_script(saved.get("source")),
+                })
+            if action == "delete":
+                script_id = str(payload.get("id") or "")
+                name = self.store.delete_blue_script(script_id)
+                self.service.blue.forget_script(script_id, name)
+                self.store.log("ledger", "info", f"Removed BLUE script {name}.")
+                return json_response(200, {"scripts": self.store.blue_scripts()})
+            raise ValueError("BLUE script action must be save or delete.")
+        if path == "/api/blue/pending" and method == "GET":
+            return json_response(200, {"pending": self.service.blue.claim()})
+        if path == "/api/blue/result" and method == "POST":
+            self.service.blue.record(_object(body))
+            return json_response(200, {"ok": True})
         if path == "/api/embed" and method == "GET":
             platform = _one(query, "platform").strip().lower()
             if platform not in {"youtube", "rumble", "kick"}:
@@ -244,6 +272,22 @@ class App:
                 _whole_number(query, "after"),
                 _whole_number(query, "generation"),
                 self.service.paused(),
+            ))
+        if path == "/api/chat/destinations" and method == "GET":
+            return json_response(200, self.service.chat_destinations())
+        if path == "/api/chat/rumble" and method == "GET":
+            stream = _one(query, "stream").strip()
+            return json_response(200, self.service.rumble_popup(stream or None))
+        if path == "/api/chat/youtube" and method == "GET":
+            return json_response(200, self.service.youtube_popup())
+        if path == "/api/chat/kick" and method == "GET":
+            return json_response(200, self.service.kick_popup())
+        if path == "/api/chat/send" and method == "POST":
+            payload = _object(body)
+            return json_response(200, self.service.send_chat(
+                payload.get("text"),
+                payload.get("platforms"),
+                payload.get("stream_id"),
             ))
         if path == "/api/giveaway" and method == "GET":
             return json_response(200, self.service.giveaway.status())
@@ -577,8 +621,8 @@ class App:
             "kick_redirect_uri": self.kick_redirect(),
             "kick_webhook_hint": self.service.kick.webhook_hint(),
             "scopes": {
-                "youtube": "https://www.googleapis.com/auth/youtube.readonly",
-                "kick": "user:read channel:read events:subscribe kicks:read",
+                "youtube": YOUTUBE_SCOPE,
+                "kick": KICK_SCOPES,
             },
         }
 

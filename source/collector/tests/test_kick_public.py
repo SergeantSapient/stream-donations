@@ -62,6 +62,57 @@ class PublicKickTests(unittest.TestCase):
             donations_from_kick_public("App\\Events\\ChatMessageEvent", {"content": "hello"}, "creator"),
             [],
         )
+        celebrated = donations_from_kick_public(
+            "App\\Events\\ChatMessageEvent",
+            {
+                "id": "msg-15",
+                "type": "celebration",
+                "content": "Might as well let you know. Been around quite a while it looks like.",
+                "created_at": "2026-10-09T02:05:00Z",
+                "sender": {"id": 42, "username": "lightferret"},
+                "metadata": {
+                    "celebration": {
+                        "id": "cel-15",
+                        "type": "subscription",
+                        "total_months": 15,
+                    }
+                },
+            },
+            "creator",
+        )[0]
+        self.assertEqual(celebrated.kind, "member_milestone")
+        self.assertEqual(celebrated.author_name, "lightferret")
+        self.assertEqual(celebrated.amount_value, 0.0)
+        self.assertEqual(celebrated.currency, "USD")
+        self.assertEqual(
+            celebrated.message,
+            "Subscribed for 15 months. Might as well let you know. Been around quite a while it looks like.",
+        )
+        self.assertEqual(celebrated.dedupe_key, "kick:public:celebration:cel-15")
+        priced = quote(
+            {
+                "platform": celebrated.platform,
+                "kind": celebrated.kind,
+                "amount_value": celebrated.amount_value,
+                "currency": celebrated.currency,
+                "message": celebrated.message,
+                "raw": celebrated.raw,
+            },
+            4.99,
+            {"USD": 1.0},
+        )
+        self.assertEqual(priced.amount, 0.0)
+        self.assertEqual(priced.usd, 0.0)
+        self.assertEqual(priced.currency, "USD")
+        self.assertEqual(priced.label, "Super Chat")
+        self.assertEqual(
+            donations_from_kick_public(
+                "App\\Events\\ChatMessageEvent",
+                {"id": "msg-1", "type": "message", "content": "celebrates their subscription for 15 months!"},
+                "creator",
+            ),
+            [],
+        )
         self.assertEqual(
             donations_from_kick_public("LuckyUsersWhoGotGiftSubscriptionsEvent", {"users": ["a"]}, "creator"),
             [],
