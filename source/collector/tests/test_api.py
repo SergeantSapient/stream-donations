@@ -1746,7 +1746,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"not saved", body)
         status, _headers, body = self._request("/api/presets", method="POST", body={"action": "nope"})
         self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body)["error"], "Streamer preset action must be save or delete.")
+        self.assertEqual(json.loads(body)["error"], "Streamer preset action must be save, delete, or apply.")
         status, _headers, body = self._request("/api/presets", method="POST", body={
             "action": "save",
             "name": "Nobody",
@@ -1763,6 +1763,138 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("@presetstreamer", joined)
         self.assertNotIn("NightGoal", joined)
         self.assertNotIn("Keep", joined)
+
+    def test_apply_to_open_ledger_writes_the_preset_like_the_address_dialog(self):
+        status, _headers, page = self._request("/")
+        self.assertEqual(status, 200)
+        streamers = page.split(b'id="tab-streamers"', 1)[1].split(b"</dialog>", 1)[0]
+        self.assertIn(b'id="preset-apply"', streamers)
+        self.assertIn(b"Apply to open ledger", streamers)
+        self.assertLess(streamers.index(b"Save preset"), streamers.index(b'id="preset-apply"'))
+        self.assertIn(b"Saving the preset itself does not change the ledger that is open.", streamers)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"function applyPresetToOpenLedger(", script)
+        self.assertIn(b'action: "apply"', script)
+        self.assertIn(b"function syncPresetApply(", script)
+        apply_fn = script.split(b"function applyPresetToOpenLedger(", 1)[1].split(b"\nfunction ", 1)[0]
+        # Unsaved edits are saved first, then the saved preset is applied.
+        self.assertLess(apply_fn.index(b"presetFormBody()"), apply_fn.index(b'action: "apply"'))
+        self.assertIn(b"applySettingsToForm(payload.settings)", apply_fn)
+        self.assertIn(b"refresh()", apply_fn)
+        save_fn = script.split(b"function savePreset(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertNotIn(b'"apply"', save_fn)
+        self.assertNotIn(b"/api/settings", save_fn)
+        render_fn = script.split(b"function renderStream(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"syncPresetApply()", render_fn)
+
+        status, _headers, body = self._request("/api/blue", method="POST", body={
+            "action": "save",
+            "name": "Thanks",
+            "source": 'ON DONATION THEN SEND CHAT TO YOUTUBE "Hi {DONOR}."',
+        })
+        self.assertEqual(status, 200)
+        script_id = json.loads(body)["script"]["id"]
+        goals = [{"enabled": True, "amount": 25, "name": "NightGoal", "bonus": "map"}]
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "Zed",
+            "youtube_channel": "https://www.youtube.com/@presetstreamer",
+            "kick_watch": "https://kick.com/presetstreamer",
+            "tiers_enabled": True,
+            "goal_tiers": goals,
+            "script_id": script_id,
+        })
+        self.assertEqual(status, 200)
+        preset = json.loads(body)["preset"]
+
+        self.store.set_setting("youtube_watch", "abcdefghijk")
+        self.store.set_setting("rumble_watch", "https://rumble.com/v4abcde-some-show.html")
+        self.store.set_setting("tiers_enabled", "0")
+        self.assertEqual(self.store.get_setting("blue_script_id"), "")
+        noted = []
+        original_note = self.app.service.blue.note_script
+        self.app.service.blue.note_script = lambda stream_id, previous: noted.append((stream_id, previous))
+        try:
+            status, _headers, body = self._request("/api/presets", method="POST", body={
+                "action": "apply",
+                "id": preset["id"],
+            })
+        finally:
+            self.app.service.blue.note_script = original_note
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["preset"]["id"], preset["id"])
+        self.assertEqual(payload["settings"]["youtube_channel"], "https://www.youtube.com/@presetstreamer")
+        self.assertTrue(payload["settings"]["youtube_follow_live"])
+        self.assertEqual(self.store.get_setting("youtube_follow_live"), "1")
+        self.assertEqual(self.store.get_setting("rumble_follow_live"), "0")
+        self.assertEqual(self.store.get_setting("rumble_watch"), "")
+        self.assertEqual(self.store.get_setting("kick_watch"), "https://kick.com/presetstreamer")
+        self.assertEqual(self.store.get_setting("tiers_enabled"), "1")
+        self.assertIn("NightGoal", self.store.get_setting("goal_tiers"))
+        self.assertEqual(self.store.get_setting("blue_script_id"), script_id)
+        self.assertEqual(noted, [(self.store.stream_tabs()["active_id"], "")])
+        self.assertIn("NightGoal", self.store.get_setting("streams"))
+        self.assertIn("Applied streamer preset Zed to the open ledger.", json.dumps(self.store.recent_log()))
+        applied = {key: self.store.get_setting(key) for key in (
+            "youtube_channel", "youtube_follow_live", "youtube_watch",
+            "rumble_channel", "rumble_follow_live", "rumble_watch",
+            "kick_watch", "tiers_enabled", "goal_tiers", "blue_script_id",
+        )}
+        first = self.store.stream_tabs()["active_id"]
+
+        # The address dialog, saved with this preset chosen, writes the same values.
+        status, _headers, body = self._request("/api/streams", method="POST", body={"action": "add"})
+        self.assertEqual(status, 200)
+        self.store.set_setting("youtube_watch", "abcdefghijk")
+        self.store.set_setting("rumble_watch", "https://rumble.com/v4abcde-some-show.html")
+        status, _headers, body = self._request("/api/settings", method="PUT", body={
+            "kick_watch": "https://kick.com/presetstreamer",
+            "youtube_channel": "https://www.youtube.com/@presetstreamer",
+            "youtube_follow_live": True,
+            "rumble_watch": "",
+            "rumble_follow_live": False,
+            "tiers_enabled": True,
+            "goal_tiers": goals,
+            "blue_script_id": script_id,
+        })
+        self.assertEqual(status, 200)
+        dialog = {key: self.store.get_setting(key) for key in applied}
+        self.assertEqual(dialog, applied)
+
+        # Plain Save of an edited preset still leaves the open ledger alone.
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "save",
+            "name": "Zed",
+            "youtube_channel": "https://www.youtube.com/@otherstreamer",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@presetstreamer")
+        self.assertIn("NightGoal", self.store.get_setting("goal_tiers"))
+        self.assertEqual(self.store.get_setting("blue_script_id"), script_id)
+
+        # Apply writes only the open ledger. The first ledger keeps what it had.
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "apply",
+            "id": preset["id"],
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@otherstreamer")
+        self.assertEqual(self.store.get_setting("tiers_enabled"), "0")
+        self.assertEqual(self.store.get_setting("blue_script_id"), "")
+        self.assertEqual(self.store.get_setting("kick_watch"), "")
+        self._request("/api/streams", method="POST", body={"action": "switch", "id": first})
+        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@presetstreamer")
+        self.assertEqual(self.store.get_setting("blue_script_id"), script_id)
+
+        status, _headers, body = self._request("/api/presets", method="POST", body={
+            "action": "apply",
+            "id": "missing",
+        })
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "That streamer preset is not saved.")
+        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@presetstreamer")
 
     def test_blue_scripts_are_saved_and_left_out_of_the_export(self):
         status, _headers, page = self._request("/")

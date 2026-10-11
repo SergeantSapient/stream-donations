@@ -1905,16 +1905,8 @@ function refreshPresets() {
   });
 }
 
-function savePreset() {
-  const form = $("preset-form");
-  const error = $("preset-error");
-  const saving = form ? form.querySelector("button.primary") : null;
-  if (saving) saving.disabled = true;
-  if (error) {
-    error.hidden = true;
-    error.textContent = "";
-  }
-  const body = {
+function presetFormBody() {
+  return {
     action: "save",
     name: $("preset-name").value,
     youtube_channel: $("preset-youtube").value.trim(),
@@ -1924,26 +1916,118 @@ function savePreset() {
     goal_tiers: collectTiers(),
     script_id: ($("preset-script") && $("preset-script").value) || "",
   };
+}
+
+let presetBusy = false;
+
+function openLedgerId() {
+  const streams = state.stream && state.stream.streams;
+  return (streams && streams.active_id) || "";
+}
+
+function openLedgerName() {
+  return (state.stream && state.stream.title) || "Stream";
+}
+
+function syncPresetApply() {
+  const apply = $("preset-apply");
+  if (!apply) return;
+  const open = Boolean(openLedgerId());
+  apply.disabled = presetBusy || !open;
+  apply.title = open ? "Save this preset, then write it onto " + openLedgerName() : "No ledger is open.";
+}
+
+function setPresetBusy(busy) {
+  presetBusy = busy;
+  const form = $("preset-form");
+  const saving = form ? form.querySelector("button.primary") : null;
+  if (saving) saving.disabled = busy;
+  syncPresetApply();
+}
+
+function showPresetError(err, fallback) {
+  const error = $("preset-error");
+  if (!error) {
+    toast((err && err.message) || fallback, true);
+    return;
+  }
+  error.hidden = false;
+  error.textContent = (err && err.message) || fallback;
+}
+
+function clearPresetError() {
+  const error = $("preset-error");
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+}
+
+function resetPresetForm() {
+  const form = $("preset-form");
+  if (form) form.reset();
+  renderTierFields([]);
+  fillPresetScriptSelect(state.blueScripts);
+}
+
+function savePreset() {
+  if (presetBusy) return;
+  setPresetBusy(true);
+  clearPresetError();
+  const body = presetFormBody();
   api("/api/presets", { method: "POST", body: JSON.stringify(body) })
     .then((payload) => {
       state.presets = (payload && payload.presets) || [];
       renderPresetList(state.presets);
-      if (form) form.reset();
-      renderTierFields([]);
-      fillPresetScriptSelect(state.blueScripts);
+      resetPresetForm();
       toast("Saved streamer preset " + ((payload.preset && payload.preset.name) || body.name) + ".");
     })
-    .catch((err) => {
-      if (!error) {
-        toast(err.message, true);
-        return;
-      }
-      error.hidden = false;
-      error.textContent = err.message || "Could not save that preset.";
+    .catch((err) => showPresetError(err, "Could not save that preset."))
+    .finally(() => setPresetBusy(false));
+}
+
+// Apply saves the form first, so the ledger gets what is on screen and the
+// preset keeps the same channels, goals, and script. Plain Save never applies.
+function applyPresetToOpenLedger() {
+  if (presetBusy) return;
+  if (!openLedgerId()) {
+    toast("No ledger is open.", true);
+    return;
+  }
+  const body = presetFormBody();
+  const label = String(body.name || "").trim() || "this preset";
+  const ledger = openLedgerName();
+  const sure = window.confirm(
+    "Save " + label + " and apply it to " + ledger + "? That ledger's channels, goals, and BLUE script are replaced. Its donations stay.",
+  );
+  if (!sure) return;
+  setPresetBusy(true);
+  clearPresetError();
+  let savedName = label;
+  api("/api/presets", { method: "POST", body: JSON.stringify(body) })
+    .then((payload) => {
+      state.presets = (payload && payload.presets) || [];
+      renderPresetList(state.presets);
+      const preset = payload && payload.preset;
+      if (!preset || !preset.id) throw new Error("Could not save that preset.");
+      savedName = preset.name || label;
+      return api("/api/presets", {
+        method: "POST",
+        body: JSON.stringify({ action: "apply", id: preset.id }),
+      }).catch((err) => {
+        throw new Error("Saved streamer preset " + savedName + ". " + ((err && err.message) || "It was not applied to the open ledger."));
+      });
     })
-    .finally(() => {
-      if (saving) saving.disabled = false;
-    });
+    .then((payload) => {
+      state.presets = (payload && payload.presets) || state.presets;
+      renderPresetList(state.presets);
+      if (payload && payload.settings) applySettingsToForm(payload.settings);
+      resetPresetForm();
+      toast("Saved streamer preset " + savedName + " and applied it to " + ledger + ".");
+      return refresh().catch(() => {});
+    })
+    .catch((err) => showPresetError(err, "Could not apply that preset."))
+    .finally(() => setPresetBusy(false));
 }
 
 function editPreset(preset) {
@@ -2165,6 +2249,7 @@ function closeStream(id, title) {
 function renderStream(report) {
   state.stream = report;
   renderStreamTabs(report);
+  syncPresetApply();
   const title = $("stream-title");
   const naming = $("ledger-name");
   if (
@@ -3700,6 +3785,9 @@ function bind() {
       savePreset();
     });
   }
+  const presetApply = $("preset-apply");
+  if (presetApply) presetApply.addEventListener("click", () => applyPresetToOpenLedger());
+  syncPresetApply();
   const blueForm = $("blue-form");
   if (blueForm) {
     blueForm.addEventListener("submit", (event) => {
@@ -4120,6 +4208,7 @@ function openSheet(name) {
   const logButton = $("log-button");
   if (logButton) logButton.setAttribute("aria-expanded", name === "log" ? "true" : "false");
   if (name === "streamers") {
+    syncPresetApply();
     refreshBlueScripts()
       .catch(() => {
         state.blueScripts = [];

@@ -704,6 +704,18 @@ class Service:
         self.rumble._next_poll = 0
         self.kick._next_status = 0
 
+    def apply_preset(self, preset_id: object) -> dict:
+        """Write a saved preset onto the open ledger, the same way the address dialog does.
+
+        Saving a preset never calls this. Collectors pick up the channels on the
+        next loop, and a different BLUE script starts over while connected.
+        """
+        from .presets import find_preset, ledger_settings
+
+        preset = find_preset(self.store.streamer_presets(), preset_id)
+        self.apply_settings(ledger_settings(preset))
+        return preset
+
     def _pop_pending(self, state: str, provider: str) -> PendingAuth | None:
         with self._pending_lock:
             self._purge_pending()

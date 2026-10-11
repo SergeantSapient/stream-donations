@@ -521,7 +521,7 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script. Choosing that preset and saving the ledger's addresses writes those goals and that script onto that ledger. Saving the preset itself does not change the ledger that is open. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels, goals, and BLUE script. Leaving the script on None clears it.</p>
+    <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script. Choosing that preset and saving the ledger's addresses writes those goals and that script onto that ledger. Saving the preset itself does not change the ledger that is open. Apply to open ledger saves the preset, then writes its channels, goals, and BLUE script onto the open ledger, the same as choosing it in that ledger's addresses. Its donations stay. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels, goals, and BLUE script. Leaving the script on None clears it.</p>
     <form id="preset-form">
       <label>Name <input id="preset-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="youtube">YouTube</span> channel URL</span> <input id="preset-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"></label>
@@ -535,6 +535,7 @@
       <p id="preset-error" class="hint" hidden></p>
       <div class="row">
         <button type="submit" class="primary">Save preset</button>
+        <button type="button" id="preset-apply" disabled>Apply to open ledger</button>
       </div>
     </form>
     <p class="endpoint">Saved</p>

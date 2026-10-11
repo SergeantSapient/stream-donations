@@ -2,7 +2,8 @@
 
 A preset is not a ledger. Saving one does not change the open ledger, and
 opening a ledger does not copy a preset until that ledger's address dialog
-is saved with the preset selected. Presets stay out of the settings-file export.
+is saved with the preset selected, or Apply to open ledger is used. Presets
+stay out of the settings-file export.
 """
 
 from __future__ import annotations
@@ -89,6 +90,37 @@ def remove_preset(presets: list[dict], preset_id: object) -> tuple[list[dict], d
     if match is None:
         raise ValueError("That streamer preset is not saved.")
     return [preset for preset in presets if preset["id"] != target], dict(match)
+
+
+def find_preset(presets: list[dict], preset_id: object) -> dict:
+    target = str(preset_id or "").strip()
+    match = next((preset for preset in presets if preset["id"] == target), None)
+    if match is None:
+        raise ValueError("That streamer preset is not saved.")
+    return dict(match)
+
+
+def ledger_settings(preset: dict) -> dict:
+    """The settings the ledger address dialog saves with this preset chosen.
+
+    A YouTube or Rumble channel turns on follow live. A blank one turns it off
+    and clears that video, the same as the dialog's empty field. Kick is the
+    channel as saved. Goals and the BLUE script are written as they are.
+    """
+    body: dict = {"kick_watch": str(preset.get("kick_watch") or "")}
+    for platform in ("youtube", "rumble"):
+        channel = str(preset.get(f"{platform}_channel") or "").strip()
+        if channel:
+            body[f"{platform}_channel"] = channel
+            body[f"{platform}_follow_live"] = True
+        else:
+            body[f"{platform}_watch"] = ""
+            body[f"{platform}_follow_live"] = False
+    body["tiers_enabled"] = bool(preset.get("tiers_enabled"))
+    goals = preset.get("goal_tiers")
+    body["goal_tiers"] = list(goals) if isinstance(goals, list) else []
+    body["blue_script_id"] = str(preset.get("script_id") or "")
+    return body
 
 
 def _preset_fields(name: object, youtube_channel: object, rumble_channel: object, kick_watch: object) -> dict:

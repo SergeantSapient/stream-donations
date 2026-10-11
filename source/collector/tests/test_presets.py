@@ -5,7 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from streamdonations.presets import MAX_PRESETS, parse_presets, remove_preset, upsert_preset
+from streamdonations.presets import (
+    MAX_PRESETS,
+    find_preset,
+    ledger_settings,
+    parse_presets,
+    remove_preset,
+    upsert_preset,
+)
 from streamdonations.store import Store
 
 
@@ -53,6 +60,24 @@ class PresetTests(unittest.TestCase):
             upsert_preset([], "Ada", "", "", "")
         self.assertEqual(presets[0]["youtube_channel"], "")
         self.assertEqual(presets[0]["rumble_channel"], RUMBLE)
+
+    def test_ledger_settings_match_the_address_dialog(self):
+        bronze = [{"enabled": True, "amount": 25, "name": "NightGoal", "bonus": "map"}]
+        presets, saved = upsert_preset([], "Ada", YOUTUBE, "", KICK, True, bronze, "script-1")
+        body = ledger_settings(find_preset(presets, saved["id"]))
+        self.assertEqual(body["youtube_channel"], YOUTUBE)
+        self.assertIs(body["youtube_follow_live"], True)
+        self.assertNotIn("youtube_watch", body)
+        self.assertEqual(body["rumble_watch"], "")
+        self.assertIs(body["rumble_follow_live"], False)
+        self.assertNotIn("rumble_channel", body)
+        self.assertEqual(body["kick_watch"], KICK)
+        self.assertIs(body["tiers_enabled"], True)
+        self.assertEqual(body["goal_tiers"][0]["name"], "NightGoal")
+        self.assertEqual(body["blue_script_id"], "script-1")
+        self.assertNotIn("kick_follow_live", body)
+        with self.assertRaises(ValueError):
+            find_preset(presets, "missing")
 
     def test_limit_and_broken_document(self):
         presets = []
