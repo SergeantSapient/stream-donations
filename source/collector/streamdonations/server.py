@@ -236,7 +236,15 @@ class App:
                 name = self.store.delete_streamer_preset(payload.get("id"))
                 self.store.log("ledger", "info", f"Removed streamer preset {name}.")
                 return json_response(200, {"presets": self.store.streamer_presets()})
-            raise ValueError("Streamer preset action must be save or delete.")
+            if action == "apply":
+                preset = self.service.apply_preset(payload.get("id"))
+                self.store.log("ledger", "info", f"Applied streamer preset {preset['name']} to the open ledger.")
+                return json_response(200, {
+                    "preset": preset,
+                    "presets": self.store.streamer_presets(),
+                    "settings": self._public_settings(),
+                })
+            raise ValueError("Streamer preset action must be save, delete, or apply.")
         if path == "/api/blue" and method == "GET":
             return json_response(200, {"scripts": self.store.blue_scripts()})
         if path == "/api/blue" and method == "POST":

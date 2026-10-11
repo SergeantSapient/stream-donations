@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.6.3 — 2026-10-10
+
+- 2026-10-10 — Minor. Streamers has Apply to open ledger beside Save. It saves the preset, then writes its channels, goals, and BLUE script onto the open ledger the same way the ledger's addresses do. Save alone still leaves the open ledger as it is.
+
 ## 1.6.2 — 2026-10-10
 
 - 2026-10-10 — Minor. Kiosk view shows the computer battery, as an icon and a percent, above the header buttons while that computer is running on battery.
