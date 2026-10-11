@@ -525,6 +525,29 @@ function renderSummary(summary) {
   });
 }
 
+function renderKioskBattery(payload) {
+  const node = $("kiosk-battery");
+  if (!node) return;
+  const battery = payload && payload.battery;
+  const percent = battery && Number(battery.percent);
+  const show = Boolean(battery && battery.on_battery === true && Number.isFinite(percent));
+  node.hidden = !show;
+  if (!show) {
+    delete node.dataset.level;
+    return;
+  }
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  const label = $("kiosk-battery-percent");
+  if (label) label.textContent = clamped + "%";
+  if (clamped <= 20) node.dataset.level = "low";
+  else delete node.dataset.level;
+  const fill = node.querySelector(".kiosk-battery-fill");
+  if (fill) fill.setAttribute("width", String(Math.max(1, Math.round((clamped / 100) * 14))));
+  const caption = "Battery " + clamped + "%";
+  node.setAttribute("aria-label", caption);
+  node.title = caption;
+}
+
 function renderStatus(payload) {
   ["youtube", "rumble", "kick"].forEach((name) => {
     const item = (payload.platforms || {})[name] || {
@@ -542,6 +565,7 @@ function renderStatus(payload) {
   if (verbose && !verbose.dataset.pending) verbose.checked = Boolean(payload.verbose);
   const logFile = $("log-file");
   if (logFile && payload.log_file) logFile.textContent = payload.log_file;
+  renderKioskBattery(payload);
 }
 
 function renderRows(page) {

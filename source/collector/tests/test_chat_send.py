@@ -611,7 +611,27 @@ class ChatSendPageTests(unittest.TestCase):
         self.assertIn("closeYoutubeWindows()", main)
         self.assertIn("closeKickWindows()", main)
         self.assertIn('id="utility-toggle"', page)
+        self.assertLess(page.index('id="kiosk-battery"'), page.index('class="mast-buttons"'))
+        self.assertLess(page.index('class="mast-buttons"'), page.index('id="utility-toggle"'))
         self.assertLess(page.index('id="utility-toggle"'), page.index('id="export-button"'))
+        self.assertIn('id="kiosk-battery-percent"', page)
+        self.assertIn("kiosk-battery-fill", page)
+        battery_fn = script.split("function renderKioskBattery(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("on_battery", battery_fn)
+        self.assertIn("kiosk-battery-percent", battery_fn)
+        self.assertIn("<= 20", battery_fn)
+        self.assertIn('"low"', battery_fn)
+        self.assertIn("* 14", battery_fn)
+        status_fn = script.split("function renderStatus(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("renderKioskBattery(payload)", status_fn)
+        self.assertIn(".kiosk-battery {", styles)
+        self.assertIn("display: none", styles.split(".kiosk-battery {", 1)[1].split("}", 1)[0])
+        shown = styles.split(".app-shell.is-utility .kiosk-battery:not([hidden]) {", 1)[1].split("}", 1)[0]
+        self.assertIn("display: flex", shown)
+        stacked = styles.split(".app-shell.is-utility .mast-actions {", 1)[1].split("}", 1)[0]
+        self.assertIn("flex-direction: column", stacked)
+        self.assertIn(".kiosk-battery-fill", styles)
+        self.assertIn("var(--bad)", styles.split('.kiosk-battery[data-level="low"] {', 1)[1].split("}", 1)[0])
         self.assertIn('aria-label="Kiosk view"', page)
         self.assertIn('title="Kiosk view"', page)
         utility = page.split('id="utility-view"', 1)[1].split(">", 1)[0]

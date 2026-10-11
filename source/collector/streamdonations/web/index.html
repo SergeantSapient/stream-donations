@@ -98,6 +98,15 @@
   </div>
   <p class="mast-note">A local ledger of Super Chats, Super Stickers, and memberships. Nothing here is sent anywhere except the platform you connect.</p>
   <div class="mast-actions">
+    <p id="kiosk-battery" class="kiosk-battery" hidden aria-live="polite">
+      <svg class="icon kiosk-battery-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2" y="7" width="18" height="10" rx="2"></rect>
+        <rect class="kiosk-battery-fill" x="4" y="9" width="1" height="6" rx="0.5"></rect>
+        <rect class="kiosk-battery-nub" x="20.2" y="10" width="1.6" height="4" rx="0.4"></rect>
+      </svg>
+      <span id="kiosk-battery-percent">0%</span>
+    </p>
+    <div class="mast-buttons">
     <button type="button" id="utility-toggle" class="icon-button" aria-pressed="false" aria-label="Kiosk view" title="Kiosk view">
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="7" height="6.5" rx="1"></rect><rect x="3.5" y="13" width="7" height="7" rx="1"></rect><rect x="13" y="4" width="7.5" height="16" rx="1"></rect></svg>
     </button>
@@ -132,6 +141,7 @@
       </button>
     </div>
     <input id="archive-file" type="file" accept=".jsonl,application/x-ndjson,text/plain" hidden>
+    </div>
     </div>
   </div>
 </header>

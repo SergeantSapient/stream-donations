@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import __version__
+from .battery import host_battery
 from .blue import inspect_script
 from .currencies import SUPPORTED_CURRENCIES
 from .embed import FRAME_SRC, player_for_ledger
@@ -169,6 +170,7 @@ class App:
             return json_response(200, {
                 "paused": self.service.paused(),
                 "platforms": self.store.status(),
+                "battery": host_battery(),
                 **self._log_view(),
             })
         if path == "/api/log" and method == "PUT":

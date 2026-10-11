@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.6.2 — 2026-10-10
+
+- 2026-10-10 — Minor. Kiosk view shows the computer battery, as an icon and a percent, above the header buttons while that computer is running on battery.
+
 ## 1.6.1 — 2026-10-09
 
 - 2026-10-09 — Minor. Kiosk view sends the stream total and the top three from the button beside each copy button.

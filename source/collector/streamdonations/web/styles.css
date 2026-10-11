@@ -818,6 +818,50 @@ button.primary:hover { border-color: var(--accent); background: #f7f6f1; }
   justify-self: end;
 }
 
+.mast-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.kiosk-battery {
+  display: none;
+  margin: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.28rem;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.kiosk-battery-icon {
+  width: 1.45rem;
+  height: 1.45rem;
+}
+
+.kiosk-battery-fill,
+.kiosk-battery-nub {
+  fill: currentColor;
+  stroke: none;
+}
+
+.kiosk-battery[data-level="low"] {
+  color: var(--bad);
+}
+
+.app-shell.is-utility .mast-actions {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.app-shell.is-utility .kiosk-battery:not([hidden]) {
+  display: flex;
+}
+
 .menu-wrap { position: relative; }
 
 .dropdown {
