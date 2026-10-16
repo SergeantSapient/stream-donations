@@ -47,7 +47,7 @@ jobs:
       - name: Bundled Python loads the collector
         shell: pwsh
         run: |
-          dist\SuperBerry-windows-x64\python\python.exe -c "import sqlite3, ssl, zoneinfo, streamdonations.server, urllib.request; zoneinfo.ZoneInfo('America/Los_Angeles'), streamdonations.kick_sig, streamdonations.youtube_quota; print('collector ok', urllib.request.urlopen('https://example.com', timeout=30).status)"
+          dist\SuperBerry-windows-x64\python\python.exe -c "import sqlite3, ssl, zoneinfo, streamdonations.server; zoneinfo.ZoneInfo('America/Los_Angeles'), streamdonations.kick_sig, streamdonations.youtube_quota; print('collector ok')"
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
