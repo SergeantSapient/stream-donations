@@ -189,6 +189,11 @@ function attachRumbleGuards(rumbleWindow) {
     if (rumbleHostAllowed(url)) return;
     event.preventDefault();
   });
+  rumbleWindow.webContents.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+    if (isMainFrame === false) return;
+    if (!localCollectorUrl(url)) return;
+    event.preventDefault();
+  });
   rumbleWindow.on("closed", () => {
     if (rumbleLoginWindow === rumbleWindow) rumbleLoginWindow = null;
     if (rumbleChatWindow === rumbleWindow) {
@@ -898,6 +903,11 @@ function attachSiteGuards(siteWindow, hosts, onClosed, pinned) {
       if (siteHostAllowed(url, hosts)) return;
       event.preventDefault();
     });
+    contents.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame === false) return;
+      if (!localCollectorUrl(url)) return;
+      event.preventDefault();
+    });
   }
   siteWindow.on("closed", () => onClosed(siteWindow));
 }
@@ -1431,8 +1441,42 @@ function stopCollector() {
   });
 }
 
-async function openWindow(port) {
-  const origin = `http://127.0.0.1:${port}`;
+function localCollectorUrl(url) {
+  if (typeof url !== "string") return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" && parsed.hostname === "127.0.0.1";
+  } catch (_error) {
+    return false;
+  }
+}
+
+// The app window may show the interface or a file download. Any other local
+// address is an API response, and Chromium would draw that JSON in the window.
+function mainDocumentAllowed(origin, url) {
+  if (!localCollectorUrl(url) || typeof url !== "string" || !url.startsWith(origin + "/")) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin !== origin || parsed.username || parsed.password) return false;
+    const path = parsed.pathname;
+    return path === "/"
+      || path === "/index.html"
+      || path === "/api/export.csv"
+      || path === "/api/export.jsonl"
+      || path === "/api/settings/export";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function closeOtherWindows(except) {
+  for (const opened of BrowserWindow.getAllWindows()) {
+    if (opened === except || opened.isDestroyed()) continue;
+    opened.close();
+  }
+}
+
+async function installSignInCookie(origin) {
   await session.defaultSession.cookies.set({
     url: origin + "/",
     name: "sd_session",
@@ -1441,6 +1485,54 @@ async function openWindow(port) {
     sameSite: "strict",
     path: "/",
   });
+  await session.defaultSession.cookies.flushStore();
+}
+
+// A window that lands on the sign-in JSON has no app page. Try the cookie once,
+// then close it instead of leaving that page up.
+async function restoreAppDocument(window, origin, signIn) {
+  if (window.isDestroyed()) return;
+  const current = window.webContents.getURL();
+  if (!current || current === "about:blank") return;
+  let path = "";
+  try {
+    const parsed = new URL(current);
+    if (parsed.origin === origin) path = parsed.pathname;
+  } catch (_error) {
+    path = "";
+  }
+  if (path === "/" || path === "/index.html") {
+    let ready = false;
+    try {
+      ready = await window.webContents.executeJavaScript(
+        "Boolean(document.querySelector('.app-shell'))",
+        true,
+      );
+    } catch (_error) {
+      ready = false;
+    }
+    if (ready || window.isDestroyed()) return;
+    if (signIn.retried) {
+      dialog.showErrorBox(
+        "SuperBerry",
+        "SuperBerry could not open its window. Start it again.",
+      );
+      window.destroy();
+      return;
+    }
+    signIn.retried = true;
+    await installSignInCookie(origin);
+    if (!window.isDestroyed()) await window.loadURL(origin + "/");
+    return;
+  }
+  if (window.isDestroyed()) return;
+  if (window.webContents.canGoBack()) window.webContents.goBack();
+  else await window.loadURL(origin + "/");
+}
+
+async function openWindow(port) {
+  const origin = `http://127.0.0.1:${port}`;
+  await installSignInCookie(origin);
 
   const window = new BrowserWindow({
     width: 1220,
@@ -1460,25 +1552,35 @@ async function openWindow(port) {
     },
   });
 
+  const signIn = { retried: false };
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (typeof url === "string" && url.startsWith("https://")) shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith(origin + "/")) {
-      return;
-    }
+    if (mainDocumentAllowed(origin, url)) return;
     event.preventDefault();
-    shell.openExternal(url);
+    if (typeof url === "string" && url.startsWith("https://")) shell.openExternal(url);
+  });
+  window.webContents.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+    if (isMainFrame === false) return;
+    if (mainDocumentAllowed(origin, url)) return;
+    event.preventDefault();
+  });
+  window.webContents.on("did-finish-load", () => {
+    restoreAppDocument(window, origin, signIn).catch(() => {});
   });
 
   mainWindow = window;
   attachChatWebviews(window.webContents);
-  window.on("closed", () => {
-    if (mainWindow === window) mainWindow = null;
+  window.on("close", () => {
     closeRumbleWindows();
     closeYoutubeWindows();
     closeKickWindows();
+    closeOtherWindows(window);
+  });
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
   });
   const icon = windowIcon();
   if (icon) {
