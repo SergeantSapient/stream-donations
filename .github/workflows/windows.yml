@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Time zone data
+        run: python -m pip install tzdata
       - name: Collector tests
         env:
           PYTHONPATH: source/collector
@@ -45,7 +47,7 @@ jobs:
       - name: Bundled Python loads the collector
         shell: pwsh
         run: |
-          dist\SuperBerry-windows-x64\python\python.exe -c "import sqlite3, ssl, streamdonations.server, streamdonations.kick_sig; print('collector ok')"
+          dist\SuperBerry-windows-x64\python\python.exe -c "import sqlite3, ssl, zoneinfo, streamdonations.server; zoneinfo.ZoneInfo('America/Los_Angeles'), streamdonations.kick_sig, streamdonations.youtube_quota; print('collector ok')"
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:

@@ -42,6 +42,8 @@ The build is not signed, so SmartScreen may warn the first time. On Windows:
 - The ledger and log files are not set to mode 0600. Windows uses the folder's own permissions under `%APPDATA%`.
 - Quitting asks the collector to stop and waits up to five seconds so the ledger is closed cleanly.
 - Kick webhook signatures are checked in Python, so OpenSSL is not needed.
+- Windows has no time zone database, so the zip carries the `tzdata` package in `collector` for the YouTube quota reset at midnight Pacific Time.
+- The log file is not written if it has been replaced by a link.
 
 The ledger is created at `~/.local/share/stream-donations/donations.db` (mode 0600). On macOS that is `~/Library/Application Support/stream-donations`. On Windows it is `%APPDATA%\stream-donations`. A database left in the old `data/` folder next to this checkout is moved there on the next start. Export commands and any SQLite client read that same file.
 

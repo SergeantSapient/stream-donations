@@ -1517,6 +1517,9 @@ class Store:
             with self._log_file_lock:
                 path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
                 os.chmod(path.parent, 0o700)
+                # Windows has no O_NOFOLLOW, so a link is refused here instead.
+                if not hasattr(os, "O_NOFOLLOW") and path.is_symlink():
+                    return
                 fd = os.open(path, flags, 0o600)
                 try:
                     os.chmod(path, 0o600)

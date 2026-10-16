@@ -8,7 +8,7 @@ three pieces as scripts/package-linux.sh:
       SuperBerry.cmd        starts electron\\electron.exe app
       electron/             Electron win32-x64 (version from package.json)
       app/                  main.js, preload.js, package.json, icon.png
-      collector/            streamdonations
+      collector/            streamdonations, tzdata
       python/python.exe     python.org embeddable CPython
 
 The ledger is not copied. Nothing is installed. Downloads are cached in build/.
@@ -16,6 +16,7 @@ Runs on any OS with Python 3.9+, so CI and Linux can both produce the zip.
 """
 
 import argparse
+import tarfile
 import json
 import shutil
 import sys
@@ -27,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.12.10"
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 ELECTRON_URL = "https://github.com/electron/electron/releases/download/v{0}/electron-v{0}-win32-x64.zip"
+# Windows has no system time zone database; zoneinfo reads this package instead.
+TZDATA_URL = "https://files.pythonhosted.org/packages/source/t/tzdata/tzdata-2025.2.tar.gz"
 APP_FILES = ("package.json", "main.js", "preload.js", "icon.png")
 LAUNCHER = '@echo off\r\nstart "" "%~dp0electron\\electron.exe" "%~dp0app" %*\r\n'
 
@@ -56,7 +59,17 @@ def enable_collector_path(python_dir):
     pth.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
 
 
-def assemble(dist, electron_zip, python_zip):
+def add_tzdata(collector, tzdata_tar):
+    with tarfile.open(tzdata_tar) as archive:
+        prefix = archive.getnames()[0].split("/", 1)[0] + "/src/"
+        members = [m for m in archive.getmembers() if m.name.startswith(prefix + "tzdata/") and m.isfile()]
+        for member in members:
+            target = collector / member.name[len(prefix):]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.extractfile(member).read())
+
+
+def assemble(dist, electron_zip, python_zip, tzdata_tar):
     if dist.exists():
         shutil.rmtree(dist)
     (dist / "app").mkdir(parents=True)
@@ -72,6 +85,7 @@ def assemble(dist, electron_zip, python_zip):
     with zipfile.ZipFile(python_zip) as archive:
         archive.extractall(dist / "python")
     enable_collector_path(dist / "python")
+    add_tzdata(dist / "collector", tzdata_tar)
     (dist / "SuperBerry.cmd").write_bytes(LAUNCHER.encode("ascii"))
 
 
@@ -82,6 +96,7 @@ def check(dist):
         "app/main.js",
         "collector/streamdonations/__main__.py",
         "python/python.exe",
+        "collector/tzdata/zoneinfo/America/Los_Angeles",
     ]
     missing = [name for name in needed if not (dist / name).is_file()]
     if missing:
@@ -97,7 +112,7 @@ def main(argv=None):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     dist = out / "SuperBerry-windows-x64"
-    assemble(dist, fetch(ELECTRON_URL.format(electron_version()), cache), fetch(PYTHON_URL, cache))
+    assemble(dist, fetch(ELECTRON_URL.format(electron_version()), cache), fetch(PYTHON_URL, cache), fetch(TZDATA_URL, cache))
     check(dist)
     archive = shutil.make_archive(str(dist), "zip", root_dir=out, base_dir=dist.name)
     print(f"Portable folder: {dist}")

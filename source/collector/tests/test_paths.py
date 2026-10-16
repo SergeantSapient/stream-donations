@@ -11,7 +11,8 @@ from streamdonations.paths import DataPathError, resolve_data_dir, user_data_dir
 class DataDirTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.home = Path(self.tmp.name) / "home"
+        # resolve(): Windows temp paths can be 8.3 short names.
+        self.home = Path(self.tmp.name).resolve() / "home"
         self.home.mkdir()
 
     def tearDown(self):
