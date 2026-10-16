@@ -31,29 +31,43 @@ internal static class Program
             string stampPath = Path.Combine(root, "stamp");
             if (!StampMatches(stampPath, payload.Hash) || FindAppRoot(current) == null)
             {
-                Exception failure = null;
-                using (Form window = OpeningWindow())
+                if (SystemInformation.UserInteractive)
                 {
-                    window.Shown += delegate
+                    Exception failure = null;
+                    using (Form window = OpeningWindow())
                     {
-                        ThreadPool.QueueUserWorkItem(delegate
+                        window.Shown += delegate
                         {
-                            try
+                            ThreadPool.QueueUserWorkItem(delegate
                             {
-                                Extract(exePath, payload, root, current);
-                            }
-                            catch (Exception ex)
-                            {
-                                failure = ex;
-                            }
-                            window.BeginInvoke(new Action(window.Close));
-                        });
-                    };
-                    window.ShowDialog();
+                                try
+                                {
+                                    Extract(exePath, payload, root, current);
+                                }
+                                catch (Exception ex)
+                                {
+                                    failure = ex;
+                                }
+                                try
+                                {
+                                    window.BeginInvoke(new Action(window.Close));
+                                }
+                                catch (Exception)
+                                {
+                                    // The window is already gone.
+                                }
+                            });
+                        };
+                        window.ShowDialog();
+                    }
+                    if (failure != null)
+                    {
+                        throw failure;
+                    }
                 }
-                if (failure != null)
+                else
                 {
-                    throw failure;
+                    Extract(exePath, payload, root, current);
                 }
             }
             string appRoot = FindAppRoot(current);
@@ -65,7 +79,32 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Friendly(ex), "SuperBerry", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            string message = Friendly(ex);
+            try
+            {
+                string note = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SuperBerry",
+                    "runtime",
+                    "open-error.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(note));
+                File.WriteAllText(note, message);
+            }
+            catch (Exception)
+            {
+                // The window below is the message the user can read.
+            }
+            if (SystemInformation.UserInteractive)
+            {
+                try
+                {
+                    MessageBox.Show(message, "SuperBerry", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch (Exception)
+                {
+                    // No desktop is available to show the message.
+                }
+            }
         }
     }
 

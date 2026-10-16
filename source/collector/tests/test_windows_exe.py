@@ -53,6 +53,8 @@ class WindowsExecutableTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("LocalApplicationData", text)
         self.assertIn("Opening SuperBerry", text)
+        self.assertIn("UserInteractive", text)
+        self.assertIn("open-error.txt", text)
         self.assertIn('parts[i] == ".."', text)
         self.assertIn("SuperBerry's package contains an unsafe path.", text)
         self.assertIn("/target:winexe", (
