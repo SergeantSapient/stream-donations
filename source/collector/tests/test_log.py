@@ -161,4 +161,5 @@ class LogFileTests(unittest.TestCase):
         self.store.log("ledger", "info", "should-not-follow")
         self.assertEqual(target.read_text(encoding="utf-8"), "untouched")
         self.assertTrue(link.is_symlink())
-        self.assertEqual(os.readlink(link), str(target))
+        # Windows readlink may add the \\?\ long-path prefix.
+        self.assertEqual(os.readlink(link).removeprefix("\\\\?\\"), str(target))
