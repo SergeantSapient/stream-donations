@@ -90,6 +90,10 @@ class YouTubeClient:
         """
         return self._public._resolve_live_channel(channel)
 
+    def public_stream_title(self, url: str) -> str:
+        """Title on a public watch or /live page. It does not spend Data API quota."""
+        return self._public.stream_title(url)
+
     def can_send(self) -> bool:
         return self.connected() and scope_can_send(self.store.get_setting("youtube_granted_scope"))
 

@@ -798,23 +798,106 @@ function siteHostAllowed(url, hosts) {
   }
 }
 
-function attachSiteGuards(siteWindow, hosts, onClosed) {
-  siteWindow.webContents.setWindowOpenHandler(({ url }) => {
+function kickChatSlug(url) {
+  if (typeof url !== "string") return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return "";
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "kick.com" && host !== "www.kick.com") return "";
+    if (parsed.port && parsed.port !== "443") return "";
+    if (parsed.username || parsed.password) return "";
+    const path = parsed.pathname.length > 1 && parsed.pathname.endsWith("/")
+      ? parsed.pathname.slice(0, -1)
+      : parsed.pathname;
+    const match = KICK_POPUP_PATH.exec(path);
+    return match ? match[1].toLowerCase() : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function kickChatStays(url, pinned) {
+  const slug = kickChatSlug(pinned);
+  return slug !== "" && kickChatSlug(url) === slug;
+}
+
+// A Kick host sends viewers to another channel. This keeps the chat on the pop-out it was opened with.
+function bindKickChatPin(contents, home) {
+  let restoring = false;
+
+  function pinned() {
+    try {
+      return home();
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function stays(url) {
+    return kickChatStays(url, pinned());
+  }
+
+  function restore() {
+    const target = pinned();
+    if (restoring || !target || contents.isDestroyed()) return;
+    restoring = true;
+    const pending = contents.loadURL(target);
+    const done = () => {
+      restoring = false;
+    };
+    if (pending && typeof pending.then === "function") pending.then(done, done);
+    else done();
+  }
+
+  contents.on("will-navigate", (event, url) => {
+    if (stays(url)) return;
+    event.preventDefault();
+  });
+  contents.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+    if (isMainFrame === false) return;
+    if (stays(url)) return;
+    event.preventDefault();
+  });
+  contents.on("did-navigate", (_event, url) => {
+    if (stays(url)) return;
+    restore();
+  });
+  contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+    if (isMainFrame === false) return;
+    if (stays(url)) return;
+    restore();
+  });
+}
+
+function attachSiteGuards(siteWindow, hosts, onClosed, pinned) {
+  const contents = siteWindow.webContents;
+  contents.setWindowOpenHandler(({ url }) => {
+    if (typeof pinned === "function") {
+      if (kickChatStays(url, pinned())) contents.loadURL(url).catch(() => {});
+      else if (typeof url === "string" && url.startsWith("https://") && !siteHostAllowed(url, hosts)) {
+        shell.openExternal(url);
+      }
+      return { action: "deny" };
+    }
     if (siteHostAllowed(url, hosts)) {
-      siteWindow.loadURL(url).catch(() => {});
+      contents.loadURL(url).catch(() => {});
     } else if (typeof url === "string" && url.startsWith("https://")) {
       shell.openExternal(url);
     }
     return { action: "deny" };
   });
-  siteWindow.webContents.on("will-navigate", (event, url) => {
-    if (siteHostAllowed(url, hosts)) return;
-    event.preventDefault();
-  });
+  if (typeof pinned === "function") bindKickChatPin(contents, pinned);
+  else {
+    contents.on("will-navigate", (event, url) => {
+      if (siteHostAllowed(url, hosts)) return;
+      event.preventDefault();
+    });
+  }
   siteWindow.on("closed", () => onClosed(siteWindow));
 }
 
-function openSiteBrowserWindow(title, partition, hosts, onClosed) {
+function openSiteBrowserWindow(title, partition, hosts, onClosed, pinned) {
   const siteWindow = new BrowserWindow({
     width: 480,
     height: 760,
@@ -831,7 +914,7 @@ function openSiteBrowserWindow(title, partition, hosts, onClosed) {
       sandbox: true,
     },
   });
-  attachSiteGuards(siteWindow, hosts, onClosed);
+  attachSiteGuards(siteWindow, hosts, onClosed, pinned);
   return siteWindow;
 }
 
@@ -846,8 +929,8 @@ function createSiteWindows(spec) {
     }
   }
 
-  function openBrowser() {
-    return openSiteBrowserWindow(spec.title, spec.partition, spec.hosts, forget);
+  function openBrowser(pinned) {
+    return openSiteBrowserWindow(spec.title, spec.partition, spec.hosts, forget, pinned);
   }
 
   return {
@@ -863,6 +946,7 @@ function createSiteWindows(spec) {
     openChat(url) {
       const target = spec.acceptChatUrl(url);
       if (!target) return "refused";
+      const pinned = spec.pinChat ? () => state.target : null;
       if (state.chat && !state.chat.isDestroyed()) {
         state.chat.focus();
         if (state.target !== target) {
@@ -871,8 +955,8 @@ function createSiteWindows(spec) {
         }
         return "focused";
       }
-      state.chat = openBrowser();
       state.target = target;
+      state.chat = openBrowser(pinned);
       state.chat.loadURL(target);
       return "opened";
     },
@@ -936,6 +1020,7 @@ const kickWindows = createSiteWindows({
   hosts: KICK_HOSTS,
   loginUrl: KICK_LOGIN_URL,
   acceptChatUrl: kickPopupUrl,
+  pinChat: true,
 });
 
 function openYoutubeLogin() {
@@ -984,7 +1069,7 @@ function chatGuestHosts(guest) {
   return null;
 }
 
-function attachChatGuest(guest) {
+function attachChatGuest(guest, pinnedUrl) {
   const hosts = chatGuestHosts(guest);
   if (!hosts) {
     try {
@@ -994,7 +1079,15 @@ function attachChatGuest(guest) {
     }
     return;
   }
+  const pin = kickPopupUrl(pinnedUrl);
   guest.setWindowOpenHandler(({ url }) => {
+    if (pin) {
+      if (kickChatStays(url, pin)) guest.loadURL(url).catch(() => {});
+      else if (typeof url === "string" && url.startsWith("https://") && !siteHostAllowed(url, hosts)) {
+        shell.openExternal(url);
+      }
+      return { action: "deny" };
+    }
     if (siteHostAllowed(url, hosts)) {
       guest.loadURL(url).catch(() => {});
     } else if (typeof url === "string" && url.startsWith("https://")) {
@@ -1002,15 +1095,19 @@ function attachChatGuest(guest) {
     }
     return { action: "deny" };
   });
-  guest.on("will-navigate", (event, url) => {
-    if (siteHostAllowed(url, hosts)) return;
-    event.preventDefault();
-  });
+  if (pin) bindKickChatPin(guest, () => pin);
+  else {
+    guest.on("will-navigate", (event, url) => {
+      if (siteHostAllowed(url, hosts)) return;
+      event.preventDefault();
+    });
+  }
 }
 
 // Embedded chats use the same site partitions as the pop-out windows.
 // Only a checked chat URL can attach, and the guest cannot enable Node or a preload.
 function attachChatWebviews(contents) {
+  const kickPins = [];
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     const requested = String(
       (params && params.partition) || (webPreferences && webPreferences.partition) || "",
@@ -1028,9 +1125,11 @@ function attachChatWebviews(contents) {
     }
     params.src = src;
     webPreferences.partition = requested;
+    if (requested === KICK_PARTITION) kickPins.push(src);
   });
   contents.on("did-attach-webview", (_event, guest) => {
-    attachChatGuest(guest);
+    const pin = chatGuestHosts(guest) === KICK_HOSTS ? kickPins.shift() || "" : "";
+    attachChatGuest(guest, pin);
   });
 }
 

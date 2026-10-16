@@ -117,6 +117,7 @@
       <div id="export-menu" class="dropdown" role="menu" aria-label="Export the open ledger" hidden>
         <a id="export-csv" class="menu-item" role="menuitem" href="/api/export.csv" title="Download the open ledger as CSV">CSV</a>
         <a id="export-jsonl" class="menu-item" role="menuitem" href="/api/export.jsonl" title="Download the open ledger as JSONL">JSONL</a>
+        <button type="button" id="export-archive" class="menu-item" role="menuitem" title="Save the open ledger to archive.db and close it">Archive ledger</button>
       </div>
     </div>
     <button type="button" id="log-button" class="icon-button" aria-label="Log" title="Log" aria-haspopup="dialog" aria-controls="tab-log" aria-expanded="false">
@@ -224,18 +225,48 @@
       </div>
     </div>
     <div class="utility-chats">
-      <section class="utility-chat" aria-label="YouTube chat">
-        <header class="utility-chat-head"><span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span></header>
+      <section class="utility-chat" data-platform="youtube" aria-label="YouTube chat">
+        <header class="utility-chat-head">
+          <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-label">YouTube</span></span>
+          <span class="utility-chat-tools">
+            <button type="button" class="icon-button utility-chat-reload" aria-label="Reload YouTube chat" title="Reload YouTube chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-smaller" aria-label="Smaller YouTube text" title="Smaller YouTube text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-zoom" aria-label="Default YouTube text" title="Default YouTube text">A</button>
+            <button type="button" class="icon-button utility-chat-larger" aria-label="Larger YouTube text" title="Larger YouTube text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-collapse" aria-label="Collapse YouTube chat" title="Collapse YouTube chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M9 5v14"></path></svg></button>
+          </span>
+          <span class="utility-chat-unread" hidden title="New chat" aria-label="New chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16.8 4.5 20l3.6-1.6"></path><path d="M8 7h8a3 3 0 0 1 3 3v4.5a3 3 0 0 1-3 3H9.2L8 7z"></path></svg></span>
+        </header>
         <div id="utility-chat-youtube" class="utility-chat-frame"></div>
         <p id="utility-chat-youtube-note" class="utility-chat-note"></p>
       </section>
-      <section class="utility-chat" aria-label="Rumble chat">
-        <header class="utility-chat-head"><span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span></header>
+      <section class="utility-chat" data-platform="rumble" aria-label="Rumble chat">
+        <header class="utility-chat-head">
+          <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><span class="platform-label">Rumble</span></span>
+          <span class="utility-chat-tools">
+            <button type="button" class="icon-button utility-chat-reload" aria-label="Reload Rumble chat" title="Reload Rumble chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-smaller" aria-label="Smaller Rumble text" title="Smaller Rumble text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-zoom" aria-label="Default Rumble text" title="Default Rumble text">A</button>
+            <button type="button" class="icon-button utility-chat-larger" aria-label="Larger Rumble text" title="Larger Rumble text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-collapse" aria-label="Collapse Rumble chat" title="Collapse Rumble chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M9 5v14"></path></svg></button>
+          </span>
+          <span class="utility-chat-unread" hidden title="New chat" aria-label="New chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16.8 4.5 20l3.6-1.6"></path><path d="M8 7h8a3 3 0 0 1 3 3v4.5a3 3 0 0 1-3 3H9.2L8 7z"></path></svg></span>
+        </header>
         <div id="utility-chat-rumble" class="utility-chat-frame"></div>
         <p id="utility-chat-rumble-note" class="utility-chat-note"></p>
       </section>
-      <section class="utility-chat" aria-label="Kick chat">
-        <header class="utility-chat-head"><span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span></header>
+      <section class="utility-chat" data-platform="kick" aria-label="Kick chat">
+        <header class="utility-chat-head">
+          <span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><span class="platform-label">Kick</span></span>
+          <span class="utility-chat-tools">
+            <button type="button" class="icon-button utility-chat-reload" aria-label="Reload Kick chat" title="Reload Kick chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-smaller" aria-label="Smaller Kick text" title="Smaller Kick text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-zoom" aria-label="Default Kick text" title="Default Kick text">A</button>
+            <button type="button" class="icon-button utility-chat-larger" aria-label="Larger Kick text" title="Larger Kick text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <button type="button" class="icon-button utility-chat-collapse" aria-label="Collapse Kick chat" title="Collapse Kick chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M9 5v14"></path></svg></button>
+          </span>
+          <span class="utility-chat-unread" hidden title="New chat" aria-label="New chat"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16.8 4.5 20l3.6-1.6"></path><path d="M8 7h8a3 3 0 0 1 3 3v4.5a3 3 0 0 1-3 3H9.2L8 7z"></path></svg></span>
+        </header>
         <div id="utility-chat-kick" class="utility-chat-frame"></div>
         <p id="utility-chat-kick-note" class="utility-chat-note"></p>
       </section>
@@ -734,6 +765,10 @@
   <form id="ledger-name-form">
     <h2 id="ledger-name-title">Name</h2>
     <label>Name <input id="stream-title" maxlength="80" placeholder="Stream" autocomplete="off" spellcheck="false"></label>
+    <div id="ledger-name-stream" class="ledger-name-stream" hidden>
+      <label>Stream <select id="ledger-name-platform" aria-label="Which stream title"></select></label>
+      <button type="button" id="ledger-name-use">Use stream title</button>
+    </div>
     <p class="hint">Shown on this ledger's tab. A blank name is shown as Stream.</p>
     <p id="ledger-name-error" class="hint" hidden></p>
     <div class="row">

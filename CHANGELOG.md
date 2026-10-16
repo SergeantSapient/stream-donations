@@ -4,6 +4,44 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.6.10 — 2026-10-16
+
+- 2026-10-16 — Peripheral. Closing the last ledger opens a new blank one, and that blank ledger does not ask for addresses.
+
+- 2026-10-16 — Minor. Archive ledger, under Export, saves the open ledger to archive.db and closes it.
+
+## 1.6.9 — 2026-10-11
+
+- 2026-10-16 — Peripheral. A pasted Kick coin gift counts when the copy is a name, the word sent, and the coin count.
+
+- 2026-10-16 — Peripheral. Public Kick chat is collected again, including subs, Kicks, and the omnichat reader.
+
+- 2026-10-11 — Peripheral. Double-clicking a ledger tab opens the name dialog again.
+
+- 2026-10-11 — Minor. The ledger name dialog can use the title of a stream it can see.
+
+## 1.6.8 — 2026-10-11
+
+- 2026-10-11 — Minor. A kiosk chat with no address on the open ledger collapses on its own.
+
+## 1.6.7 — 2026-10-11
+
+- 2026-10-11 — Minor. A collapsed kiosk chat shows a bubble when a new message arrives.
+
+## 1.6.6 — 2026-10-11
+
+- 2026-10-11 — Minor. Kiosk chat text has a button that returns it to the normal size.
+
+## 1.6.5 — 2026-10-11
+
+- 2026-10-11 — Minor. Kiosk chats reload, resize their text, and collapse to a strip.
+
+## 1.6.4 — 2026-10-11
+
+- 2026-10-11 — Peripheral. Kick chat stays on the channel it was opened for when that channel hosts another.
+
+- 2026-10-11 — Minor. Ledger tabs keep Addresses and the plug in a menu. Always show puts those buttons back on the tab.
+
 ## 1.6.3 — 2026-10-10
 
 - 2026-10-10 — Minor. Streamers has Apply to open ledger beside Save. It saves the preset, then writes its channels, goals, and BLUE script onto the open ledger the same way the ledger's addresses do. Save alone still leaves the open ledger as it is.

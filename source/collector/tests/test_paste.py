@@ -292,6 +292,23 @@ class MembershipTests(unittest.TestCase):
 
 
 class KickCoinTests(unittest.TestCase):
+    def test_bare_sent_line_counts_the_coins(self):
+        parsed = parse_entry("Kit94\n sent\n500")
+        self.assertEqual(parsed.platform, "Kick")
+        self.assertEqual(parsed.donor, "Kit94")
+        self.assertEqual(parsed.donation_type, "Super Chat")
+        self.assertEqual(parsed.amount, "5.00")
+        self.assertEqual(parsed.currency, "USD")
+        self.assertEqual(parsed.message, "")
+
+    def test_bare_sent_line_keeps_a_message_before_the_coins(self):
+        parsed = parse_entry("Kit94\n sent\nnice\n250")
+        self.assertEqual(parsed.platform, "Kick")
+        self.assertEqual(parsed.donor, "Kit94")
+        self.assertEqual(parsed.donation_type, "Super Sticker")
+        self.assertEqual(parsed.amount, "2.50")
+        self.assertEqual(parsed.message, "nice")
+
     def test_five_hundred_coins_are_a_super_chat(self):
         parsed = parse_entry("KickChatter\nsent Cat Jam\n500")
         self.assertEqual(parsed.platform, "Kick")
@@ -451,6 +468,7 @@ class DefaultTests(unittest.TestCase):
             "@MapleFan\nWelcome to Somebody!",
             "KickChatter\nGifted 1 subscription to the community!\n1",
             "KickChatter\nsent Cat Jam\n500",
+            "Kit94\n sent\n500",
             "predawncorpse\n sent Rage Quit\n@SmashJT you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!\n500",
             "manikantan_r\n sent YAP\nMEMECOPIUM IS BEING A BLIZZARD REEEETARUDURO. SO HERE FOR YOUR STRUGGLEB US\n2,000",
             "RumbleFan\n\n$5.00 this is a rant",

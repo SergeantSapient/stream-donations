@@ -74,6 +74,10 @@ class KickClient:
         granted = set(self.store.get_setting("kick_granted_scope").split())
         return self.connected() and "chat:write" in granted
 
+    def public_stream_title(self, watch: str) -> str:
+        """Title from the public channel lookup. Offline has none."""
+        return self._public.stream_title(watch)
+
     def sender_name(self) -> str:
         """Display name of the signed-in Kick account. The email is not stored."""
         cached = self.store.get_setting("kick_sender_name").strip()

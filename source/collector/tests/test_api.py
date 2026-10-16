@@ -178,6 +178,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="export-menu"', page)
         self.assertIn(b'id="export-csv"', page)
         self.assertIn(b'id="export-jsonl"', page)
+        self.assertIn(b'id="export-archive"', page)
+        self.assertIn(b"Archive ledger", page)
+        self.assertIn(b'title="Save the open ledger to archive.db and close it"', page)
         self.assertIn(b'title="Export the open ledger"', page)
         self.assertIn(b'title="Download the open ledger as CSV"', page)
         self.assertIn(b'title="Download the open ledger as JSONL"', page)
@@ -206,6 +209,17 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn(b"poll-now", script)
         self.assertIn(b'$("export-csv").href = "/api/export.csv?" + exportQuery', script)
         self.assertIn(b'$("export-jsonl").href = "/api/export.jsonl?" + exportQuery', script)
+        self.assertIn(b'api("/api/export/archive", { method: "POST", body: "{}" })', script)
+        self.assertIn(
+            b"Save \" + name + \" to the archive and close it? Its donations leave the open ledgers. The other ledgers stay.",
+            script,
+        )
+        self.assertIn(b"A new blank ledger opens.", script)
+        archive_fn = script.split(b"function archiveOpenLedger(", 1)[1].split(b"\nfunction ", 1)[0]
+        close_fn = script.split(b"function closeStream(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertNotIn(b"promptLedgerUrls", archive_fn)
+        self.assertNotIn(b"promptLedgerUrls", close_fn)
+        self.assertNotIn(b"const many = tabs.length > 1", script)
         self.assertIn(b'toggleMenu("ledger-help", "ledger-help-button")', script)
         self.assertIn(b'id="tab-log"', page)
         self.assertIn(b'id="tab-youtube"', page)
@@ -323,7 +337,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"stream-tab-pause", script)
         self.assertIn(b"Soft disconnect", script)
+        self.assertIn(b"Reconnect", script)
         self.assertIn(b"unplug", script)
+        self.assertIn(b"stream-tab-menu-button", script)
+        self.assertIn(b"Always show", script)
+        self.assertIn(b"stream-donations-tab-tools", script)
+        self.assertIn(b'menuitemcheckbox', script)
 
         status, _headers, body = self._request("/api/collection", method="POST", body={"paused": "yes"})
         self.assertEqual(status, 400)
@@ -840,8 +859,12 @@ class ApiTests(unittest.TestCase):
             "action": "close",
             "id": new_id,
         })
-        self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body)["error"], "The last stream tab stays.")
+        self.assertEqual(status, 200)
+        report = json.loads(body)
+        self.assertEqual(len(report["streams"]["tabs"]), 1)
+        self.assertNotEqual(report["streams"]["active_id"], new_id)
+        self.assertEqual(report["title"], "")
+        self.assertEqual(report["count"], 0)
         status, _headers, page = self._request("/")
         self.assertEqual(status, 200)
         self.assertIn(b'id="ledger-urls"', page)
@@ -937,8 +960,41 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn(b"stream-name", page)
         self.assertIn(b"stream-tab-addresses", script)
         self.assertIn(b"openLedgerAddresses", script)
-        self.assertIn(b"openLedgerName", script)
+        shown = script.split(b"if (tabToolsShown()) {", 1)[1].split(b"item.appendChild(menuWrap)", 1)[0]
+        self.assertIn(b"item.appendChild(addresses)", shown)
+        self.assertIn(b"item.appendChild(pause)", shown)
+        signature = script.split(b"function streamTabSignature(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"tabToolsShown()", signature)
+        status, _headers, styles = self._request("/styles.css")
+        self.assertEqual(status, 200)
+        menu_css = styles.split(b".dropdown.stream-tab-menu {", 1)[1].split(b"}", 1)[0]
+        self.assertIn(b"position: fixed", menu_css)
+        self.assertIn(b".stream-tab-menu-button.is-paused", styles)
+        settings_src = (Path(__file__).resolve().parents[1] / "streamdonations" / "settings_file.py").read_bytes()
+        self.assertNotIn(b"stream-donations-tab-tools", settings_src)
+        self.assertEqual(script.count(b"function openLedgerName("), 1)
+        armed = script.split(b"function armLedgerRename(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"openLedgerName(id)", armed)
+        self.assertIn(b"function openLedgerTitle()", script)
         self.assertIn(b"promptLedgerName", script)
+        name_form = page.split(b'id="ledger-name-form"', 1)[1].split(b"</form>", 1)[0]
+        self.assertIn(b'id="ledger-name-stream"', name_form)
+        self.assertIn(b'id="ledger-name-platform"', name_form)
+        self.assertIn(b'id="ledger-name-use"', name_form)
+        self.assertIn(b'type="button"', name_form.split(b'id="ledger-name-use"', 1)[0])
+        self.assertIn(b"/api/stream-titles", script)
+        naming = script.split(b"function promptLedgerName(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"loadLedgerStreamTitles(", naming)
+        used = script.split(b"function useLedgerStreamTitle(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"dataset.title", used)
+        self.assertNotIn(b"/api/streams", used)
+        self.assertNotIn(b"commitStreamTitle", used)
+        painted = script.split(b"function paintLedgerStreamTitles(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b"usable.length === 1", painted)
+        self.assertIn(b"select.hidden = single", painted)
+        self.assertIn(b".ledger-name-stream {", styles)
+        readme = (Path(__file__).resolve().parents[3] / "README.md").read_bytes()
+        self.assertIn(b"Choose the platform when more than one is available.", readme)
         self.assertIn(b"bindSectionToggles", script)
         self.assertNotIn(b"pinCompactUsd", script)
         self.assertIn(b'message: $("manual-message").value.trim()', script)
@@ -954,6 +1010,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'channelKey: "rumble_channel"', script)
         self.assertIn(b"kick_watch:", script)
         self.assertNotIn(b'followKey: "kick_follow_live"', script)
+
+    def test_stream_titles_without_addresses_stay_empty(self):
+        status, _headers, body = self._request("/api/stream-titles")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"streams": []})
 
     def test_settings_file_export_leaves_out_secrets(self):
         self.store.set_setting("youtube_client_id", "client-id-value")
@@ -2538,6 +2599,63 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"#tab-archive.sheet", styles)
         self.assertIn(b"min(72rem, calc(100vw - 2rem))", styles)
         self.assertIn(b"#archive-rows tr", styles)
+
+    def test_export_archive_saves_the_open_ledger_and_closes_it(self):
+        self.store.add_many([
+            Donation(
+                dedupe_key="youtube:super_chat:archive",
+                platform="youtube",
+                kind="super_chat",
+                external_id="archive",
+                channel="",
+                author_name="Ada",
+                author_id="",
+                message="",
+                amount_value=2,
+                amount_micros=2_000_000,
+                currency="USD",
+                created_at="2024-06-01T00:00:00Z",
+                raw={},
+            )
+        ])
+        status, _headers, body = self._request("/api/export/archive", method="POST", body={})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"count": 1, "name": "archive.db"})
+        status, _headers, body = self._request("/api/stream")
+        report = json.loads(body)
+        self.assertEqual(len(report["streams"]["tabs"]), 1)
+        self.assertEqual(report["title"], "")
+        self.assertEqual(report["count"], 0)
+
+        self.store.add_many([
+            Donation(
+                dedupe_key="youtube:super_chat:again",
+                platform="youtube",
+                kind="super_chat",
+                external_id="again",
+                channel="",
+                author_name="Bea",
+                author_id="",
+                message="",
+                amount_value=3,
+                amount_micros=3_000_000,
+                currency="USD",
+                created_at="2024-06-02T00:00:00Z",
+                raw={},
+            )
+        ])
+        status, _headers, body = self._request("/api/streams", method="POST", body={"action": "add"})
+        self.assertEqual(status, 200)
+        report = json.loads(body)
+        filled = next(tab["id"] for tab in report["streams"]["tabs"] if tab["id"] != report["streams"]["active_id"])
+        status, _headers, _body = self._request("/api/streams", method="POST", body={"action": "switch", "id": filled})
+        self.assertEqual(status, 200)
+        status, _headers, body = self._request("/api/export/archive?platform=rumble", method="POST", body={})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"count": 1, "name": "archive.db"})
+        _rows, total = self.store.list_donations()
+        self.assertEqual(total, 0)
+        self.assertTrue((Path(self.tmp.name) / "archive.db").is_file())
 
     def test_meta_reports_the_published_version(self):
         from streamdonations import __version__

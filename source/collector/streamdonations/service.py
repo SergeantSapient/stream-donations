@@ -28,7 +28,13 @@ from .store import Store
 from .transport import Transport
 from .util import ApiError, AuthError, collapsed_chat_text, redact
 from .youtube import YouTubeClient
-from .youtube_public import validate_youtube_channel, validate_youtube_watch, youtube_popup_chat_url
+from .youtube_public import (
+    validate_youtube_channel,
+    validate_youtube_watch,
+    video_id_from_target,
+    youtube_channel_live_url,
+    youtube_popup_chat_url,
+)
 from .youtube_quota import QuotaPaused, clamp_poll_seconds
 
 _CHAT_PLATFORMS = ("youtube", "kick")
@@ -300,6 +306,58 @@ class Service:
         except ApiError:
             raise ApiError("That YouTube chat could not be opened.")
         return {"url": url}
+
+    def stream_titles(self) -> dict:
+        """Broadcast titles the open ledger can see. A platform that is offline is left out."""
+        streams = []
+        for platform, title in (
+            ("youtube", self._youtube_stream_title()),
+            ("rumble", self._rumble_stream_title()),
+            ("kick", self._kick_stream_title()),
+        ):
+            if title:
+                streams.append({"platform": platform, "title": title})
+        return {"streams": streams}
+
+    def _youtube_stream_title(self) -> str:
+        try:
+            if self.store.get_setting("youtube_follow_live") == "1":
+                channel = self.store.get_setting("youtube_channel").strip()
+                if not channel:
+                    return ""
+                url = youtube_channel_live_url(channel)
+            else:
+                watch = self.store.get_setting("youtube_watch").strip()
+                if not watch:
+                    return ""
+                video_id = video_id_from_target(watch)
+                url = f"https://www.youtube.com/watch?v={video_id}" if video_id else validate_youtube_watch(watch)
+            return self.youtube.public_stream_title(url)
+        except (ApiError, ValueError, OSError, TimeoutError):
+            return ""
+
+    def _rumble_stream_title(self) -> str:
+        try:
+            if self.store.get_setting("rumble_follow_live") == "1":
+                channel = self.store.get_setting("rumble_channel").strip()
+                if not channel:
+                    return ""
+                return self.rumble.stream_title(channel, follow=True)
+            watch = self.store.get_setting("rumble_watch").strip()
+            if not watch:
+                return ""
+            return self.rumble.stream_title(watch, follow=False)
+        except (ApiError, ValueError, OSError, TimeoutError):
+            return ""
+
+    def _kick_stream_title(self) -> str:
+        watch = self.store.get_setting("kick_watch").strip()
+        if not watch:
+            return ""
+        try:
+            return self.kick.public_stream_title(watch)
+        except (ApiError, ValueError, OSError, TimeoutError):
+            return ""
 
     def kick_popup(self) -> dict:
         """Pop-out URL for the open ledger's Kick channel. No live lookup."""

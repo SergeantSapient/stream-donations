@@ -5,6 +5,7 @@ import unittest
 from streamdonations.youtube_public import (
     donations_from_live_chat_actions,
     live_video_from_channel_html,
+    stream_title_from_youtube_html,
     parse_display_amount,
     session_from_live_chat_html,
     validate_youtube_channel,
@@ -207,11 +208,13 @@ class PublicYouTubeTests(unittest.TestCase):
         "videoId":"zzzzzzzzzzz"
         """
         self.assertEqual(live_video_from_channel_html(live), "abcdefghijk")
+        self.assertEqual(stream_title_from_youtube_html(live), "Desk")
         offline = """
         <link rel="canonical" href="https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA">
         "videoId":"abcdefghijk"
         """
         self.assertIsNone(live_video_from_channel_html(offline))
+        self.assertEqual(stream_title_from_youtube_html(offline), "")
         self.assertEqual(video_id_from_html(offline), "abcdefghijk")
         ended = """
         <link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
@@ -219,6 +222,7 @@ class PublicYouTubeTests(unittest.TestCase):
         "isLiveNow":true
         """
         self.assertIsNone(live_video_from_channel_html(ended))
+        self.assertEqual(stream_title_from_youtube_html(ended), "")
         upcoming = """
         <link rel="canonical" href="https://www.youtube.com/watch?v=tL02RZwytU4">
         "videoDetails":{"videoId":"tL02RZwytU4","title":"Soon","isUpcoming":true,"isLiveContent":true}
@@ -226,6 +230,11 @@ class PublicYouTubeTests(unittest.TestCase):
         "videoId":"othervideo1"
         """
         self.assertEqual(live_video_from_channel_html(upcoming), "tL02RZwytU4")
+        self.assertEqual(stream_title_from_youtube_html(upcoming), "Soon")
+        quoted = live.replace('"title":"Desk"', '"title":"Tom \\u0026 Jerry"')
+        self.assertEqual(stream_title_from_youtube_html(quoted), "Tom & Jerry")
+        long_title = "N" * 90
+        self.assertEqual(stream_title_from_youtube_html(live.replace('"title":"Desk"', '"title":"' + long_title + '"')), "N" * 80)
         other_upcoming = """
         <link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
         "videoDetails":{"videoId":"abcdefghijk","title":"Old","isLive":false}

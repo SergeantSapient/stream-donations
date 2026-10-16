@@ -489,12 +489,17 @@ class Store:
 
     def close_stream(self, tab_id: str) -> None:
         doc = self._stream_doc()
-        if len(doc["tabs"]) <= 1:
-            raise ValueError("The last stream tab stays.")
         tab_id = str(tab_id or "").strip()
         index = next((i for i, tab in enumerate(doc["tabs"]) if tab["id"] == tab_id), -1)
         if index < 0:
             raise ValueError("Unknown stream tab.")
+        # The last ledger is replaced by a blank one, the same shape as +.
+        # The address dialog is a separate step and is not opened here.
+        if len(doc["tabs"]) == 1:
+            self.add_stream()
+            self.log("ledger", "info", "Opened a blank ledger.")
+            doc = self._stream_doc()
+            index = next(i for i, tab in enumerate(doc["tabs"]) if tab["id"] == tab_id)
         was_active = doc["active_id"] == tab_id
         del doc["tabs"][index]
         if was_active:
@@ -503,6 +508,32 @@ class Store:
         else:
             self._save_stream_doc(doc)
         self._delete_stream_rows(tab_id)
+
+    def archive_open_ledger(self) -> dict:
+        """Copy the open ledger into archive.db, then close it.
+
+        Hidden rows are included. Other ledgers stay. Closing the last ledger
+        leaves a new blank one.
+        """
+        from .archive import ARCHIVE_NAME, write_archived_ledger
+
+        doc = self._stream_doc()
+        tab_id = str(doc["active_id"])
+        tab = next(item for item in doc["tabs"] if item["id"] == tab_id)
+        saved = {key: str(tab.get(key) or "") for key in _STREAM_FIELDS}
+        saved["id"] = tab_id
+        saved["archived_at"] = utc_now_iso()
+        with self._lock:
+            fetched = self._conn.execute(
+                "SELECT * FROM donations WHERE stream_id = ? ORDER BY id ASC",
+                (tab_id,),
+            ).fetchall()
+            rows = [dict(row) for row in fetched]
+        count = write_archived_ledger(self.path.parent / ARCHIVE_NAME, _SCHEMA, saved, rows)
+        self.close_stream(tab_id)
+        noun = "donation" if count == 1 else "donations"
+        self.log("ledger", "info", f"Saved {count} {noun} to the archive and closed that ledger.")
+        return {"count": count, "name": ARCHIVE_NAME}
 
     def rename_stream(self, title: str) -> None:
         text = str(title or "").strip()

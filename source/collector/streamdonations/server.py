@@ -318,6 +318,8 @@ class App:
         if path == "/api/stream" and method == "GET":
             rates, price = self._rates_and_price()
             return json_response(200, self.store.stream_report(rates, price))
+        if path == "/api/stream-titles" and method == "GET":
+            return json_response(200, self.service.stream_titles())
         if path == "/api/stream" and method == "POST":
             action = str(_object(body).get("action") or "").strip().lower()
             if action == "start":
@@ -510,6 +512,9 @@ class App:
                 "application/x-ndjson; charset=utf-8",
                 [("Content-Disposition", 'attachment; filename="donations.jsonl"')],
             )
+        if path == "/api/export/archive" and method == "POST":
+            # The whole open ledger, then close. The on-screen filter is not applied.
+            return json_response(200, self.store.archive_open_ledger())
         if path == "/api/ledger/archive" and method == "POST":
             # Preview only. The file is not stored and the open ledger is not changed.
             rows = parse_ledger_jsonl(body)

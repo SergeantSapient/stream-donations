@@ -29,6 +29,7 @@ let editingUsd = 0;
 let streamChain = Promise.resolve();
 let lastTabClick = null;
 let nameDialogRequestedAt = 0;
+let ledgerNameSerial = 0;
 
 const TIER_PLACEHOLDERS = ["Bronze", "Silver", "Gold", "", ""];
 
@@ -112,6 +113,7 @@ function icon(name) {
     plus: '<path d="M12 5v14M5 12h14"></path>',
     plug: '<path d="M9 7V3.5M15 7V3.5"></path><path d="M7.5 7h9v5a4.5 4.5 0 0 1-9 0V7z"></path><path d="M12 16.5V21"></path>',
     unplug: '<path d="M9 6V2.5M15 6V2.5"></path><path d="M7.5 6h9v4.2a4.5 4.5 0 0 1-9 0V6z"></path><path d="M12 15v2M12 19.5V22"></path>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"></path>',
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
     send: '<path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path>',
   };
@@ -121,6 +123,14 @@ function icon(name) {
   svg.setAttribute("class", "icon");
   svg.innerHTML = paths[name] || "";
   return svg;
+}
+
+function closeTabMenus() {
+  document.querySelectorAll(".stream-tab-menu").forEach((menu) => {
+    menu.hidden = true;
+    const button = menu.parentElement && menu.parentElement.querySelector(".stream-tab-menu-button");
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
 }
 
 function closeMenu() {
@@ -135,6 +145,26 @@ function closeMenu() {
     menu.hidden = true;
     button.setAttribute("aria-expanded", "false");
   }
+  closeTabMenus();
+}
+
+function placeStreamTabMenu(button, menu) {
+  menu.hidden = false;
+  menu.style.visibility = "hidden";
+  const rect = button.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let left = rect.right - menuRect.width;
+  if (left < 8) left = Math.max(8, rect.left);
+  if (left + menuRect.width > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - 8 - menuRect.width);
+  }
+  let top = rect.bottom + 6;
+  if (top + menuRect.height > window.innerHeight - 8) {
+    top = Math.max(8, rect.top - menuRect.height - 6);
+  }
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+  menu.style.visibility = "";
 }
 
 function toggleMenu(menuId, buttonId) {
@@ -1324,9 +1354,29 @@ function enqueueStream(task) {
   return run;
 }
 
+const TAB_TOOLS_KEY = "stream-donations-tab-tools";
+
+function tabToolsShown() {
+  try {
+    return localStorage.getItem(TAB_TOOLS_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function setTabToolsShown(on) {
+  try {
+    if (on) localStorage.setItem(TAB_TOOLS_KEY, "1");
+    else localStorage.removeItem(TAB_TOOLS_KEY);
+  } catch (error) {
+    return;
+  }
+}
+
 function streamTabSignature(streams) {
   const tabs = (streams && streams.tabs) || [];
-  return tabs.map((tab) => tab.id + ":" + tab.title + ":" + (tab.paused ? "1" : "0")).join("|") + "#" + ((streams && streams.active_id) || "");
+  const tools = tabToolsShown() ? "1" : "0";
+  return tabs.map((tab) => tab.id + ":" + tab.title + ":" + (tab.paused ? "1" : "0")).join("|") + "#" + ((streams && streams.active_id) || "") + ":" + tools;
 }
 
 function revealStreamTab(tab) {
@@ -1378,7 +1428,7 @@ function renderStreamTabs(report) {
     const returnFocus = scroller.contains(document.activeElement);
     scroller.dataset.signature = signature;
     scroller.replaceChildren();
-    const many = tabs.length > 1;
+
     tabs.forEach((tab) => {
       const selected = tab.id === streams.active_id;
       const item = document.createElement("div");
@@ -1407,18 +1457,18 @@ function renderStreamTabs(report) {
         armLedgerRename(tab.id);
       });
       item.appendChild(button);
+      const paused = tab.paused !== false;
+      const ledgerName = tab.title || "Stream";
       const addresses = document.createElement("button");
       addresses.type = "button";
       addresses.className = "stream-tab-addresses";
-      addresses.setAttribute("aria-label", "Addresses for " + (tab.title || "Stream"));
+      addresses.setAttribute("aria-label", "Addresses for " + ledgerName);
       addresses.title = "Addresses for this ledger";
       addresses.appendChild(icon("link"));
       addresses.addEventListener("click", (event) => {
         event.stopPropagation();
         openLedgerAddresses(tab.id).catch((error) => toast(error.message, true));
       });
-      item.appendChild(addresses);
-      const paused = tab.paused !== false;
       const pause = document.createElement("button");
       pause.type = "button";
       pause.className = "stream-tab-pause";
@@ -1433,18 +1483,88 @@ function renderStreamTabs(report) {
         const next = pause.getAttribute("aria-pressed") !== "true";
         toggleLedgerPause(tab.id, next).catch((error) => toast(error.message, true));
       });
-      item.appendChild(pause);
-      if (many) {
-        const close = document.createElement("button");
-        close.type = "button";
-        close.className = "stream-tab-close";
-        close.setAttribute("aria-label", "Close " + (tab.title || "Stream"));
-        close.appendChild(icon("x"));
-        close.addEventListener("click", () => {
-          closeStream(tab.id, tab.title).catch((error) => toast(error.message, true));
-        });
-        item.appendChild(close);
+      if (tabToolsShown()) {
+        item.appendChild(addresses);
+        item.appendChild(pause);
       }
+      const menuWrap = document.createElement("div");
+      menuWrap.className = "menu-wrap";
+      const menuButton = document.createElement("button");
+      menuButton.type = "button";
+      menuButton.className = "stream-tab-menu-button" + (paused && !tabToolsShown() ? " is-paused" : "");
+      menuButton.setAttribute("aria-label", "Addresses and connect");
+      menuButton.title = paused && !tabToolsShown()
+        ? "Paused. Addresses and connect."
+        : "Addresses and connect";
+      menuButton.setAttribute("aria-haspopup", "menu");
+      menuButton.setAttribute("aria-expanded", "false");
+      menuButton.setAttribute("aria-controls", "stream-tab-menu-" + tab.id);
+      menuButton.appendChild(icon("menu"));
+      const menu = document.createElement("div");
+      menu.id = "stream-tab-menu-" + tab.id;
+      menu.className = "dropdown stream-tab-menu";
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", "Addresses and connect");
+      menu.hidden = true;
+      const addressItem = document.createElement("button");
+      addressItem.type = "button";
+      addressItem.className = "menu-item";
+      addressItem.setAttribute("role", "menuitem");
+      addressItem.appendChild(icon("link"));
+      addressItem.appendChild(document.createTextNode("Addresses"));
+      addressItem.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeMenu();
+        openLedgerAddresses(tab.id).catch((error) => toast(error.message, true));
+      });
+      const connectItem = document.createElement("button");
+      connectItem.type = "button";
+      connectItem.className = "menu-item";
+      connectItem.setAttribute("role", "menuitem");
+      connectItem.appendChild(icon(paused ? "unplug" : "plug"));
+      connectItem.appendChild(document.createTextNode(paused ? "Reconnect" : "Soft disconnect"));
+      connectItem.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeMenu();
+        toggleLedgerPause(tab.id, !paused).catch((error) => toast(error.message, true));
+      });
+      const always = document.createElement("button");
+      always.type = "button";
+      always.className = "menu-item";
+      always.setAttribute("role", "menuitemcheckbox");
+      always.setAttribute("aria-checked", tabToolsShown() ? "true" : "false");
+      always.title = "Show addresses and the plug on every ledger tab.";
+      if (tabToolsShown()) always.appendChild(icon("check"));
+      always.appendChild(document.createTextNode("Always show"));
+      always.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setTabToolsShown(!tabToolsShown());
+        closeMenu();
+        renderStreamTabs(report);
+      });
+      const sep = document.createElement("div");
+      sep.className = "menu-sep";
+      sep.setAttribute("role", "separator");
+      menu.append(addressItem, connectItem, sep, always);
+      menuButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const willOpen = menu.hidden;
+        closeMenu();
+        if (!willOpen) return;
+        menuButton.setAttribute("aria-expanded", "true");
+        placeStreamTabMenu(menuButton, menu);
+      });
+      menuWrap.append(menuButton, menu);
+      item.appendChild(menuWrap);
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "stream-tab-close";
+      close.setAttribute("aria-label", "Close " + (tab.title || "Stream"));
+      close.appendChild(icon("x"));
+      close.addEventListener("click", () => {
+        closeStream(tab.id, tab.title).catch((error) => toast(error.message, true));
+      });
+      item.appendChild(close);
       scroller.appendChild(item);
     });
     const active = scroller.querySelector(".stream-tab.is-active");
@@ -1555,12 +1675,18 @@ function promptLedgerName() {
     error.hidden = true;
     error.textContent = "";
   }
+  const streamRow = $("ledger-name-stream");
+  if (streamRow) streamRow.hidden = true;
+  const serial = ++ledgerNameSerial;
+  loadLedgerStreamTitles(serial);
   return new Promise((resolve) => {
     let settled = false;
+    const use = $("ledger-name-use");
     const detach = () => {
       form.removeEventListener("submit", onSubmit);
       dialog.removeEventListener("close", onClose);
       if (cancel) cancel.removeEventListener("click", onCancel);
+      if (use) use.removeEventListener("click", onUse);
     };
     const finish = () => {
       if (settled) return;
@@ -1572,6 +1698,9 @@ function promptLedgerName() {
     const onClose = () => finish();
     const onCancel = () => {
       if (!settled) dialog.close();
+    };
+    const onUse = () => {
+      if (!settled) useLedgerStreamTitle();
     };
     const onSubmit = (event) => {
       event.preventDefault();
@@ -1599,10 +1728,63 @@ function promptLedgerName() {
     form.addEventListener("submit", onSubmit);
     dialog.addEventListener("close", onClose);
     if (cancel) cancel.addEventListener("click", onCancel);
+    if (use) use.addEventListener("click", onUse);
     dialog.showModal();
     input.focus();
     input.select();
   });
+}
+
+function loadLedgerStreamTitles(serial) {
+  api("/api/stream-titles")
+    .then((result) => {
+      const dialog = $("ledger-name");
+      if (serial !== ledgerNameSerial || !dialog || !dialog.open) return;
+      paintLedgerStreamTitles(result);
+    })
+    .catch(() => {
+      /* The name can still be typed. A missed lookup does not rename the ledger. */
+    });
+}
+
+function paintLedgerStreamTitles(result) {
+  const row = $("ledger-name-stream");
+  const select = $("ledger-name-platform");
+  const button = $("ledger-name-use");
+  const streams = Array.isArray(result && result.streams) ? result.streams : [];
+  const usable = streams.filter((item) => item && item.title && PLATFORM_NAMES[item.platform]);
+  if (!row || !select || !button || !usable.length) {
+    if (row) row.hidden = true;
+    return;
+  }
+  select.replaceChildren();
+  usable.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.platform;
+    option.dataset.title = item.title;
+    option.textContent = PLATFORM_NAMES[item.platform] + ": " + item.title;
+    select.appendChild(option);
+  });
+  const single = usable.length === 1;
+  const label = select.closest("label");
+  select.hidden = single;
+  if (label) label.hidden = single;
+  const name = PLATFORM_NAMES[usable[0].platform];
+  button.textContent = single ? "Use " + name + " title" : "Use stream title";
+  button.title = single ? usable[0].title : "Use stream title";
+  row.hidden = false;
+}
+
+function useLedgerStreamTitle() {
+  const select = $("ledger-name-platform");
+  const input = $("stream-title");
+  if (!select || !input) return;
+  const option = select.options[select.selectedIndex];
+  const title = option && option.dataset.title;
+  if (!title) return;
+  input.value = title;
+  input.focus();
+  input.select();
 }
 
 function setSectionExpanded(button, expanded) {
@@ -1925,7 +2107,7 @@ function openLedgerId() {
   return (streams && streams.active_id) || "";
 }
 
-function openLedgerName() {
+function openLedgerTitle() {
   return (state.stream && state.stream.title) || "Stream";
 }
 
@@ -1934,7 +2116,7 @@ function syncPresetApply() {
   if (!apply) return;
   const open = Boolean(openLedgerId());
   apply.disabled = presetBusy || !open;
-  apply.title = open ? "Save this preset, then write it onto " + openLedgerName() : "No ledger is open.";
+  apply.title = open ? "Save this preset, then write it onto " + openLedgerTitle() : "No ledger is open.";
 }
 
 function setPresetBusy(busy) {
@@ -1996,7 +2178,7 @@ function applyPresetToOpenLedger() {
   }
   const body = presetFormBody();
   const label = String(body.name || "").trim() || "this preset";
-  const ledger = openLedgerName();
+  const ledger = openLedgerTitle();
   const sure = window.confirm(
     "Save " + label + " and apply it to " + ledger + "? That ledger's channels, goals, and BLUE script are replaced. Its donations stay.",
   );
@@ -2232,11 +2414,31 @@ function openLedgerUrlDialog(dialog, form, skip, error) {
   });
 }
 
+function archiveOpenLedger() {
+  const tabs = state.stream && state.stream.streams && state.stream.streams.tabs;
+  const last = !tabs || tabs.length < 2;
+  const name = (state.stream && state.stream.title) || "Stream";
+  const sure = window.confirm(last
+    ? "Save " + name + " to the archive and close it? A new blank ledger opens."
+    : "Save " + name + " to the archive and close it? Its donations leave the open ledgers. The other ledgers stay.");
+  if (!sure) return Promise.resolve();
+  return enqueueStream(async () => {
+    await commitStreamTitle();
+    const result = await api("/api/export/archive", { method: "POST", body: "{}" });
+    await reloadOpenStream();
+    const count = Number(result.count) || 0;
+    const noun = count === 1 ? "donation" : "donations";
+    toast("Saved " + count + " " + noun + " to the archive and closed that ledger.");
+  });
+}
+
 function closeStream(id, title) {
+  const tabs = state.stream && state.stream.streams && state.stream.streams.tabs;
+  const last = !tabs || tabs.length < 2;
   const name = title || "Stream";
-  const sure = window.confirm(
-    "Close " + name + "? This ledger's donations are removed. The other ledgers stay.",
-  );
+  const sure = window.confirm(last
+    ? "Close " + name + "? This ledger's donations are removed. A new blank ledger opens."
+    : "Close " + name + "? This ledger's donations are removed. The other ledgers stay.");
   if (!sure) return Promise.resolve();
   return enqueueStream(async () => {
     await commitStreamTitle();
@@ -2425,6 +2627,10 @@ const WATCH_PLATFORM_KEY = "stream-donations-watch-platform";
 const WATCH_TIMES_KEY = "stream-donations-watch-times";
 const WATCH_MUTED_KEY = "stream-donations-watch-muted";
 const UTILITY_KEY = "stream-donations-utility";
+const UTILITY_CHAT_KEY = "stream-donations-utility-chats";
+const UTILITY_CHAT_ZOOM_MIN = 0.8;
+const UTILITY_CHAT_ZOOM_MAX = 1.6;
+const UTILITY_CHAT_ZOOM_STEP = 0.1;
 const WATCH_RESERVED = ["api", "settings", "dashboard", "browse", "categories", "following"];
 
 const WATCH_CHAT_ICONS = PLATFORM_ICONS;
@@ -2444,7 +2650,12 @@ let watchChatLoading = false;
 let utilityLedgerId = "";
 const utilityChatUrls = { youtube: "", kick: "", rumble: "" };
 let utilityChatSerial = 0;
+let utilityChatCursor = 0;
+let utilityChatGeneration = -1;
+let utilityChatWatchTimer = 0;
+let utilityChatWatchLoading = false;
 let utilityLedgerTail = "";
+const utilityChatPeek = { youtube: false, kick: false, rumble: false };
 
 function watchAddressSignature(settings) {
   const source = settings || {};
@@ -3037,6 +3248,213 @@ function renderUtilityRows() {
   utilityLedgerTail = tail;
 }
 
+function utilityChatSection(platform) {
+  return document.querySelector('.utility-chat[data-platform="' + platform + '"]');
+}
+
+function utilityChatPrefs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(UTILITY_CHAT_KEY) || "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return raw;
+  } catch (_error) {
+    return {};
+  }
+}
+
+function utilityChatZoom(value) {
+  const number = Math.round(Number(value) * 10) / 10;
+  if (!Number.isFinite(number)) return 1;
+  if (number < UTILITY_CHAT_ZOOM_MIN) return UTILITY_CHAT_ZOOM_MIN;
+  if (number > UTILITY_CHAT_ZOOM_MAX) return UTILITY_CHAT_ZOOM_MAX;
+  return number;
+}
+
+function utilityChatPref(platform) {
+  const item = utilityChatPrefs()[platform] || {};
+  return {
+    zoom: utilityChatZoom(item.zoom == null ? 1 : item.zoom),
+    collapsed: item.collapsed === true,
+  };
+}
+
+function utilityChatConfigured(platform) {
+  const settings = state.settings || {};
+  const text = (value) => String(value || "").trim();
+  if (platform === "youtube") {
+    return settings.youtube_follow_live
+      ? text(settings.youtube_channel) !== ""
+      : text(settings.youtube_watch) !== "";
+  }
+  if (platform === "rumble") {
+    return settings.rumble_follow_live
+      ? text(settings.rumble_channel) !== ""
+      : text(settings.rumble_watch) !== "";
+  }
+  if (platform === "kick") return text(settings.kick_watch) !== "";
+  return true;
+}
+
+function clearUtilityChatPeek() {
+  Object.keys(utilityChatPeek).forEach((platform) => {
+    utilityChatPeek[platform] = false;
+  });
+}
+
+// An empty address folds the strip for this ledger. The saved choice is left alone.
+function utilityChatCollapsed(platform) {
+  if (!utilityChatConfigured(platform) && !utilityChatPeek[platform]) return true;
+  return utilityChatPref(platform).collapsed;
+}
+
+function utilityChatFoldTitle(platform, pending) {
+  const section = utilityChatSection(platform);
+  const label = ((section && section.getAttribute("aria-label")) || "Chat").replace(/ chat$/, "");
+  if (pending) return "New chat. Show " + label + " chat";
+  if (!utilityChatConfigured(platform)) {
+    return "No " + label + " chat on this ledger. Show " + label + " chat";
+  }
+  return "Show " + label + " chat";
+}
+
+function saveUtilityChatPref(platform, patch) {
+  const all = utilityChatPrefs();
+  const next = Object.assign(utilityChatPref(platform), patch);
+  next.zoom = utilityChatZoom(next.zoom);
+  next.collapsed = Boolean(next.collapsed);
+  if (next.zoom === 1 && !next.collapsed) delete all[platform];
+  else all[platform] = { zoom: next.zoom, collapsed: next.collapsed };
+  try {
+    if (Object.keys(all).length) localStorage.setItem(UTILITY_CHAT_KEY, JSON.stringify(all));
+    else localStorage.removeItem(UTILITY_CHAT_KEY);
+  } catch (_error) {
+    /* The chat still changes for this window. */
+  }
+  applyUtilityChatChrome(platform);
+}
+
+function paintUtilityChatZoom(view, zoom) {
+  if (!view || typeof view.setZoomFactor !== "function") return;
+  try {
+    view.setZoomFactor(zoom);
+  } catch (_error) {
+    /* The page applies the size once it is ready. */
+  }
+}
+
+function applyUtilityChatChrome(platform) {
+  const section = utilityChatSection(platform);
+  if (!section) return;
+  const pref = utilityChatPref(platform);
+  const collapsed = utilityChatCollapsed(platform);
+  section.classList.toggle("is-collapsed", collapsed);
+  section.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  section.tabIndex = collapsed ? 0 : -1;
+  const unread = section.querySelector(".utility-chat-unread");
+  if (unread && !collapsed) unread.hidden = true;
+  const pending = Boolean(unread && !unread.hidden);
+  section.title = collapsed ? utilityChatFoldTitle(platform, pending) : "";
+  const smaller = section.querySelector(".utility-chat-smaller");
+  const normal = section.querySelector(".utility-chat-zoom");
+  const larger = section.querySelector(".utility-chat-larger");
+  if (smaller) smaller.disabled = pref.zoom <= UTILITY_CHAT_ZOOM_MIN;
+  if (normal) normal.disabled = pref.zoom === 1;
+  if (larger) larger.disabled = pref.zoom >= UTILITY_CHAT_ZOOM_MAX;
+  const host = $("utility-chat-" + platform);
+  const view = host && host.querySelector("webview");
+  paintUtilityChatZoom(view, pref.zoom);
+}
+
+function stepUtilityChatZoom(platform, direction) {
+  const current = utilityChatPref(platform).zoom;
+  const next = utilityChatZoom(current + direction * UTILITY_CHAT_ZOOM_STEP);
+  if (next === current) return;
+  saveUtilityChatPref(platform, { zoom: next });
+}
+
+function resetUtilityChatZoom(platform) {
+  if (utilityChatPref(platform).zoom === 1) return;
+  saveUtilityChatPref(platform, { zoom: 1 });
+}
+
+function setUtilityChatCollapsed(platform, collapsed) {
+  saveUtilityChatPref(platform, { collapsed: Boolean(collapsed) });
+}
+
+function restoreUtilityChat(platform) {
+  if (!utilityChatConfigured(platform)) utilityChatPeek[platform] = true;
+  if (utilityChatPref(platform).collapsed) setUtilityChatCollapsed(platform, false);
+  else applyUtilityChatChrome(platform);
+}
+
+function utilityChatUnread(platform, on) {
+  const section = utilityChatSection(platform);
+  if (!section) return;
+  const mark = section.querySelector(".utility-chat-unread");
+  if (mark) mark.hidden = !on;
+  if (!section.classList.contains("is-collapsed")) return;
+  section.title = utilityChatFoldTitle(platform, on);
+}
+
+function noteUtilityChatLines(result) {
+  if (!result) return;
+  const generation = Number.isInteger(result.generation) ? result.generation : utilityChatGeneration;
+  const fresh = generation !== utilityChatGeneration;
+  if (fresh) {
+    utilityChatGeneration = generation;
+    UTILITY_CHATS.forEach((spec) => utilityChatUnread(spec.platform, false));
+  } else {
+    const lines = Array.isArray(result.lines) ? result.lines : [];
+    lines.forEach((line) => {
+      if (!line || !line.text) return;
+      const section = utilityChatSection(line.platform);
+      if (!section || !section.classList.contains("is-collapsed")) return;
+      utilityChatUnread(line.platform, true);
+    });
+  }
+  if (Number.isInteger(result.cursor)) utilityChatCursor = result.cursor;
+}
+
+function loadUtilityChatWatch() {
+  if (utilityChatWatchLoading || !utilityOn() || document.hidden) return;
+  utilityChatWatchLoading = true;
+  const generation = utilityChatGeneration < 0 ? 0 : utilityChatGeneration;
+  const path = "/api/chat?after=" + encodeURIComponent(String(utilityChatCursor))
+    + "&generation=" + encodeURIComponent(String(generation));
+  api(path)
+    .then((result) => {
+      if (!utilityOn()) return;
+      noteUtilityChatLines(result);
+    })
+    .catch(() => {
+      /* The next poll retries. A missed line does not change the chat page. */
+    })
+    .finally(() => {
+      utilityChatWatchLoading = false;
+    });
+}
+
+function startUtilityChatWatch() {
+  if (utilityChatWatchTimer) return;
+  const tick = () => {
+    if (document.hidden) return;
+    loadUtilityChatWatch();
+  };
+  tick();
+  utilityChatWatchTimer = window.setInterval(tick, 2000);
+}
+
+function stopUtilityChatWatch() {
+  if (utilityChatWatchTimer) {
+    window.clearInterval(utilityChatWatchTimer);
+    utilityChatWatchTimer = 0;
+  }
+  utilityChatWatchLoading = false;
+  utilityChatCursor = 0;
+  utilityChatGeneration = -1;
+  UTILITY_CHATS.forEach((spec) => utilityChatUnread(spec.platform, false));
+}
+
 function setUtilityChatNote(platform, message) {
   const note = $("utility-chat-" + platform + "-note");
   if (note) note.textContent = message || "";
@@ -3061,33 +3479,59 @@ function mountUtilityChat(platform, partition, url) {
   }
   const view = document.createElement("webview");
   view.setAttribute("partition", partition);
+  // The chat page belongs to the platform, so text size is the guest zoom.
+  view.addEventListener("dom-ready", () => {
+    paintUtilityChatZoom(view, utilityChatPref(platform).zoom);
+  });
   view.src = url;
   host.appendChild(view);
   setUtilityChatNote(platform, "");
 }
 
+function openUtilityChat(spec, serial) {
+  api(spec.path)
+    .then((result) => {
+      if (serial !== utilityChatSerial || !utilityOn()) return;
+      const url = result && result.url;
+      if (!url) {
+        clearUtilityChat(spec.platform);
+        setUtilityChatNote(spec.platform, "That chat could not be opened.");
+        return;
+      }
+      mountUtilityChat(spec.platform, spec.partition, url);
+      setUtilityChatNote(spec.platform, window.desktop ? "" : "Open SuperBerry to use this chat.");
+    })
+    .catch((error) => {
+      if (serial !== utilityChatSerial || !utilityOn()) return;
+      clearUtilityChat(spec.platform);
+      setUtilityChatNote(spec.platform, (error && error.message) || "That chat could not be opened.");
+    });
+}
+
+function refreshUtilityChat(platform) {
+  const host = $("utility-chat-" + platform);
+  const view = host && host.querySelector("webview");
+  if (view && typeof view.reload === "function") {
+    try {
+      view.reload();
+      return;
+    } catch (_error) {
+      /* Open the chat address again. */
+    }
+  }
+  const spec = UTILITY_CHATS.find((item) => item.platform === platform);
+  if (!spec || !utilityOn()) return;
+  utilityChatUrls[platform] = "";
+  if (view) view.remove();
+  openUtilityChat(spec, utilityChatSerial);
+}
+
 function syncUtilityChats() {
   if (!utilityOn()) return;
+  clearUtilityChatPeek();
+  UTILITY_CHATS.forEach((spec) => applyUtilityChatChrome(spec.platform));
   const serial = ++utilityChatSerial;
-  UTILITY_CHATS.forEach((spec) => {
-    api(spec.path)
-      .then((result) => {
-        if (serial !== utilityChatSerial || !utilityOn()) return;
-        const url = result && result.url;
-        if (!url) {
-          clearUtilityChat(spec.platform);
-          setUtilityChatNote(spec.platform, "That chat could not be opened.");
-          return;
-        }
-        mountUtilityChat(spec.platform, spec.partition, url);
-        setUtilityChatNote(spec.platform, window.desktop ? "" : "Open SuperBerry to use this chat.");
-      })
-      .catch((error) => {
-        if (serial !== utilityChatSerial || !utilityOn()) return;
-        clearUtilityChat(spec.platform);
-        setUtilityChatNote(spec.platform, (error && error.message) || "That chat could not be opened.");
-      });
-  });
+  UTILITY_CHATS.forEach((spec) => openUtilityChat(spec, serial));
 }
 
 function stopUtilityChats() {
@@ -3114,6 +3558,7 @@ function setUtility(on) {
   }
   if (!on) {
     stopUtilityChats();
+    stopUtilityChatWatch();
     utilityLedgerId = "";
     blankWatchFrame($("utility-frame"));
     const watchToggle = $("watch-toggle");
@@ -3130,6 +3575,7 @@ function setUtility(on) {
   utilityLedgerTail = "";
   renderUtilityRows();
   syncUtilityChats();
+  startUtilityChatWatch();
   const platform = selectedWatchPlatform();
   if (!platform) {
     stopWatchFrame();
@@ -3139,7 +3585,37 @@ function setUtility(on) {
   loadWatch(platform, true);
 }
 
+function bindUtilityChats() {
+  document.querySelectorAll(".utility-chat").forEach((section) => {
+    const platform = section.dataset.platform || "";
+    if (!UTILITY_CHATS.some((spec) => spec.platform === platform)) return;
+    const reload = section.querySelector(".utility-chat-reload");
+    if (reload) reload.addEventListener("click", () => refreshUtilityChat(platform));
+    const smaller = section.querySelector(".utility-chat-smaller");
+    if (smaller) smaller.addEventListener("click", () => stepUtilityChatZoom(platform, -1));
+    const normal = section.querySelector(".utility-chat-zoom");
+    if (normal) normal.addEventListener("click", () => resetUtilityChatZoom(platform));
+    const larger = section.querySelector(".utility-chat-larger");
+    if (larger) larger.addEventListener("click", () => stepUtilityChatZoom(platform, 1));
+    const collapse = section.querySelector(".utility-chat-collapse");
+    if (collapse) collapse.addEventListener("click", () => setUtilityChatCollapsed(platform, true));
+    section.addEventListener("click", (event) => {
+      if (!section.classList.contains("is-collapsed")) return;
+      if (event.target.closest(".utility-chat-tools")) return;
+      restoreUtilityChat(platform);
+    });
+    section.addEventListener("keydown", (event) => {
+      if (!section.classList.contains("is-collapsed")) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      restoreUtilityChat(platform);
+    });
+    applyUtilityChatChrome(platform);
+  });
+}
+
 function bindUtility() {
+  bindUtilityChats();
   const toggle = $("utility-toggle");
   if (toggle) {
     toggle.addEventListener("click", () => {
@@ -3294,8 +3770,9 @@ function bindWatch() {
     });
   }
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden || !watchChatTimer) return;
-    loadWatchChat();
+    if (document.hidden) return;
+    if (watchChatTimer) loadWatchChat();
+    if (utilityChatWatchTimer) loadUtilityChatWatch();
   });
   setWatchOpen(open);
   watchBound = true;
@@ -3638,6 +4115,8 @@ function bind() {
   $("stream-tabs-prev").addEventListener("click", () => scrollStreamTabs(-1));
   $("stream-tabs-next").addEventListener("click", () => scrollStreamTabs(1));
   const scroller = $("stream-tabs");
+  if (scroller) scroller.addEventListener("scroll", () => closeTabMenus());
+  window.addEventListener("resize", () => closeTabMenus());
   scroller.addEventListener("scroll", updateStreamBumpers, { passive: true });
   scroller.addEventListener("wheel", (event) => {
     if (scroller.scrollWidth - scroller.clientWidth <= 2) return;
@@ -3828,6 +4307,12 @@ function bind() {
     event.stopPropagation();
     toggleMenu("export-menu", "export-button");
   });
+  const exportArchive = $("export-archive");
+  if (exportArchive) {
+    exportArchive.addEventListener("click", () => {
+      archiveOpenLedger().catch((error) => toast(error.message, true));
+    });
+  }
   $("ledger-help-button").addEventListener("click", (event) => {
     event.stopPropagation();
     toggleMenu("ledger-help", "ledger-help-button");

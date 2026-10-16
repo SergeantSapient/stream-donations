@@ -26,7 +26,7 @@ from .chat_feed import chat_time, offer_chat, remember_chat
 from .normalize import Donation, rumble_donations
 from .store import Store
 from .transport import RUMBLE_UA, Transport, api_error_message
-from .util import ApiError, amount_from_cents, as_int, host_allowed, redact, stable_key, to_utc_iso
+from .util import ApiError, amount_from_cents, as_int, host_allowed, ledger_title, redact, stable_key, to_utc_iso
 
 RUMBLE_HOSTS = {"rumble.com"}
 # Observed redirect target of https://rumble.com/login. The window loads this
@@ -171,6 +171,36 @@ def live_chat_id_from_channel_html(html: str) -> str | None:
     if len(upcoming) == 1:
         return upcoming[0]
     return None
+
+
+def stream_title_from_channel_html(html: str) -> str:
+    """Title of the one broadcast that channel page is following. Several live videos have none."""
+    try:
+        chat_id = live_chat_id_from_channel_html(html)
+    except ValueError:
+        return ""
+    if not chat_id:
+        return ""
+    for match in re.finditer(r'<script type="application/json">\s*(\{.*?\})\s*</script>', html, re.S):
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            video_id = item.get("id")
+            if isinstance(video_id, bool) or not isinstance(video_id, (int, str)):
+                continue
+            if str(video_id) != chat_id:
+                continue
+            if item.get("live") is not True and item.get("live_placeholder") is not True:
+                continue
+            return ledger_title(item.get("title"))
+    return ""
 
 
 def _badge_live_ids(html: str) -> list[str]:
@@ -565,6 +595,26 @@ class RumbleClient:
         if page.status >= 400:
             raise ApiError(api_error_message(page), status=page.status)
         return live_chat_id_from_channel_html(page.body.decode("utf-8", "replace"))
+
+    def stream_title(self, target: str, *, follow: bool) -> str:
+        """Title of the broadcast a channel page or video page is following."""
+        if follow:
+            page_url = rumble_channel_page_url(target)
+        else:
+            text = validate_rumble_watch(target)
+            if re.fullmatch(r"\d{3,20}", text) or re.fullmatch(r"v[0-9a-z]{4,16}", text):
+                return ""
+            page_url = text
+        page = self.transport.request(
+            "GET",
+            page_url,
+            headers={"Accept": "text/html"},
+            allow_hosts=RUMBLE_HOSTS,
+            user_agent=RUMBLE_UA,
+        )
+        if page.status >= 400:
+            raise ApiError(api_error_message(page), status=page.status)
+        return stream_title_from_channel_html(page.body.decode("utf-8", "replace"))
 
     def _chat_source(self) -> str:
         """Follow-live ignores a saved video URL until it is off."""

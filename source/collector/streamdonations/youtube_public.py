@@ -24,7 +24,7 @@ from .money import is_anniversary_text, parse_display_amount, youtube_paid_amoun
 from .normalize import Donation
 from .store import Store
 from .transport import Transport, api_error_message
-from .util import ApiError, format_utc, redact, stable_key
+from .util import ApiError, format_utc, ledger_title, redact, stable_key
 
 YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "youtube-nocookie.com"}
 YT_UA = (
@@ -192,6 +192,30 @@ def live_video_from_channel_html(html: str) -> str | None:
     if live_at < 0 or (offline_at >= 0 and offline_at < live_at):
         return None
     return video_id
+
+
+def stream_title_from_youtube_html(html: str) -> str:
+    """Title of the broadcast this page is presenting. A finished video has none."""
+    video_id = live_video_from_channel_html(html)
+    if not video_id:
+        return ""
+    marker = '"videoDetails":'
+    start = 0
+    while True:
+        at = html.find(marker, start)
+        if at < 0:
+            return ""
+        start = at + len(marker)
+        brace = html.find("{", start)
+        if brace < 0 or brace > start + 20:
+            continue
+        try:
+            details, _end = json.JSONDecoder().raw_decode(html[brace:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(details, dict) or str(details.get("videoId") or "") != video_id:
+            continue
+        return ledger_title(details.get("title"))
 
 
 def _channel_segment(value: str) -> bool:
@@ -624,6 +648,10 @@ class PublicChatFollower:
     def _resolve_live_channel(self, channel: str) -> str | None:
         page = self._get(youtube_channel_live_url(channel))
         return live_video_from_channel_html(page)
+
+    def stream_title(self, url: str) -> str:
+        """Public watch or /live HTML. This does not call the Data API."""
+        return stream_title_from_youtube_html(self._get(url))
 
     def _bootstrap(self, video_id: str) -> dict:
         html = self._get(f"https://www.youtube.com/live_chat?is_popout=1&v={video_id}")

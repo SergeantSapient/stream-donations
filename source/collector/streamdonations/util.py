@@ -126,6 +126,11 @@ def mention_donor(value: object) -> str:
     return f"@{name}"
 
 
+def ledger_title(value: object) -> str:
+    """One line for a ledger tab. Blank stays blank. The tab stops at 80 characters."""
+    return " ".join(str(value or "").split())[:80]
+
+
 def collapsed_chat_text(value: object, limit: int = 2000) -> str:
     """One line for a chat post. Blank text is refused. The limit is characters, not bytes."""
     text = " ".join(str(value or "").split())

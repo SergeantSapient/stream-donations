@@ -7,7 +7,11 @@ from pathlib import Path
 
 from streamdonations.money import parse_membership_price
 from streamdonations.normalize import Donation
+from streamdonations.rumble import rumble_channel_page_url
+from streamdonations.service import Service
 from streamdonations.store import Store
+from streamdonations.transport import HttpResult
+from streamdonations.youtube_public import youtube_channel_live_url
 
 TIERS = '[{"enabled":true,"amount":25,"name":"Bronze","bonus":"map"}]'
 
@@ -170,8 +174,18 @@ class StreamTabTests(unittest.TestCase):
 
     def test_close_and_rename_limits(self):
         tabs = self.store.stream_tabs()
-        with self.assertRaisesRegex(ValueError, "The last stream tab stays."):
-            self.store.close_stream(tabs["active_id"])
+        only = tabs["active_id"]
+        self.store.set_setting("stream_title", "Friday")
+        self.store.set_setting("youtube_watch", "abcdefghijk")
+        self.store.close_stream(only)
+        fresh = self.store.stream_tabs()
+        self.assertEqual(len(fresh["tabs"]), 1)
+        self.assertNotEqual(fresh["active_id"], only)
+        self.assertEqual(fresh["tabs"][0]["title"], "Stream")
+        self.assertEqual(self.store.get_setting("stream_title"), "")
+        self.assertEqual(self.store.get_setting("youtube_watch"), "")
+        self.assertEqual(self.store.get_setting("kick_watch"), "")
+        self.assertTrue(fresh["tabs"][0]["paused"])
         with self.assertRaisesRegex(ValueError, "Stream name is limited to 80 characters."):
             self.store.rename_stream("n" * 81)
         self.store.rename_stream("  Night  ")
@@ -358,3 +372,156 @@ class StreamTabTests(unittest.TestCase):
         self.assertTrue(tabs["tabs"][0]["paused"])
         self.assertEqual(self.store.get_setting("collection_paused"), "1")
         self.assertEqual(self.store.get_setting("youtube_watch"), "abcdefghijk")
+
+
+YOUTUBE_LIVE = """
+<link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">
+<script>"videoDetails":{"videoId":"abcdefghijk","title":"Desk","lengthSeconds":"0","isLive":true}</script>
+"liveBroadcastDetails":{"isLiveNow":true,"startTimestamp":"2026-10-01T17:00:26+00:00"}
+"""
+
+YOUTUBE_OFFLINE = """
+<link rel="canonical" href="https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA">
+"videoId":"abcdefghijk"
+"""
+
+RUMBLE_LIVE = """
+<rum-videos-grid><script type="application/json">
+{"items":[
+  {"id":111,"title":"Old","live":false,"live_placeholder":false},
+  {"id":222,"title":"Now","live":true,"live_placeholder":false}
+]}
+</script></rum-videos-grid>
+"""
+
+KICK_LIVE = {
+    "id": 9,
+    "slug": "slot",
+    "chatroom": {"id": 9},
+    "user": {"username": "slot"},
+    "livestream": {"is_live": True, "session_title": "Slot night"},
+}
+
+
+class _TitleTransport:
+    """Pages the title lookup may fetch. A missing page is a 404."""
+
+    def __init__(self, pages):
+        self.pages = pages
+        self.urls = []
+
+    def request(self, method, url, **_kwargs):
+        self.urls.append(url)
+        body = self.pages.get(url)
+        if body is None:
+            return HttpResult(404, {}, b"", url)
+        if isinstance(body, dict):
+            raw = json.dumps(body).encode()
+        elif isinstance(body, str):
+            raw = body.encode()
+        else:
+            raw = body
+        return HttpResult(200, {}, raw, url)
+
+
+class StreamTitleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "donations.db")
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _titles(self, pages, **settings):
+        for key, value in settings.items():
+            self.store.set_setting(key, value)
+        self.transport = _TitleTransport(pages)
+        service = Service(self.store, self.transport)
+        try:
+            return service.stream_titles()
+        finally:
+            service.stop()
+
+    def test_each_live_platform_offers_its_title(self):
+        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
+        rumble = rumble_channel_page_url("https://rumble.com/c/News")
+        kick = "https://kick.com/api/v2/channels/slot"
+        report = self._titles(
+            {youtube: YOUTUBE_LIVE, rumble: RUMBLE_LIVE, kick: KICK_LIVE},
+            youtube_follow_live="1",
+            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_watch="zzzzzzzzzzz",
+            rumble_follow_live="1",
+            rumble_channel="https://rumble.com/c/News",
+            rumble_watch="https://rumble.com/v7fyjui-old.html",
+            kick_watch="https://kick.com/slot",
+        )
+        self.assertEqual(
+            report,
+            {
+                "streams": [
+                    {"platform": "youtube", "title": "Desk"},
+                    {"platform": "rumble", "title": "Now"},
+                    {"platform": "kick", "title": "Slot night"},
+                ]
+            },
+        )
+        self.assertEqual(self.transport.urls, [youtube, rumble, kick])
+        self.assertEqual(self.store.get_setting("stream_title"), "")
+
+    def test_a_saved_video_is_used_when_follow_live_is_off(self):
+        report = self._titles(
+            {"https://www.youtube.com/watch?v=abcdefghijk": YOUTUBE_LIVE},
+            youtube_follow_live="0",
+            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_watch="abcdefghijk",
+            rumble_follow_live="0",
+            rumble_channel="https://rumble.com/c/News",
+            rumble_watch="446413572",
+        )
+        self.assertEqual(report, {"streams": [{"platform": "youtube", "title": "Desk"}]})
+        self.assertEqual(self.transport.urls, ["https://www.youtube.com/watch?v=abcdefghijk"])
+
+    def test_an_offline_channel_and_a_failed_lookup_are_left_out(self):
+        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
+        report = self._titles(
+            {youtube: YOUTUBE_OFFLINE},
+            youtube_follow_live="1",
+            youtube_channel="https://www.youtube.com/@nasa",
+            kick_watch="https://kick.com/missing",
+        )
+        self.assertEqual(report, {"streams": []})
+        self.assertEqual(
+            self.transport.urls,
+            [youtube, "https://kick.com/api/v2/channels/missing"],
+        )
+        self.assertEqual(self.store.get_setting("stream_title"), "")
+
+    def test_a_failed_lookup_leaves_the_other_titles(self):
+        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
+        rumble = rumble_channel_page_url("https://rumble.com/c/News")
+        report = self._titles(
+            {
+                youtube: YOUTUBE_LIVE,
+                "https://kick.com/api/v2/channels/slot": KICK_LIVE,
+            },
+            youtube_follow_live="1",
+            youtube_channel="https://www.youtube.com/@nasa",
+            rumble_follow_live="1",
+            rumble_channel="https://rumble.com/c/News",
+            kick_watch="https://kick.com/slot",
+        )
+        self.assertEqual(
+            report,
+            {
+                "streams": [
+                    {"platform": "youtube", "title": "Desk"},
+                    {"platform": "kick", "title": "Slot night"},
+                ]
+            },
+        )
+        self.assertEqual(
+            self.transport.urls,
+            [youtube, rumble, "https://kick.com/api/v2/channels/slot"],
+        )

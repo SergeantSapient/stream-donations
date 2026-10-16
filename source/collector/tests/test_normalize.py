@@ -11,6 +11,7 @@ from streamdonations.normalize import (
 from streamdonations.rumble import (
     chat_id_from_html,
     live_chat_id_from_channel_html,
+    stream_title_from_channel_html,
     rumble_channel_page_url,
     validate_rumble_channel,
     donations_from_chat_event,
@@ -349,6 +350,7 @@ class NormalizeTests(unittest.TestCase):
         )
         self.assertIsNone(live_chat_id_from_channel_html(css + duration))
         self.assertEqual(live_chat_id_from_channel_html(css + duration + live), "222")
+        self.assertEqual(stream_title_from_channel_html(css + duration + live), "")
         second = live.replace("222", "333")
         with self.assertRaises(ValueError):
             live_chat_id_from_channel_html(live + second)
@@ -361,6 +363,7 @@ class NormalizeTests(unittest.TestCase):
         </script></rum-videos-grid>
         """
         self.assertEqual(live_chat_id_from_channel_html(upcoming), "447215100")
+        self.assertEqual(stream_title_from_channel_html(upcoming), "Soon")
         self.assertEqual(
             live_chat_id_from_channel_html(
                 upcoming.replace('"live":false,"live_placeholder":true', '"live":true,"live_placeholder":true')
@@ -372,12 +375,15 @@ class NormalizeTests(unittest.TestCase):
             '{"id":222,"title":"Now","live":true,"live_placeholder":false}',
         )
         self.assertEqual(live_chat_id_from_channel_html(prefers_live), "222")
+        self.assertEqual(stream_title_from_channel_html(prefers_live), "Now")
         two_upcoming = upcoming.replace(
             '{"id":111,"title":"Old","live":false,"live_placeholder":false}',
             '{"id":333,"title":"Later","live":false,"live_placeholder":true}',
         )
         with self.assertRaises(ValueError):
             live_chat_id_from_channel_html(two_upcoming)
+        self.assertEqual(stream_title_from_channel_html(live + second), "")
+        self.assertEqual(stream_title_from_channel_html(two_upcoming), "")
         self.assertEqual(
             rumble_channel_page_url("https://rumble.com/c/NewsmaxTV/livestreams"),
             "https://rumble.com/c/NewsmaxTV",

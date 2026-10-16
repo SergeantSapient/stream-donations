@@ -604,6 +604,40 @@ class ChatSendPageTests(unittest.TestCase):
         site = main.split("function openSiteBrowserWindow(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("sandbox: true", site)
         self.assertNotIn("preload", site)
+        slug = main.split("function kickChatSlug(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("www.kick.com", slug)
+        self.assertIn("KICK_POPUP_PATH", slug)
+        pin = main.split("function bindKickChatPin(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("will-navigate", pin)
+        self.assertIn("will-redirect", pin)
+        self.assertIn("did-navigate-in-page", pin)
+        self.assertIn("did-navigate", pin)
+        self.assertIn("isMainFrame === false", pin)
+        self.assertIn("kickChatStays(", pin)
+        self.assertIn("loadURL(target)", pin)
+        guards = main.split("function attachSiteGuards(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("bindKickChatPin(contents, pinned)", guards)
+        self.assertIn("kickChatStays(url, pinned())", guards)
+        chat_open = main.split("openChat(url) {", 1)[1].split("close() {", 1)[0]
+        self.assertIn("spec.pinChat", chat_open)
+        self.assertIn("() => state.target", chat_open)
+        created = chat_open.split('return "focused";', 1)[1]
+        self.assertLess(created.index("state.target = target"), created.index("openBrowser(pinned)"))
+        login = main.split("openLogin() {", 1)[1].split("openChat(url)", 1)[0]
+        self.assertIn("openBrowser()", login)
+        self.assertNotIn("pinChat", login)
+        youtube_spec = main.split("const youtubeWindows = createSiteWindows(", 1)[1].split("});", 1)[0]
+        self.assertNotIn("pinChat", youtube_spec)
+        kick_spec = main.split("const kickWindows = createSiteWindows(", 1)[1].split("});", 1)[0]
+        self.assertIn("pinChat: true", kick_spec)
+        guest = main.split("function attachChatGuest(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("kickPopupUrl(pinnedUrl)", guest)
+        self.assertIn("bindKickChatPin(guest, () => pin)", guest)
+        self.assertIn("kickChatStays(url, pin)", guest)
+        webviews = main.split("function attachChatWebviews(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("kickPins", webviews)
+        self.assertIn("KICK_PARTITION) kickPins.push(src)", webviews)
+        self.assertIn("chatGuestHosts(guest) === KICK_HOSTS", webviews)
         for name in ("openYoutubeLogin()", "openKickLogin()"):
             body = main.split("function " + name, 1)[1].split("\nfunction ", 1)[0]
             self.assertNotIn("payload", body)
@@ -665,6 +699,100 @@ class ChatSendPageTests(unittest.TestCase):
         chats = page.split('class="utility-chats"', 1)[1].split('id="stream-banner"', 1)[0]
         self.assertLess(chats.index("utility-chat-youtube"), chats.index("utility-chat-rumble"))
         self.assertLess(chats.index("utility-chat-rumble"), chats.index("utility-chat-kick"))
+        for platform, label in (("youtube", "YouTube"), ("rumble", "Rumble"), ("kick", "Kick")):
+            block = chats.split('data-platform="' + platform + '"', 1)[1]
+            self.assertLess(block.index("utility-chat-reload"), block.index("utility-chat-smaller"))
+            self.assertLess(block.index("utility-chat-smaller"), block.index("utility-chat-zoom"))
+            self.assertLess(block.index("utility-chat-zoom"), block.index("utility-chat-larger"))
+            self.assertLess(block.index("utility-chat-larger"), block.index("utility-chat-collapse"))
+            self.assertLess(block.index("utility-chat-collapse"), block.index("utility-chat-" + platform))
+            self.assertIn('aria-label="Reload ' + label + ' chat"', block)
+            self.assertIn('aria-label="Smaller ' + label + ' text"', block)
+            self.assertIn('aria-label="Default ' + label + ' text"', block)
+            self.assertIn('aria-label="Larger ' + label + ' text"', block)
+            self.assertIn('aria-label="Collapse ' + label + ' chat"', block)
+            self.assertLess(block.index("utility-chat-collapse"), block.index("utility-chat-unread"))
+            self.assertIn('class="utility-chat-unread" hidden', block)
+            self.assertIn('aria-label="New chat"', block)
+        collapsed = styles.split(".utility-chat.is-collapsed {", 1)[1].split("}", 1)[0]
+        self.assertIn("flex: 0 0 2.4rem", collapsed)
+        self.assertIn("writing-mode: vertical-rl", styles)
+        narrow = styles.split(".app-shell.is-utility .utility-chat.is-collapsed {", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height: 2.4rem", narrow)
+        unread = styles.split(".utility-chat.is-collapsed .utility-chat-unread {", 1)[1].split("}", 1)[0]
+        self.assertIn("margin-top: auto", unread)
+        bar = styles.split(".app-shell.is-utility .utility-chat.is-collapsed .utility-chat-unread {", 1)[1].split("}", 1)[0]
+        self.assertIn("margin-left: auto", bar)
+        noted = script.split("function noteUtilityChatLines(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("is-collapsed", noted)
+        self.assertIn("utilityChatUnread(", noted)
+        self.assertNotIn("executeJavaScript", noted)
+        watching = script.split("function loadUtilityChatWatch(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("/api/chat?after=", watching)
+        self.assertNotIn("executeJavaScript", watching)
+        kiosk = script.split("function setUtility(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("startUtilityChatWatch()", kiosk)
+        self.assertIn("stopUtilityChatWatch()", kiosk)
+        chrome = script.split("function applyUtilityChatChrome(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("is-collapsed", chrome)
+        self.assertIn("paintUtilityChatZoom(", chrome)
+        self.assertIn("pref.zoom === 1", chrome)
+        self.assertIn("aria-expanded", chrome)
+        self.assertIn("utilityChatCollapsed(", chrome)
+        self.assertNotIn("saveUtilityChatPref", chrome)
+        self.assertNotIn("localStorage", chrome)
+        self.assertNotIn("executeJavaScript", chrome)
+        configured = script.split("function utilityChatConfigured(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn(".trim()", configured)
+        youtube_address = configured.split("youtube_follow_live", 1)[1].split("rumble_follow_live", 1)[0]
+        self.assertLess(youtube_address.index("youtube_channel"), youtube_address.index("youtube_watch"))
+        rumble_address = configured.split("rumble_follow_live", 1)[1].split('platform === "kick"', 1)[0]
+        self.assertLess(rumble_address.index("rumble_channel"), rumble_address.index("rumble_watch"))
+        self.assertIn("kick_watch", configured)
+        self.assertNotIn("kick_follow_live", configured)
+        self.assertNotIn("saveUtilityChatPref", configured)
+        folded = script.split("function utilityChatCollapsed(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("utilityChatPeek", folded)
+        self.assertIn("utilityChatConfigured(", folded)
+        self.assertNotIn("localStorage", folded)
+        self.assertNotIn("saveUtilityChatPref", folded)
+        fold_title = script.split("function utilityChatFoldTitle(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("chat on this ledger", fold_title)
+        self.assertIn("New chat. Show ", fold_title)
+        restore = script.split("function restoreUtilityChat(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("utilityChatPeek[platform] = true", restore)
+        self.assertIn("utilityChatPref(platform).collapsed", restore)
+        self.assertIn("applyUtilityChatChrome(platform)", restore)
+        chats_bind = script.split("function bindUtilityChats(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertEqual(chats_bind.count("restoreUtilityChat(platform)"), 2)
+        syncing = script.split("function syncUtilityChats(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("clearUtilityChatPeek()", syncing)
+        self.assertIn("applyUtilityChatChrome(", syncing)
+        self.assertNotIn("saveUtilityChatPref", syncing)
+        self.assertNotIn("localStorage", syncing)
+        opened = script.split("function openUtilityChat(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertNotIn("is-collapsed", opened)
+        self.assertNotIn("utilityChatCollapsed", opened)
+        self.assertNotIn("saveUtilityChatPref", opened)
+        self.assertNotIn("no chat open", script)
+        readme = (Path(__file__).resolve().parents[3] / "README.md").read_text(encoding="utf-8")
+        self.assertIn("A chat with no address on the open ledger collapses on its own.", readme)
+        self.assertIn("That automatic fold is not saved.", readme)
+        paint = script.split("function paintUtilityChatZoom(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("setZoomFactor", paint)
+        self.assertNotIn("executeJavaScript", paint)
+        zoom = script.split("function stepUtilityChatZoom(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("UTILITY_CHAT_ZOOM_STEP", zoom)
+        reset_zoom = script.split("function resetUtilityChatZoom(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("{ zoom: 1 }", reset_zoom)
+        self.assertIn("UTILITY_CHAT_ZOOM_MIN = 0.8", script)
+        self.assertIn("UTILITY_CHAT_ZOOM_MAX = 1.6", script)
+        self.assertIn("stream-donations-utility-chats", script)
+        refresh = script.split("function refreshUtilityChat(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("view.reload()", refresh)
+        self.assertNotIn("executeJavaScript", refresh)
+        settings = (root / "collector/streamdonations/settings_file.py").read_text(encoding="utf-8")
+        self.assertNotIn("stream-donations-utility-chats", settings)
         self.assertIn("<th>Time</th>", page)
         self.assertIn("<th>Donor</th>", page)
         self.assertIn("<th>Amount</th>", page)

@@ -1,14 +1,20 @@
 """Public Kick chat parsing. No network and no channel ownership."""
 
+import json
 import unittest
+from pathlib import Path
 
 from streamdonations.kick_public import (
     donations_from_kick_public,
+    interpret_centrifugo,
+    interpret_pusher,
     kick_live_status,
     kick_slug,
     public_kick_detail,
+    realtime_endpoint,
     validate_kick_watch,
 )
+from streamdonations.util import ApiError
 from streamdonations.money import quote
 
 
@@ -185,6 +191,92 @@ class PublicKickTests(unittest.TestCase):
             follow=True,
         )
         self.assertIn("The channel is not live. Chat stays connected.", waiting)
+
+    def test_realtime_negotiation_accepts_the_public_sockets_only(self):
+        provider, host, path = realtime_endpoint({
+            "data": {
+                "mode": "websocket",
+                "connections": [{
+                    "provider": "centrifugo",
+                    "credentials": {
+                        "url": "wss://realtime.us-east-1.platform.kick.com/connection/websocket",
+                        "token": "do-not-keep",
+                    },
+                }],
+            }
+        })
+        self.assertEqual(
+            (provider, host, path),
+            ("centrifugo", "realtime.us-east-1.platform.kick.com", "/connection/websocket"),
+        )
+        provider, host, path = realtime_endpoint({
+            "data": {
+                "mode": "websocket",
+                "connections": [
+                    {"provider": "centrifugo", "credentials": {"url": "wss://evil.example/connection/websocket"}},
+                    {"provider": "pusher", "credentials": {"app_key": "abc", "cluster": "us2"}},
+                ],
+            }
+        })
+        self.assertEqual(provider, "pusher")
+        self.assertEqual(host, "ws-us2.pusher.com")
+        self.assertTrue(path.startswith("/app/abc?"))
+        with self.assertRaises(ApiError):
+            realtime_endpoint({"data": {"mode": "websocket", "connections": []}})
+        source = Path(__file__).resolve().parents[1] / "streamdonations" / "kick_public.py"
+        self.assertNotIn("32cbd69e4b950bf97679", source.read_text(encoding="utf-8"))
+
+    def test_centrifugo_events_keep_the_public_parsers(self):
+        ready = interpret_centrifugo({
+            "id": 1,
+            "connect": {"expires": True, "ttl": 100, "ping": 25, "pong": True, "token": "do-not-keep"},
+        })
+        self.assertEqual(ready["op"], "connect")
+        self.assertNotIn("token", json.dumps(ready))
+        self.assertEqual(ready["result"]["ttl"], 100)
+        self.assertEqual(interpret_centrifugo({}), {"op": "ping"})
+        chat = interpret_centrifugo({
+            "push": {
+                "channel": "chatrooms.1.v2",
+                "pub": {
+                    "data": {
+                        "event": "App\\Events\\ChatMessageEvent",
+                        "data": {"id": "m1", "content": "hello", "sender": {"username": "fan"}},
+                    }
+                },
+            }
+        })
+        self.assertEqual(chat["op"], "event")
+        self.assertEqual(
+            donations_from_kick_public(chat["event"], chat["data"], "creator"),
+            [],
+        )
+        kicks = interpret_centrifugo({
+            "push": {
+                "pub": {
+                    "data": json.dumps({
+                        "event": "KicksGifted",
+                        "data": {
+                            "gift_transaction_id": "tx-1",
+                            "message": "w",
+                            "sender": {"id": 9, "username": "fan"},
+                            "gift": {"name": "Rage Quit", "amount": 500},
+                        },
+                    })
+                }
+            }
+        })
+        donation = donations_from_kick_public(kicks["event"], kicks["data"], "creator")[0]
+        self.assertEqual(donation.kind, "kicks")
+        self.assertEqual(donation.amount_value, 500)
+        self.assertEqual(
+            interpret_pusher({"event": "pusher:error", "data": "{\"code\":4001}"})["op"],
+            "error",
+        )
+        self.assertEqual(
+            interpret_pusher({"event": "pusher:connection_established", "data": "{}"})["op"],
+            "ready",
+        )
 
 
 if __name__ == "__main__":

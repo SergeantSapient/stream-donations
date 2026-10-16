@@ -1,12 +1,17 @@
 """Public Kick chat, for a channel the user does not own.
 
 Owner webhooks only fire for the signed-in channel. Subscriptions, gifted
-subscriptions, and Kicks that appear in chat are broadcast on Kick's public
-Pusher socket. No OAuth and no webhook URL are required.
+subscriptions, and Kicks that appear in chat are broadcast on the public
+connection Kick's website offers. No OAuth and no webhook URL are required.
 
     GET https://kick.com/api/v2/channels/{slug}
-    WSS wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679
+    POST https://web.kick.com/api/v1/realtime/connection
+    POST https://web.kick.com/api/v1/realtime/channels/{channel_id}/chat/connection
+    POST https://web.kick.com/api/v1/realtime/auth/connection
         channels: chatrooms.{id}.v2, channel.{id}, channel_{id}
+
+The connection token from that last call is sent on the socket and is not
+logged or stored.
 """
 
 from __future__ import annotations
@@ -18,25 +23,142 @@ import socket
 import ssl
 import threading
 import time
+import uuid
 from urllib.parse import urlparse
 
 from .chat_feed import chat_time, offer_chat, remember_chat
 from .normalize import Donation
 from .store import Store
 from .transport import Transport, api_error_message
-from .util import ApiError, as_int, redact, stable_key, to_utc_iso
+from .util import ApiError, as_int, ledger_title, redact, stable_key, to_utc_iso
 
 KICK_HOSTS = {"kick.com"}
 # Observed Kick website login. The window loads this fixed page.
 # The renderer does not choose the address.
 KICK_LOGIN_URL = "https://kick.com/login"
-PUSHER_HOST = "ws-us2.pusher.com"
-PUSHER_PATH = "/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false"
+_REALTIME = "https://web.kick.com/api/v1/realtime"
 KICK_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 StreamDonations/1.0"
 )
 _RESERVED = {"api", "settings", "dashboard", "browse", "categories", "following"}
+
+
+def realtime_endpoints(payload: object) -> list[tuple[str, str, str]]:
+    """Public sockets from one negotiation response, in the order Kick sent."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    connections = data.get("connections") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or data.get("mode") != "websocket" or not isinstance(connections, list):
+        raise ApiError("Kick did not offer a public chat connection")
+    found: list[tuple[str, str, str]] = []
+    for item in connections:
+        if not isinstance(item, dict):
+            continue
+        credentials = item.get("credentials") if isinstance(item.get("credentials"), dict) else {}
+        provider = item.get("provider")
+        if provider == "pusher":
+            endpoint = _pusher_endpoint(credentials.get("app_key"), credentials.get("cluster"))
+        elif provider == "centrifugo":
+            endpoint = _centrifugo_endpoint(credentials.get("url"))
+        else:
+            endpoint = None
+        if endpoint is not None:
+            found.append((str(provider), endpoint[0], endpoint[1]))
+    if not found:
+        raise ApiError("Kick did not offer a public chat connection")
+    return found
+
+
+def realtime_endpoint(payload: object) -> tuple[str, str, str]:
+    """The first public socket in one negotiation response."""
+    return realtime_endpoints(payload)[0]
+
+
+def _pusher_endpoint(key: object, cluster: object) -> tuple[str, str] | None:
+    text = str(key or "")
+    name = str(cluster or "")
+    if (
+        not text.isalnum()
+        or not name.isalnum()
+        or not text.isascii()
+        or not name.isascii()
+        or len(text) > 128
+        or len(name) > 32
+    ):
+        return None
+    return (
+        f"ws-{name}.pusher.com",
+        f"/app/{text}?protocol=7&client=js&version=8.4.0-rc2&flash=false",
+    )
+
+
+def _centrifugo_endpoint(url: object) -> tuple[str, str] | None:
+    try:
+        parsed = urlparse(str(url or ""))
+    except ValueError:
+        return None
+    host = parsed.hostname or ""
+    if (
+        parsed.scheme == "wss"
+        and host.startswith("realtime.")
+        and host.endswith(".platform.kick.com")
+        and parsed.netloc == host
+        and parsed.path == "/connection/websocket"
+        and not parsed.query
+        and not parsed.fragment
+        and host.isascii()
+    ):
+        return host, parsed.path
+    return None
+
+
+def interpret_pusher(message: object) -> dict:
+    """One Pusher frame. An error means this app key is not the live one."""
+    if not isinstance(message, dict):
+        return {"op": "ignore"}
+    event = str(message.get("event") or "")
+    if event == "pusher:error":
+        return {"op": "error"}
+    if event == "pusher:ping":
+        return {"op": "ping"}
+    if event == "pusher:connection_established":
+        return {"op": "ready"}
+    if event.startswith("pusher:") or event.startswith("pusher_internal:"):
+        return {"op": "ignore"}
+    return {"op": "event"}
+
+
+def interpret_centrifugo(item: object) -> dict:
+    """One Centrifugo object, without the connection token or other secrets."""
+    if item == {}:
+        return {"op": "ping"}
+    if not isinstance(item, dict):
+        return {"op": "ignore"}
+    command_id = item.get("id")
+    if isinstance(command_id, int) and not isinstance(command_id, bool) and command_id > 0:
+        if item.get("error"):
+            return {"op": "error"}
+        for kind in ("connect", "subscribe", "refresh"):
+            result = item.get(kind)
+            if isinstance(result, dict):
+                kept = {key: result[key] for key in ("expires", "ttl", "ping", "pong") if key in result}
+                return {"op": kind, "result": kept}
+        return {"op": "ignore"}
+    push = item.get("push")
+    if not isinstance(push, dict):
+        return {"op": "ignore"}
+    if "disconnect" in push or "unsubscribe" in push:
+        return {"op": "closed"}
+    publication = push.get("pub") if isinstance(push.get("pub"), dict) else {}
+    data = publication.get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return {"op": "ignore"}
+    if isinstance(data, dict) and data.get("event"):
+        return {"op": "event", "event": str(data.get("event")), "data": data.get("data")}
+    return {"op": "ignore"}
 
 
 def validate_kick_watch(value: str) -> str:
@@ -427,14 +549,16 @@ def _read_frame(buf: _SocketBuffer) -> tuple[int, bytes]:
     return opcode, payload
 
 
-def _open_pusher() -> socket.socket:
-    raw = socket.create_connection((PUSHER_HOST, 443), timeout=20)
+def _open_websocket(host: str, path: str) -> tuple[socket.socket, _SocketBuffer]:
+    if any(ord(char) < 33 or ord(char) == 127 for char in f"{host}{path}"):
+        raise ApiError("Kick did not offer a public chat connection")
+    raw = socket.create_connection((host, 443), timeout=20)
     context = ssl.create_default_context()
-    sock = context.wrap_socket(raw, server_hostname=PUSHER_HOST)
+    sock = context.wrap_socket(raw, server_hostname=host)
     key = base64.b64encode(os.urandom(16)).decode("ascii")
     request = (
-        f"GET {PUSHER_PATH} HTTP/1.1\r\n"
-        f"Host: {PUSHER_HOST}\r\n"
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\n"
@@ -443,26 +567,260 @@ def _open_pusher() -> socket.socket:
         f"User-Agent: {KICK_UA}\r\n"
         "\r\n"
     )
-    sock.sendall(request.encode("ascii"))
-    buffered = b""
-    while b"\r\n\r\n" not in buffered:
-        chunk = sock.recv(4096)
-        if not chunk:
-            sock.close()
-            raise ApiError("Kick chat handshake closed before a response")
-        buffered += chunk
-        if len(buffered) > 65536:
-            sock.close()
-            raise ApiError("Kick chat handshake was too large")
-    head, rest = buffered.split(b"\r\n\r\n", 1)
-    status = head.split(b"\r\n", 1)[0]
-    if b" 101 " not in status:
+    try:
+        sock.sendall(request.encode("ascii"))
+        buffered = b""
+        while b"\r\n\r\n" not in buffered:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ApiError("Kick chat handshake closed before a response")
+            buffered += chunk
+            if len(buffered) > 65536:
+                raise ApiError("Kick chat handshake was too large")
+        head, rest = buffered.split(b"\r\n\r\n", 1)
+        status = head.split(b"\r\n", 1)[0]
+        if b" 101 " not in status:
+            raise ApiError("Kick chat refused the websocket connection")
+    except Exception:
         sock.close()
-        raise ApiError("Kick chat refused the websocket connection")
+        raise
     holder = _SocketBuffer(sock)
     holder.feed(rest)
-    sock._stream_donations_buffer = holder  # type: ignore[attr-defined]
-    return sock
+    return sock, holder
+
+
+class _PublicSocket:
+    """One negotiated Kick chat socket. The connection token is not kept."""
+
+    def __init__(self, transport: Transport, channel_id: int):
+        self.transport = transport
+        self.channel_id = int(channel_id)
+        self.sock: socket.socket | None = None
+        self.provider = ""
+        self._buf: _SocketBuffer | None = None
+        self._client_id = ""
+        self._next_id = 0
+        self._queue: list[bytes] = []
+        self._connected = False
+        self._refresh_at = float("inf")
+        self._pong = False
+
+    def close(self) -> None:
+        sock = self.sock
+        self.sock = None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def start(self) -> None:
+        self._client_id = str(uuid.uuid4())
+        last_error: ApiError | None = None
+        for provider, host, path in self._negotiate():
+            self.close()
+            self.provider = provider
+            self._connected = False
+            self._queue.clear()
+            self._next_id = 0
+            self._refresh_at = float("inf")
+            self._pong = False
+            try:
+                sock, buf = _open_websocket(host, path)
+                self.sock = sock
+                self._buf = buf
+                if provider == "centrifugo":
+                    self._command("connect", {
+                        "token": self._connection_token(),
+                        "name": "web",
+                        "version": "1",
+                    })
+                self._pump_until_connected()
+                return
+            except ApiError as exc:
+                last_error = exc
+                self.close()
+        raise last_error or ApiError("Kick did not offer a public chat connection")
+
+    def subscribe(self, names: list[str]) -> None:
+        for name in dict.fromkeys(names):
+            if self.provider == "pusher":
+                _send_text(self.sock, json.dumps({
+                    "event": "pusher:subscribe",
+                    "data": {"auth": "", "channel": name},
+                }))
+            else:
+                self._command("subscribe", {"channel": name})
+
+    def read_event(self) -> bytes | None:
+        """The next public event, or None when the socket is quiet."""
+        if self._queue:
+            return self._queue.pop(0)
+        self._maybe_refresh()
+        assert self.sock is not None
+        timeout = 50.0
+        if self._refresh_at < float("inf"):
+            timeout = min(timeout, max(1.0, self._refresh_at - time.monotonic()))
+        self.sock.settimeout(timeout)
+        try:
+            self._read_once()
+        except TimeoutError:
+            return None
+        if self._queue:
+            return self._queue.pop(0)
+        return None
+
+    def _negotiate(self) -> list[tuple[str, str, str]]:
+        body = {
+            "client": {"id": self._client_id, "type": "web"},
+            "capabilities": {
+                "accepted_providers": [
+                    {"provider": "centrifugo"},
+                    {"provider": "pusher"},
+                ]
+            },
+        }
+        last_error: ApiError | None = None
+        found: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for path in (f"/channels/{self.channel_id}/chat/connection", "/connection"):
+            try:
+                links = realtime_endpoints(self._post(path, body).json())
+            except (ApiError, OSError, TimeoutError, ValueError) as exc:
+                last_error = exc if isinstance(exc, ApiError) else ApiError(
+                    "Kick did not offer a public chat connection"
+                )
+                continue
+            for link in links:
+                if link in seen:
+                    continue
+                seen.add(link)
+                found.append(link)
+        if not found:
+            raise last_error or ApiError("Kick did not offer a public chat connection")
+        return found
+
+    def _post(self, path: str, body: dict):
+        result = self.transport.request(
+            "POST",
+            _REALTIME + path,
+            json_body=body,
+            headers={"Origin": "https://kick.com", "x-app-platform": "web"},
+            allow_hosts=KICK_HOSTS,
+            user_agent=KICK_UA,
+        )
+        if result.status >= 400:
+            raise ApiError(api_error_message(result), status=result.status)
+        return result
+
+    def _connection_token(self) -> str:
+        result = self._post("/auth/connection", {"client_id": self._client_id})
+        payload = result.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        token = data.get("token") if isinstance(data, dict) else None
+        if (
+            not isinstance(token, str)
+            or not 8 <= len(token) <= 4096
+            or not token.isascii()
+            or any(char.isspace() for char in token)
+        ):
+            raise ApiError("Kick did not offer a public chat connection")
+        return token
+
+    def _command(self, kind: str, data: dict) -> None:
+        self._next_id += 1
+        assert self.sock is not None
+        _send_text(self.sock, json.dumps({"id": self._next_id, kind: data}, separators=(",", ":")))
+
+    def _pump_until_connected(self) -> None:
+        deadline = time.monotonic() + 15
+        while not self._connected:
+            if time.monotonic() >= deadline:
+                raise ApiError("Kick chat did not finish opening")
+            assert self.sock is not None
+            self.sock.settimeout(max(1.0, deadline - time.monotonic()))
+            try:
+                self._read_once()
+            except TimeoutError as exc:
+                raise ApiError("Kick chat did not finish opening") from exc
+
+    def _read_once(self) -> None:
+        assert self._buf is not None and self.sock is not None
+        opcode, payload = _read_frame(self._buf)
+        if opcode == 8:
+            raise ApiError("Kick closed the public chat connection")
+        if opcode == 9:
+            _send_control(self.sock, 0xA, payload)
+            return
+        if opcode != 1 or not payload:
+            return
+        if self.provider == "pusher":
+            self._take_pusher(payload)
+        else:
+            self._take_centrifugo(payload)
+
+    def _take_pusher(self, payload: bytes) -> None:
+        try:
+            message = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        action = interpret_pusher(message)
+        if action["op"] == "error":
+            raise ApiError("Kick closed the public chat connection")
+        if action["op"] == "ping":
+            assert self.sock is not None
+            _send_text(self.sock, json.dumps({"event": "pusher:pong", "data": {}}))
+            return
+        if action["op"] == "ready":
+            self._connected = True
+            return
+        if action["op"] == "event":
+            self._queue.append(payload)
+
+    def _take_centrifugo(self, payload: bytes) -> None:
+        for line in payload.decode("utf-8", "replace").splitlines() or [""]:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            action = interpret_centrifugo(item)
+            op = action["op"]
+            if op == "ping":
+                if self._pong and self.sock is not None:
+                    _send_text(self.sock, "{}")
+                continue
+            if op in {"error", "closed"}:
+                raise ApiError("Kick closed the public chat connection")
+            if op == "connect":
+                self._connected = True
+                self._lease(action.get("result") or {})
+                continue
+            if op == "refresh":
+                self._lease(action.get("result") or {})
+                continue
+            if op == "event":
+                encoded = json.dumps(
+                    {"event": action["event"], "data": action.get("data")},
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                self._queue.append(encoded)
+
+    def _lease(self, result: dict) -> None:
+        if result.get("expires") is True:
+            ttl = as_int(result.get("ttl")) or 0
+            if ttl < 1:
+                raise ApiError("Kick closed the public chat connection")
+            self._refresh_at = time.monotonic() + max(ttl * 0.8, 1.0)
+        if result.get("pong") is True:
+            self._pong = True
+
+    def _maybe_refresh(self) -> None:
+        if self.provider != "centrifugo" or time.monotonic() < self._refresh_at:
+            return
+        self._refresh_at = float("inf")
+        self._command("refresh", {"token": self._connection_token()})
 
 
 class PublicKickChat:
@@ -524,7 +882,7 @@ class PublicKickChat:
         follow_flag, source = target.split("\n", 1)
         follow = follow_flag == "1"
         while not stop.is_set() and not self.store.collection_paused():
-            sock = None
+            session: _PublicSocket | None = None
             try:
                 slug = kick_slug(source)
                 if stop.is_set() or self.store.collection_paused():
@@ -532,20 +890,18 @@ class PublicKickChat:
                 info = self._lookup(slug)
                 if stop.is_set() or self.store.collection_paused():
                     return
-                sock = _open_pusher()
+                session = _PublicSocket(self.transport, info["channel_id"])
+                session.start()
                 with self._sock_lock:
                     if stop.is_set() or self.store.collection_paused():
-                        sock.close()
                         return
-                    self._sock = sock
-                buf: _SocketBuffer = sock._stream_donations_buffer  # type: ignore[attr-defined]
-                self._subscribe(sock, info)
+                    self._sock = session.sock
+                session.subscribe(self._channel_names(info))
                 if stop.is_set() or self.store.collection_paused():
                     return
                 self.error = ""
                 self.detail = public_kick_detail(info, follow)
                 self.store.set_status("kick", "ok", self.detail)
-                sock.settimeout(50)
                 next_live = time.monotonic() + 60
                 while not stop.is_set() and not self.store.collection_paused():
                     if follow and time.monotonic() >= next_live:
@@ -560,22 +916,11 @@ class PublicKickChat:
                             break
                         if fresh is not None:
                             info = fresh
-                    try:
-                        opcode, payload = _read_frame(buf)
-                    except TimeoutError:
-                        continue
+                    payload = session.read_event()
                     if stop.is_set() or self.store.collection_paused():
                         return
-                    if opcode == 8:
-                        break
-                    if opcode == 9:
-                        _send_control(sock, 0xA, payload)
-                        continue
-                    if opcode != 1 or not payload:
-                        continue
-                    self._on_message(sock, payload, info["slug"], stop)
-            except TimeoutError:
-                continue
+                    if payload and session.sock is not None:
+                        self._on_message(session.sock, payload, info["slug"], stop)
             except Exception as exc:
                 if stop.is_set() or self.store.collection_paused():
                     return
@@ -585,14 +930,22 @@ class PublicKickChat:
                 self.store.set_status("kick", "error", self.error, error=self.error)
                 stop.wait(15)
             finally:
+                sock = session.sock if session is not None else None
                 with self._sock_lock:
                     if self._sock is sock:
                         self._sock = None
-                if sock is not None:
-                    try:
-                        sock.close()
-                    except OSError:
-                        pass
+                if session is not None:
+                    session.close()
+
+    def stream_title(self, watch: str) -> str:
+        """Title of the broadcast on this channel. Offline, or a bare chat id, has none."""
+        slug = kick_slug(watch)
+        if not slug or slug.isdigit():
+            return ""
+        info = self._lookup(slug)
+        if info.get("live") is not True:
+            return ""
+        return ledger_title(info.get("title"))
 
     def _lookup(self, slug: str) -> dict:
         if slug.isdigit():
@@ -652,7 +1005,7 @@ class PublicKickChat:
         self.store.set_status("kick", "ok", self.detail)
         return fresh
 
-    def _subscribe(self, sock: socket.socket, info: dict) -> None:
+    def _channel_names(self, info: dict) -> list[str]:
         chatroom_id = info["chatroom_id"]
         channel_id = info["channel_id"]
         names = [
@@ -662,11 +1015,7 @@ class PublicKickChat:
             f"channel.{channel_id}",
             f"channel_{channel_id}",
         ]
-        for name in dict.fromkeys(names):
-            _send_text(sock, json.dumps({
-                "event": "pusher:subscribe",
-                "data": {"auth": "", "channel": name},
-            }))
+        return list(dict.fromkeys(names))
 
     def _on_message(self, sock: socket.socket, payload: bytes, channel_slug: str, stop: threading.Event) -> None:
         if stop.is_set() or self.store.collection_paused():

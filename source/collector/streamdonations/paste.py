@@ -74,7 +74,8 @@ _NEW_MEMBERSHIP = re.compile(r"^New\s+member$|^Welcome to .+$", re.ASCII)
 # Live Till compiles this and never matches it. The type is the "Super Sticker" line.
 re.compile(r"^[A-Z][a-z0-9\s]*$", re.ASCII)
 _KICK_GIFT = re.compile(r"^Gifted \d+ subscriptions? to the community!", re.ASCII)
-_KICK_STICKER = re.compile(r"^sent [A-Z][A-Za-z\s]*$", re.ASCII)
+# "sent Cat Jam" is the older copy. Kick now also copies a bare "sent".
+_KICK_STICKER = re.compile(r"^sent(?: [A-Z][A-Za-z\s]*)?$", re.ASCII)
 _RUMBLE_GIFT = re.compile(r"^Gifted \d+ subscriptions? to (?!the community!).+", re.ASCII)
 _KICK_COIN_LINE = re.compile(r"^\d{1,3}(?:,\d{3})+$|^\d+$", re.ASCII)
 _AMOUNT = re.compile(r"^\d*\.?\d+$", re.ASCII)
@@ -303,6 +304,7 @@ def _parse_single(text: str, price: float | None) -> ParseOutput:
     membership: MembershipDonation | None = None
     donation_type = "Super Chat"
     amount_from_currency = False
+    message_locked = False
     group = 0
     group_has_content = False
     leftovers: list[tuple[str, int]] = []
@@ -387,7 +389,12 @@ def _parse_single(text: str, price: float | None) -> ParseOutput:
                 donation_type = "Super Chat" if coins >= KICK_SUPER_CHAT_MIN_COINS else "Super Sticker"
                 amount = f"{coins / 100:.2f}"
                 currency = "USD"
-                message = one_line(coin_message or _SENT_PREFIX.sub("", line, count=1))
+                emote = ""
+                prefix = _SENT_PREFIX.match(line)
+                if prefix is not None:
+                    emote = line[prefix.end():].strip()
+                message = one_line(coin_message or emote)
+                message_locked = True
                 index = coin_index + 1
                 continue
 
@@ -405,7 +412,7 @@ def _parse_single(text: str, price: float | None) -> ParseOutput:
         leftovers.append((line, group))
         index += 1
 
-    if not message:
+    if not message and not message_locked:
         after_header = next((item for item in leftovers if item[1] >= 1), None)
         message = after_header[0] if after_header is not None else (leftovers[0][0] if leftovers else "")
 
