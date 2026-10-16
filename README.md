@@ -33,7 +33,7 @@ A copy you can move to another Linux machine, with Electron and Python beside th
 
 ### Windows
 
-GitHub Actions builds the Windows copy on every push and pull request (workflow `Windows build`). Open the run under the repository's Actions tab, download the `SuperBerry-windows-x64` artifact, and unzip it. GitHub wraps the artifact in its own zip, so unzip twice. Start `SuperBerry.cmd` in the `SuperBerry-windows-x64` folder. Keep the folder whole: `electron`, `app`, `collector`, and `python` sit beside the launcher. If `python\python.exe` is missing, SuperBerry says so and stops. The same zip is built locally with `python3 scripts/package-windows.py`, which writes `dist/SuperBerry-windows-x64.zip` on any OS.
+GitHub Actions builds the Windows copy on every push and pull request (workflow `Windows build`). Open the run under the repository's Actions tab, download the `SuperBerry-windows-x64` artifact, and unzip it. GitHub wraps the artifact in its own zip, so unzip twice. `SuperBerry.exe` at the root of that zip is the whole app. The first launch unpacks it under `%LOCALAPPDATA%\SuperBerry\runtime` and starts SuperBerry. Later launches use that copy, so the exe can sit anywhere by itself. The `SuperBerry-windows-x64` folder is the same files unpacked, and `SuperBerry.cmd` there starts them in place. Keep that folder whole if you use it: `electron`, `app`, `collector`, and `python` sit beside the command. If `python\python.exe` is missing, SuperBerry says so and stops. The same zip is built locally with `python3 scripts/package-windows.py`, which writes `dist/SuperBerry-windows-x64.zip` on any OS and, on Windows, `dist/SuperBerry.exe`.
 
 The build is not signed, so SmartScreen may warn the first time. On Windows:
 

@@ -13,9 +13,14 @@ three pieces as scripts/package-linux.sh:
 
 The ledger is not copied. Nothing is installed. Downloads are cached in build/.
 Runs on any OS with Python 3.9+, so CI and Linux can both produce the zip.
+On Windows it also writes SuperBerry.exe: the same folder, packed into one file.
+The first launch unpacks under %LOCALAPPDATA%\\SuperBerry\\runtime.
 """
 
 import argparse
+import hashlib
+import os
+import subprocess
 import tarfile
 import json
 import shutil
@@ -106,6 +111,82 @@ def assemble(dist, electron_zip, python_zip, tzdata_tar, certifi_tar):
     (dist / "SuperBerry.cmd").write_bytes(LAUNCHER.encode("ascii"))
 
 
+def launcher_compiler():
+    """The .NET Framework C# compiler ships with Windows. Linux builds the zip only."""
+    if sys.platform != "win32":
+        return None
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    candidate = Path(windir) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def compile_launcher(compiler, cache):
+    source = ROOT / "scripts" / "superberry-win-launcher.cs"
+    compiled = cache / "SuperBerryLauncher.exe"
+    subprocess.run(
+        [
+            str(compiler),
+            "/nologo",
+            "/target:winexe",
+            "/optimize+",
+            "/r:System.IO.Compression.dll",
+            "/r:System.IO.Compression.FileSystem.dll",
+            "/r:System.Windows.Forms.dll",
+            "/r:System.Drawing.dll",
+            "/out:" + str(compiled),
+            str(source),
+        ],
+        check=True,
+    )
+    if not compiled.is_file():
+        raise SystemExit("The Windows launcher did not compile.")
+    return compiled
+
+
+def pack_executable(stub, package_dir, dest):
+    """Append the portable folder as a zip, then its SHA-256 and length."""
+    payload_path = dest.with_suffix(".payload.zip")
+    if payload_path.exists():
+        payload_path.unlink()
+    with zipfile.ZipFile(payload_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(package_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if "__pycache__" in path.parts or path.suffix == ".pyc":
+                continue
+            archive.write(path, path.relative_to(package_dir).as_posix())
+    digest = hashlib.sha256()
+    length = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open("wb") as out, stub.open("rb") as stub_file, payload_path.open("rb") as payload:
+        shutil.copyfileobj(stub_file, out)
+        while True:
+            block = payload.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+            length += len(block)
+            out.write(block)
+        out.write(digest.digest())
+        out.write(length.to_bytes(8, "little"))
+    payload_path.unlink()
+    if length < 4:
+        raise SystemExit("The Windows package zip was empty.")
+
+
+def write_executable(package_dir, dest, cache, required=False):
+    compiler = launcher_compiler()
+    if compiler is None:
+        if required:
+            raise SystemExit("SuperBerry.exe needs the .NET Framework C# compiler (csc.exe).")
+        return False
+    stub = compile_launcher(compiler, cache)
+    pack_executable(stub, package_dir, dest)
+    return True
+
+
 def check(dist):
     needed = [
         "SuperBerry.cmd",
@@ -124,11 +205,23 @@ def check(dist):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default=str(ROOT / "dist"), help="output folder (default dist/)")
+    parser.add_argument(
+        "--from-folder",
+        default="",
+        help="wrap this existing portable folder as SuperBerry.exe and skip downloads",
+    )
     args = parser.parse_args(argv)
     cache = ROOT / "build" / "windows"
     cache.mkdir(parents=True, exist_ok=True)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if args.from_folder:
+        dist = Path(args.from_folder)
+        check(dist)
+        exe = out / "SuperBerry.exe"
+        write_executable(dist, exe, cache, required=True)
+        print(f"App: {exe}")
+        return 0
     dist = out / "SuperBerry-windows-x64"
     assemble(
         dist,
@@ -139,6 +232,13 @@ def main(argv=None):
     )
     check(dist)
     archive = shutil.make_archive(str(dist), "zip", root_dir=out, base_dir=dist.name)
+    exe = out / "SuperBerry.exe"
+    if write_executable(dist, exe, cache):
+        with zipfile.ZipFile(archive, "a") as zipped:
+            zipped.write(exe, "SuperBerry.exe")
+        print(f"App: {exe}")
+    else:
+        print("SuperBerry.exe is built when this script runs on Windows.")
     print(f"Portable folder: {dist}")
     print(f"Zip: {archive}")
     return 0

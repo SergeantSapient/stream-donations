@@ -6,6 +6,8 @@ Wishlist work is considerable unless the request says it is major. Record a chan
 
 ## 1.7.0 — 2026-10-16
 
+- 2026-10-16 — Peripheral. A self-contained SuperBerry.exe unpacks on its first launch and starts from that copy afterward.
+
 - 2026-10-16 — Peripheral. Closing SuperBerry closes every window it opened, and the main window stays on the app instead of a raw sign-in page.
 
 - 2026-10-16 — Peripheral. The Windows package includes a certificate bundle, so a new Windows machine can reach YouTube, Kick, and Rumble.
