@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.7.0 — 2026-10-16
+
+- 2026-10-16 — Considerable. Windows build. A portable Windows x64 zip is built by GitHub Actions with Electron, a private Python, and the collector. Kick signatures are checked without OpenSSL, archive paths with odd characters open read-only, the collector closes its database when the app quits, and notifications use the system on Windows. Battery stays hidden off Linux.
+
 ## 1.6.10 — 2026-10-16
 
 - 2026-10-16 — Peripheral. Closing the last ledger opens a new blank one, and that blank ledger does not ask for addresses.

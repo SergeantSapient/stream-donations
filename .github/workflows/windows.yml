@@ -1,0 +1,54 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Collector tests
+        env:
+          PYTHONPATH: source/collector
+        run: python -m unittest discover -s source/collector/tests
+
+  package:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check main.js
+        run: |
+          node --check source/electron/main.js
+          node --check source/electron/preload.js
+      - name: Build the portable zip
+        run: python scripts/package-windows.py
+      - name: Bundled Python loads the collector
+        shell: pwsh
+        run: |
+          dist\SuperBerry-windows-x64\python\python.exe -c "import sqlite3, ssl, streamdonations.server, streamdonations.kick_sig; print('collector ok')"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperBerry-windows-x64
+          path: dist/SuperBerry-windows-x64.zip
+          if-no-files-found: error

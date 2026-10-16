@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -13,6 +13,11 @@ const PORT = process.env.STREAM_DONATIONS_PORT || "47321";
 if (process.platform === "linux") {
   app.setName("stream-donations");
   app.commandLine.appendSwitch("class", "stream-donations");
+}
+
+if (process.platform === "win32") {
+  // Windows ties toast notifications to this id.
+  app.setAppUserModelId("com.sergeantsapient.superberry");
 }
 
 // The embed address is looked up after the click, so Chromium would treat
@@ -1204,15 +1209,72 @@ function dataDir() {
   return defaultDataDir();
 }
 
+// The packaged layout keeps Python beside app/. python-build-standalone and the
+// Windows embeddable CPython put the executable in different places.
+function bundledPython(platform = process.platform) {
+  if (platform === "win32") {
+    return path.resolve(__dirname, "..", "python", "python.exe");
+  }
+  return path.resolve(__dirname, "..", "python", "bin", "python3");
+}
+
 function pythonCommand() {
   if (process.env.STREAM_DONATIONS_PYTHON) {
     return process.env.STREAM_DONATIONS_PYTHON;
   }
-  const bundled = path.resolve(__dirname, "..", "python", "bin", "python3");
+  const bundled = bundledPython();
   if (fs.existsSync(bundled)) {
     return bundled;
   }
+  if (process.platform === "win32") {
+    // "python3" on Windows is usually the Microsoft Store stub, not a Python.
+    throw new Error(
+      "SuperBerry could not find its Python at " + bundled + ".\n"
+      + "Unpack the whole SuperBerry folder again, or set STREAM_DONATIONS_PYTHON to a python.exe.",
+    );
+  }
   return "python3";
+}
+
+const NOTIFY_PREFIX = "STREAM_DONATIONS_NOTIFY ";
+
+// The collector writes one line per notice when STREAM_DONATIONS_NOTIFY=shell.
+function showCollectorNotice(line) {
+  if (!line.startsWith(NOTIFY_PREFIX)) return false;
+  let notice = null;
+  try {
+    notice = JSON.parse(line.slice(NOTIFY_PREFIX.length));
+  } catch (_error) {
+    return true;
+  }
+  if (!notice || typeof notice.title !== "string" || !notice.title) return true;
+  if (!Notification.isSupported()) return true;
+  try {
+    new Notification({
+      title: notice.title.slice(0, 180),
+      body: typeof notice.body === "string" ? notice.body.slice(0, 240) : "",
+      icon: windowIcon(),
+      silent: false,
+    }).show();
+  } catch (_error) {
+    // A notice that cannot be shown is dropped. The ledger row is already stored.
+  }
+  return true;
+}
+
+function watchCollectorLines(child) {
+  let buffer = "";
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      showCollectorNotice(line);
+      newline = buffer.indexOf("\n");
+    }
+    if (buffer.length > 65536) buffer = "";
+  });
 }
 
 function rememberStderr(chunk) {
@@ -1255,6 +1317,15 @@ function waitForReady(child) {
       clearTimeout(timer);
       reject(new Error(`Collector exited (${code}).\n${stderrTail}`));
     });
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`The collector could not start: ${error.message}\n${stderrTail}`));
+    });
   });
 }
 
@@ -1272,11 +1343,16 @@ function startCollector() {
         PYTHONNOUSERSITE: "1",
         STREAM_DONATIONS_TOKEN: TOKEN,
         STREAM_DONATIONS_DATA: dataDir(),
+        STREAM_DONATIONS_STOP_ON_STDIN: "1",
+        STREAM_DONATIONS_NOTIFY: process.platform === "linux" ? "" : "shell",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     },
   );
   child.stderr.on("data", rememberStderr);
+  child.stdin.on("error", () => {});
+  watchCollectorLines(child);
   child.on("exit", (code) => {
     if (!quitting && code !== 0) {
       dialog.showErrorBox(
@@ -1299,17 +1375,48 @@ function windowIcon() {
   return image.isEmpty() ? undefined : image;
 }
 
+const COLLECTOR_STOP_MS = 5000;
+
+// Closing stdin asks the collector to stop, so its cleanup closes the database.
+// Windows has no SIGTERM for a child, so that is the only gentle signal there.
+// A collector that has not exited after COLLECTOR_STOP_MS is killed.
 function stopCollector() {
-  if (!collector || collector.exitCode !== null) {
-    return;
-  }
-  collector.kill("SIGTERM");
   const child = collector;
-  setTimeout(() => {
-    if (child.exitCode === null) {
-      child.kill("SIGKILL");
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    child.once("exit", finish);
+    const timer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch (_error) {
+          // Already gone.
+        }
+      }
+      finish();
+    }, COLLECTOR_STOP_MS);
+    try {
+      child.stdin.end("stop\n");
+    } catch (_error) {
+      // The pipe is already closed.
     }
-  }, 2000).unref();
+    if (process.platform !== "win32") {
+      try {
+        child.kill("SIGTERM");
+      } catch (_error) {
+        // Already gone.
+      }
+    }
+  });
 }
 
 async function openWindow(port) {
@@ -1386,9 +1493,19 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on("before-quit", () => {
+let collectorStopped = false;
+
+app.on("before-quit", (event) => {
   quitting = true;
-  stopCollector();
+  if (collectorStopped || !collector || collector.exitCode !== null) {
+    return;
+  }
+  // Wait for the collector so the database is closed before the app is gone.
+  event.preventDefault();
+  stopCollector().finally(() => {
+    collectorStopped = true;
+    app.quit();
+  });
 });
 
 app.on("window-all-closed", () => {

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from streamdonations.archive import ARCHIVE_NAME, read_archived_document, write_archived_ledger
+from streamdonations.archive import ARCHIVE_NAME, _read_only_uri, read_archived_document, write_archived_ledger
 from streamdonations.normalize import Donation
 from streamdonations.store import _SCHEMA, Store
 
@@ -71,7 +71,8 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.store.get_setting("blue_scripts"), "BLUE-SOURCE-MARKER")
 
         archive = Path(self.tmp.name) / ARCHIVE_NAME
-        self.assertEqual(os.stat(archive).st_mode & 0o777, 0o600)
+        if os.name != "nt":  # Windows has no Unix permission bits.
+            self.assertEqual(os.stat(archive).st_mode & 0o777, 0o600)
         blob = archive.read_bytes()
         for marker in ("SECRET-MARKER", "RUMBLE-URL-MARKER", "FX-MARKER", "PRESET-MARKER", "BLUE-SOURCE-MARKER"):
             self.assertNotIn(marker.encode(), blob)
@@ -174,3 +175,48 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(names, ["Bea"])
         document = read_archived_document(path)
         self.assertEqual(json.loads(json.dumps(document["tabs"][0]["stream_title"])), "Friday")
+
+
+class ArchivePathTests(unittest.TestCase):
+    """A folder name with URI characters still opens read-only."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _round_trip(self, folder_name: str) -> None:
+        folder = Path(self.tmp.name) / folder_name
+        folder.mkdir()
+        path = folder / ARCHIVE_NAME
+        tab = {"id": "tab-1", "stream_title": "Friday"}
+        row = {
+            "id": 1, "dedupe_key": "k", "platform": "youtube", "kind": "super_chat",
+            "external_id": "k", "channel": "", "author_name": "Ada", "author_id": "",
+            "message": "", "amount_value": 5, "amount_micros": 5_000_000, "currency": "USD",
+            "created_at": "2024-06-01T00:00:00Z", "received_at": "2024-06-01T00:00:00Z",
+            "processed": 0, "processed_at": None, "note": "", "raw_json": "{}", "hidden": 0,
+            "stream_id": "tab-1",
+        }
+        self.assertEqual(write_archived_ledger(path, _SCHEMA, tab, [row]), 1)
+        document = read_archived_document(path)
+        self.assertEqual(document["active_id"], "tab-1")
+        self.assertEqual([item["id"] for item in document["tabs"]], ["tab-1"])
+        uri = _read_only_uri(path)
+        self.assertTrue(uri.startswith("file:"))
+        self.assertTrue(uri.endswith("?mode=ro"))
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM donations").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("DELETE FROM donations")
+        finally:
+            connection.close()
+
+    def test_percent_hash_and_space_in_the_folder(self):
+        self._round_trip("Super 100% #1 fan")
+
+    @unittest.skipIf(os.name == "nt", "Windows file names cannot hold ?")
+    def test_question_mark_in_the_folder(self):
+        self._round_trip("what?mode=rw")

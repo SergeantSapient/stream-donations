@@ -1,5 +1,6 @@
 """Ledger storage, processing flags, and spreadsheet-safe export."""
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -166,6 +167,7 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("Ben", exported)
         self.assertNotIn("Cam", exported)
 
+    @unittest.skipIf(os.name == "nt", "Windows has no Unix permission bits")
     def test_database_file_is_private(self):
         mode = self.store.path.stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)

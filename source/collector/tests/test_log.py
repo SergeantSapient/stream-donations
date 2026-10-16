@@ -122,8 +122,9 @@ class LogFileTests(unittest.TestCase):
         self.store.log("ledger", "info", long_line)
         path = self.store.log_path()
         self.assertEqual(path.name, LOG_NAME)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        if os.name != "nt":  # Windows has no Unix permission bits.
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
         self.assertIn(long_line, path.read_text(encoding="utf-8"))
         self.assertEqual(self.store.recent_log(1)[0]["message"], long_line)
 
@@ -149,7 +150,8 @@ class LogFileTests(unittest.TestCase):
         self.assertIn("after-delete", restarted)
         self.assertNotIn("row-0", restarted)
         self.assertNotIn(long_line, restarted)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_a_symlink_is_not_followed(self):
         target = Path(self.tmp.name) / "elsewhere.txt"

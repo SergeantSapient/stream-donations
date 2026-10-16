@@ -2,12 +2,16 @@
 
 Linux talks to the FreeDesktop notification service. KDE, GNOME, and the
 other desktops that implement org.freedesktop.Notifications all receive the
-same call. Windows and macOS do not have a backend yet; system_notifier()
-is the place those belong.
+same call. On Windows and macOS the desktop shell shows them: the collector
+writes one STREAM_DONATIONS_NOTIFY line per notice on stdout, and Electron
+turns that into a system notification. A collector run without the shell
+there has no backend.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import queue
 import shutil
 import subprocess
@@ -55,6 +59,50 @@ class UnavailableNotifier(NullNotifier):
             self._log(message)
         except Exception:
             return
+
+
+SHELL_PREFIX = "STREAM_DONATIONS_NOTIFY "
+
+
+class ShellNotifier:
+    """Hand each notice to the desktop shell as one JSON line on stdout."""
+
+    def __init__(self, write: Callable[[str], object] | None = None, log: Log | None = None) -> None:
+        self._write = write
+        self._log = log
+        self._lock = threading.Lock()
+        self._warned = False
+
+    def donations_added(self, donations: Sequence[Donation], *, membership_price: float | None) -> None:
+        for donation in donations:
+            summary, body = notification_text(donation, membership_price)
+            if summary:
+                self._emit(summary, body)
+
+    def post(self, summary: str, body: str = "") -> bool:
+        text = _plain(summary, 180)
+        if not text:
+            return False
+        return self._emit(text, _plain(body, 240))
+
+    def _emit(self, summary: str, body: str) -> bool:
+        line = SHELL_PREFIX + json.dumps({"title": summary, "body": body}, ensure_ascii=True) + "\n"
+        try:
+            with self._lock:
+                if self._write is not None:
+                    self._write(line)
+                else:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            return True
+        except (OSError, ValueError):
+            if not self._warned and self._log is not None:
+                self._warned = True
+                try:
+                    self._log("System notifications could not be sent.")
+                except Exception:
+                    pass
+            return False
 
 
 class FreedesktopNotifier:
@@ -188,10 +236,12 @@ class FreedesktopNotifier:
 def system_notifier(log: Log | None = None):
     """The backend for this operating system.
 
-    Linux uses FreeDesktop notifications. A Windows toast backend and a
-    macOS UserNotifications backend should replace the unavailable notifier
-    here, leaving donations_added() unchanged.
+    The desktop shell sets STREAM_DONATIONS_NOTIFY=shell on Windows and
+    macOS, and shows each notice itself. Linux uses FreeDesktop
+    notifications. Anything else has no backend.
     """
+    if os.environ.get("STREAM_DONATIONS_NOTIFY", "").strip() == "shell":
+        return ShellNotifier(log=log)
     if sys.platform.startswith("linux"):
         return FreedesktopNotifier(log=log)
     return UnavailableNotifier(sys.platform, log=log)

@@ -84,12 +84,20 @@ def read_archived_document(path: Path) -> dict:
     destination = Path(path)
     if not destination.is_file():
         return {"active_id": "", "tabs": []}
-    connection = sqlite3.connect(f"file:{destination}?mode=ro", uri=True)
+    connection = sqlite3.connect(_read_only_uri(destination), uri=True)
     try:
         connection.row_factory = sqlite3.Row
         return _archived_document(connection, None)
     finally:
         connection.close()
+
+
+def _read_only_uri(path: Path) -> str:
+    """A file: URI for read-only open. %, #, ?, and spaces in the path are escaped.
+
+    Windows paths become file:///C:/..., which SQLite reads on Windows.
+    """
+    return Path(path).resolve().as_uri() + "?mode=ro"
 
 
 def _archived_document(connection: sqlite3.Connection, tab: dict | None) -> dict:

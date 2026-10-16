@@ -1,5 +1,8 @@
 """Desktop notifications fire for new automated ledger rows only."""
 
+import io
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -8,7 +11,9 @@ from pathlib import Path
 
 from streamdonations.normalize import Donation, normalize_super_chat_event
 from streamdonations.notify import (
+    SHELL_PREFIX,
     FreedesktopNotifier,
+    ShellNotifier,
     UnavailableNotifier,
     notification_text,
     system_notifier,
@@ -157,6 +162,47 @@ class FreedesktopCommandTests(unittest.TestCase):
             self.assertIsNone(notifier._thread)
         else:
             self.assertIsInstance(notifier, UnavailableNotifier)
+
+
+class ShellNotifierTests(unittest.TestCase):
+    """Windows and macOS: the Electron shell shows what the collector writes."""
+
+    def test_the_shell_backend_is_chosen_by_the_environment(self):
+        previous = os.environ.get("STREAM_DONATIONS_NOTIFY")
+        os.environ["STREAM_DONATIONS_NOTIFY"] = "shell"
+        try:
+            self.assertIsInstance(system_notifier(), ShellNotifier)
+        finally:
+            if previous is None:
+                del os.environ["STREAM_DONATIONS_NOTIFY"]
+            else:
+                os.environ["STREAM_DONATIONS_NOTIFY"] = previous
+
+    def test_each_notice_is_one_json_line(self):
+        out = io.StringIO()
+        notifier = ShellNotifier(write=out.write)
+        notifier.donations_added([_chat("a", message="line one\nline two")], membership_price=None)
+        self.assertTrue(notifier.post("BLUE says hi", "from a script"))
+        self.assertFalse(notifier.post("   "))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertTrue(line.startswith(SHELL_PREFIX))
+        first = json.loads(lines[0][len(SHELL_PREFIX):])
+        self.assertEqual(first["title"], notification_text(_chat("a", message="line one\nline two"), None)[0])
+        self.assertIn("YouTube", first["body"])
+        self.assertEqual(json.loads(lines[1][len(SHELL_PREFIX):]), {"title": "BLUE says hi", "body": "from a script"})
+
+    def test_a_closed_stdout_is_logged_once(self):
+        notes = []
+
+        def broken(_line):
+            raise OSError("closed")
+
+        notifier = ShellNotifier(write=broken, log=notes.append)
+        self.assertFalse(notifier.post("one"))
+        self.assertFalse(notifier.post("two"))
+        self.assertEqual(notes, ["System notifications could not be sent."])
 
 
 class StoreNotificationTests(unittest.TestCase):

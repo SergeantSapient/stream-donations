@@ -113,6 +113,10 @@ def _serve(args) -> int:
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+    if os.environ.get("STREAM_DONATIONS_STOP_ON_STDIN", "").strip() == "1":
+        # Windows has no SIGTERM a parent can send. The desktop shell closes
+        # stdin instead, and this stops the server so the cleanup below runs.
+        threading.Thread(target=_stop_when_stdin_closes, args=(server,), name="stdin-stop", daemon=True).start()
     try:
         server.serve_forever()
     finally:
@@ -120,6 +124,19 @@ def _serve(args) -> int:
         server.server_close()
         store.close()
     return 0
+
+
+def _stop_when_stdin_closes(server, stream=None) -> None:
+    """Shut the server down when stdin reaches end of file or says stop."""
+    source = sys.stdin if stream is None else stream
+    try:
+        while True:
+            line = source.readline()
+            if not line or line.strip() == "stop":
+                break
+    except (OSError, ValueError):
+        pass
+    server.shutdown()
 
 
 def _export(args) -> int:

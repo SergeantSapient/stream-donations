@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.6.10` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.7.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -46,7 +46,7 @@ Each item is a **considerable** version change unless the request says it is maj
 
 6. **Update in place.** Check a list of repos for a newer version and update only after the user allows it. Tell them with a non-disruptive notification. Needs a reliable repo (most likely GitHub, if that stays inside its terms of service).
 
-7. **Other platform binaries.** Windows and macOS first, then ARM and Android. Mobile is the less familiar target. Before a port, say which features survive cleanly and which have to be cut or compromised.
+7. **Other platform binaries.** Windows and macOS first, then ARM and Android. Windows started in 1.7.0: GitHub Actions builds a portable x64 zip (see README, Windows). Battery is hidden there and file modes are not enforced. It has not been run on a real Windows machine yet. macOS, ARM, and Android are not started. Mobile is the less familiar target. Before a port, say which features survive cleanly and which have to be cut or compromised.
 
 8. **Headless mode.** A terminate-and-stay-resident, daemon, or headless option, perhaps a CLI flag. No UI. It keeps recording donations. The CLI should have a watch mode that shows the log as rows are added, plus a total, the last donation, and health.
 

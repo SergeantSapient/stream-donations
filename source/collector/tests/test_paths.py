@@ -1,5 +1,6 @@
 """The ledger stays in the home directory, never in the application folder."""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,7 +59,8 @@ class DataDirTests(unittest.TestCase):
         self.assertEqual((resolved / "donations.db").read_bytes(), b"legacy-db")
         self.assertEqual((resolved / "donations.db-wal").read_bytes(), b"wal")
         self.assertFalse(legacy.exists())
-        self.assertEqual((resolved / "donations.db").stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # Windows has no Unix permission bits.
+            self.assertEqual((resolved / "donations.db").stat().st_mode & 0o777, 0o600)
 
     def test_default_home_path_still_migrates_when_the_env_points_there(self):
         legacy = self._legacy()
