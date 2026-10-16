@@ -1329,6 +1329,18 @@ function waitForReady(child) {
   });
 }
 
+// OpenSSL does not fetch Windows roots on demand. The package ships this file.
+function withCaBundle(env, root) {
+  if (String(env.SSL_CERT_FILE || "").trim() || String(env.SSL_CERT_DIR || "").trim()) {
+    return env;
+  }
+  const bundle = path.join(root, "cacert.pem");
+  if (fs.existsSync(bundle)) {
+    env.SSL_CERT_FILE = bundle;
+  }
+  return env;
+}
+
 function startCollector() {
   const root = collectorRoot();
   fs.mkdirSync(dataDir(), { recursive: true });
@@ -1336,7 +1348,7 @@ function startCollector() {
     pythonCommand(),
     ["-m", "streamdonations", "serve", "--port", String(PORT)],
     {
-      env: {
+      env: withCaBundle({
         ...process.env,
         PYTHONPATH: root,
         PYTHONUNBUFFERED: "1",
@@ -1345,7 +1357,7 @@ function startCollector() {
         STREAM_DONATIONS_DATA: dataDir(),
         STREAM_DONATIONS_STOP_ON_STDIN: "1",
         STREAM_DONATIONS_NOTIFY: process.platform === "linux" ? "" : "shell",
-      },
+      }, root),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     },

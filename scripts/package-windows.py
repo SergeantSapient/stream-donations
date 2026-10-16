@@ -8,7 +8,7 @@ three pieces as scripts/package-linux.sh:
       SuperBerry.cmd        starts electron\\electron.exe app
       electron/             Electron win32-x64 (version from package.json)
       app/                  main.js, preload.js, package.json, icon.png
-      collector/            streamdonations, tzdata
+      collector/            streamdonations, tzdata, cacert.pem
       python/python.exe     python.org embeddable CPython
 
 The ledger is not copied. Nothing is installed. Downloads are cached in build/.
@@ -30,6 +30,13 @@ PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON
 ELECTRON_URL = "https://github.com/electron/electron/releases/download/v{0}/electron-v{0}-win32-x64.zip"
 # Windows has no system time zone database; zoneinfo reads this package instead.
 TZDATA_URL = "https://files.pythonhosted.org/packages/source/t/tzdata/tzdata-2025.2.tar.gz"
+# certifi 2026.7.22, the Mozilla CA bundle. A new Windows install does not
+# have those roots in the local store, and embeddable CPython will not fetch them.
+CERTIFI_URL = (
+    "https://files.pythonhosted.org/packages/a3/c2/"
+    "24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/"
+    "certifi-2026.7.22.tar.gz"
+)
 APP_FILES = ("package.json", "main.js", "preload.js", "icon.png")
 LAUNCHER = '@echo off\r\nstart "" "%~dp0electron\\electron.exe" "%~dp0app" %*\r\n'
 
@@ -69,7 +76,16 @@ def add_tzdata(collector, tzdata_tar):
             target.write_bytes(archive.extractfile(member).read())
 
 
-def assemble(dist, electron_zip, python_zip, tzdata_tar):
+def add_ca_bundle(collector, certifi_tar):
+    with tarfile.open(certifi_tar) as archive:
+        member = next(name for name in archive.getnames() if name.endswith("/certifi/cacert.pem"))
+        data = archive.extractfile(member).read()
+    if b"BEGIN CERTIFICATE" not in data:
+        raise SystemExit("Certificate bundle was not a PEM file.")
+    (collector / "cacert.pem").write_bytes(data)
+
+
+def assemble(dist, electron_zip, python_zip, tzdata_tar, certifi_tar):
     if dist.exists():
         shutil.rmtree(dist)
     (dist / "app").mkdir(parents=True)
@@ -86,6 +102,7 @@ def assemble(dist, electron_zip, python_zip, tzdata_tar):
         archive.extractall(dist / "python")
     enable_collector_path(dist / "python")
     add_tzdata(dist / "collector", tzdata_tar)
+    add_ca_bundle(dist / "collector", certifi_tar)
     (dist / "SuperBerry.cmd").write_bytes(LAUNCHER.encode("ascii"))
 
 
@@ -97,6 +114,7 @@ def check(dist):
         "collector/streamdonations/__main__.py",
         "python/python.exe",
         "collector/tzdata/zoneinfo/America/Los_Angeles",
+        "collector/cacert.pem",
     ]
     missing = [name for name in needed if not (dist / name).is_file()]
     if missing:
@@ -112,7 +130,13 @@ def main(argv=None):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     dist = out / "SuperBerry-windows-x64"
-    assemble(dist, fetch(ELECTRON_URL.format(electron_version()), cache), fetch(PYTHON_URL, cache), fetch(TZDATA_URL, cache))
+    assemble(
+        dist,
+        fetch(ELECTRON_URL.format(electron_version()), cache),
+        fetch(PYTHON_URL, cache),
+        fetch(TZDATA_URL, cache),
+        fetch(CERTIFI_URL, cache),
+    )
     check(dist)
     archive = shutil.make_archive(str(dist), "zip", root_dir=out, base_dir=dist.name)
     print(f"Portable folder: {dist}")
