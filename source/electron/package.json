@@ -1,7 +1,7 @@
 {
   "name": "stream-donations",
   "productName": "SuperBerry",
-  "version": "1.8.0",
+  "version": "1.8.4",
   "private": true,
   "description": "Local ledger for YouTube, Rumble, and Kick donations.",
   "main": "main.js",

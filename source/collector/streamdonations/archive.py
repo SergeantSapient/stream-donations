@@ -92,6 +92,130 @@ def read_archived_document(path: Path) -> dict:
         connection.close()
 
 
+def read_archive_groups(
+    path: Path,
+    *,
+    membership_price: float | None,
+    rates: dict[str, float] | None,
+    zone: object = None,
+) -> dict:
+    """Saved ledgers for the archive dialog. One group is a stream on one local date.
+
+    The newest saved ledger comes first. Dates within it are oldest first.
+    Hidden rows are included and add nothing to the day's total. raw is used
+    for the quote and is not returned. A missing file is an empty list.
+    """
+    from .goals import round2
+    from .kinds import PLATFORM_LABELS
+    from .money import local_date_time, quote
+    from .util import display_donor
+
+    destination = Path(path)
+    if not destination.is_file():
+        return {"groups": []}
+    try:
+        connection = sqlite3.connect(_read_only_uri(destination), uri=True)
+    except sqlite3.Error as exc:
+        raise ValueError("The archive could not be read.") from exc
+    try:
+        connection.row_factory = sqlite3.Row
+        try:
+            document = _archived_document(connection, None)
+            fetched = connection.execute(
+                "SELECT * FROM donations ORDER BY created_at ASC, id ASC"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise ValueError("The archive could not be read.") from exc
+    finally:
+        connection.close()
+
+    table = {"USD": 1.0, **(rates or {})}
+    by_stream: dict[str, list] = {}
+    for row in fetched:
+        by_stream.setdefault(str(row["stream_id"] or ""), []).append(row)
+    order: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    for tab in reversed(document["tabs"]):
+        stream_id = str(tab.get("id") or "")
+        if not stream_id or stream_id in seen:
+            continue
+        seen.add(stream_id)
+        order.append((stream_id, tab))
+    for stream_id in by_stream:
+        if stream_id not in seen:
+            order.append((stream_id, {"id": stream_id, "stream_title": ""}))
+
+    groups = []
+    for stream_id, tab in order:
+        title = str(tab.get("stream_title") or "").strip() or "Stream"
+        buckets: dict[str, dict] = {}
+        day_order: list[str] = []
+        for row in by_stream.get(stream_id, []):
+            created = str(row["created_at"] or "")
+            date, _clock = local_date_time(created, zone)  # type: ignore[arg-type]
+            if date not in buckets:
+                buckets[date] = {"total": 0.0, "entries": []}
+                day_order.append(date)
+            entry, usd = _archive_entry(row, membership_price, table, quote, display_donor, PLATFORM_LABELS)
+            if usd is not None:
+                buckets[date]["total"] = round2(buckets[date]["total"] + float(usd))
+            buckets[date]["entries"].append(entry)
+        if not day_order:
+            day_order = [""]
+            buckets[""] = {"total": 0.0, "entries": []}
+        for date in day_order:
+            bucket = buckets[date]
+            groups.append({
+                "stream_id": stream_id,
+                "title": title,
+                "date": date,
+                "count": len(bucket["entries"]),
+                "total_usd": bucket["total"],
+                "entries": bucket["entries"],
+            })
+    return {"groups": groups}
+
+
+def _archive_entry(row, membership_price, rates, quote, display_donor, platform_labels):
+    """One donation for the dialog. The stored payload is not included."""
+    raw = {}
+    try:
+        parsed = json.loads(row["raw_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        raw = parsed
+    priced = quote(
+        {
+            "platform": row["platform"] or "",
+            "kind": row["kind"] or "",
+            "message": row["message"] or "",
+            "amount_value": row["amount_value"],
+            "currency": row["currency"],
+            "raw": raw,
+        },
+        membership_price,
+        rates,
+    )
+    hidden = bool(row["hidden"])
+    usd = None if hidden else priced.usd
+    return {
+        "author_name": display_donor(row["author_name"]),
+        "platform": row["platform"] or "",
+        "platform_label": platform_labels.get(str(row["platform"] or ""), row["platform"] or ""),
+        "kind": row["kind"] or "",
+        "kind_label": priced.label,
+        "message": row["message"] or "",
+        "amount_value": row["amount_value"],
+        "currency": row["currency"] or "",
+        "quoted_amount": priced.amount,
+        "quoted_currency": priced.currency or "",
+        "amount_usd": priced.usd,
+        "created_at": row["created_at"] or "",
+        "hidden": hidden,
+    }, usd
+
+
 def _read_only_uri(path: Path) -> str:
     """A file: URI for read-only open. %, #, ?, and spaces in the path are escaped.
 

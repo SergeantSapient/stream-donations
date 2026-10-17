@@ -455,9 +455,49 @@ button.primary:hover { border-color: var(--accent); background: #f7f6f1; }
 .utility-chats {
   grid-area: chats;
   display: flex;
+  flex-direction: column;
   gap: 0.35rem;
   min-width: 0;
   min-height: 0;
+}
+
+.utility-chat-row {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.35rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.kiosk-chat-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding-top: 0.15rem;
+  background: var(--bg);
+}
+
+.kiosk-chat-bar input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#kiosk-manual > .sheet-head {
+  justify-content: flex-end;
+  padding: 1.15rem 1.25rem 0.35rem;
+}
+
+#kiosk-manual-host {
+  min-width: 0;
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-height: calc(100vh - 6rem);
 }
 
 .utility-chat {
@@ -1644,8 +1684,68 @@ tbody tr.is-editing .row-actions .icon-button {
   width: min(72rem, calc(100vw - 2rem));
 }
 
-#archive-rows tr {
+#archive-rows tr,
+.archive-day-body tbody tr {
   cursor: default;
+}
+
+.archive-ledger + .archive-ledger,
+.archive-day + .archive-day {
+  border-top: 1px solid var(--line);
+}
+
+.archive-ledger-body {
+  padding: 0 0 0.35rem 1.75rem;
+}
+
+.archive-day-head,
+button.archive-day-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 0.15rem;
+  text-align: left;
+}
+
+button.archive-day-toggle:hover {
+  background: rgba(238, 237, 229, 0.06);
+}
+
+.archive-day-toggle .icon {
+  flex: none;
+  transition: transform 160ms ease;
+}
+
+.archive-day-toggle[aria-expanded="true"] .icon {
+  transform: rotate(90deg);
+}
+
+.archive-day-name {
+  flex: 1;
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-day-date,
+.archive-day-meta {
+  flex: none;
+  color: var(--muted);
+}
+
+.archive-day-meta {
+  margin-left: auto;
+}
+
+.archive-day-body {
+  padding: 0 0 0.85rem 2.1rem;
 }
 
 .sheet[open] {
@@ -1869,7 +1969,7 @@ tbody tr.is-editing .row-actions .icon-button {
     overflow: auto;
   }
   .utility-stage { max-height: 11rem; }
-  .app-shell.is-utility .utility-chats { flex-direction: column; }
+  .app-shell.is-utility .utility-chat-row { flex-direction: column; }
   .app-shell.is-utility .utility-chat { min-height: 16rem; }
   .app-shell.is-utility .utility-chat.is-collapsed {
     flex: 0 0 auto;

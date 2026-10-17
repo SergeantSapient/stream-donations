@@ -134,7 +134,7 @@
       <button type="button" class="menu-item" role="menuitem" id="tab-button-streamers" data-tab="streamers" aria-haspopup="dialog" aria-controls="tab-streamers"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"></circle><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0"></path></svg>Streamers</button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-blue" data-tab="blue" aria-haspopup="dialog" aria-controls="tab-blue"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8 4 12l4 4"></path><path d="m16 8 4 4-4 4"></path><path d="m13 6-2 12"></path></svg>BLUE</button>
       <button type="button" class="menu-item" role="menuitem" id="tab-button-settings" data-tab="settings" aria-haspopup="dialog" aria-controls="tab-settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path></svg>Settings</button>
-      <button type="button" class="menu-item" role="menuitem" id="archive-open" title="View a JSONL export. It is not saved."><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"></path><path d="M14 3.5V8h4.5"></path><path d="M8 13h8M8 17h5"></path></svg>Open archive</button>
+      <button type="button" class="menu-item" role="menuitem" id="archive-open" title="View saved ledgers in archive.db." aria-haspopup="dialog" aria-controls="tab-archive"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"></path><path d="M14 3.5V8h4.5"></path><path d="M8 13h8M8 17h5"></path></svg>Open archive</button>
       <div class="menu-sep" role="separator"></div>
       <button type="button" class="menu-item danger" role="menuitem" id="reset-ledger" title="Delete every donation on this ledger">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M7 7l1 12h8l1-12"></path><path d="M10 11v5M14 11v5"></path></svg>
@@ -146,7 +146,7 @@
         Quit SuperBerry
       </button>
     </div>
-    <input id="archive-file" type="file" accept=".jsonl,application/x-ndjson,text/plain" hidden>
+
     </div>
     </div>
   </div>
@@ -230,6 +230,7 @@
       </div>
     </div>
     <div class="utility-chats">
+      <div class="utility-chat-row">
       <section class="utility-chat" data-platform="youtube" aria-label="YouTube chat">
         <header class="utility-chat-head">
           <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-label">YouTube</span></span>
@@ -275,6 +276,12 @@
         <div id="utility-chat-kick" class="utility-chat-frame"></div>
         <p id="utility-chat-kick-note" class="utility-chat-note"></p>
       </section>
+      </div>
+      <form id="kiosk-chat-compose" class="kiosk-chat-bar">
+        <input id="kiosk-chat-line" type="text" maxlength="2000" placeholder="Message" aria-label="Message" autocomplete="off">
+        <button type="submit" id="kiosk-chat-send" class="icon-button" aria-label="Send" title="Send"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+        <button type="button" id="kiosk-manual-open" class="icon-button" aria-expanded="false" aria-haspopup="dialog" aria-controls="kiosk-manual" aria-label="Manual entry" title="Manual entry"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+      </form>
     </div>
   </div>
   <section id="stream-banner" class="card stream-banner is-collapsed" aria-live="polite">
@@ -329,7 +336,7 @@
   <form id="manual-entry" class="card is-collapsed">
     <div class="section-head">
       <header>
-        <h2>Manual entry</h2>
+        <h2 id="manual-entry-title">Manual entry</h2>
         <p class="endpoint">A miss, or a gift from somewhere else</p>
       </header>
       <button type="button" class="icon-button section-toggle" aria-expanded="false" aria-controls="manual-entry-body" data-section="manual entry" aria-label="Expand manual entry" title="Expand manual entry">
@@ -450,6 +457,13 @@
   <div id="status-ephemeral" class="status-ephemeral" aria-live="polite"></div>
 </footer>
 </div>
+
+<dialog id="kiosk-manual" class="sheet" aria-labelledby="manual-entry-title">
+  <header class="sheet-head">
+    <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+  </header>
+  <div id="kiosk-manual-host"></div>
+</dialog>
 
 <dialog id="tab-youtube" class="sheet" data-platform="youtube" aria-labelledby="youtube-title">
     <form id="youtube-form" class="card" data-platform="youtube">
@@ -714,27 +728,9 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">This is a JSONL export, one donation per line. It is only shown here. The open ledger is not changed.</p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Time</th>
-            <th>Donor</th>
-            <th>Amount</th>
-            <th>Platform</th>
-            <th>Type</th>
-            <th>Currency</th>
-            <th>USD</th>
-            <th>Message</th>
-            <th>Running</th>
-          </tr>
-        </thead>
-        <tbody id="archive-rows"></tbody>
-      </table>
-      <p id="archive-empty" class="empty" hidden>Nothing in this file.</p>
-    </div>
+    <p class="hint">Saved ledgers from archive.db. Each row is one saved ledger. The arrow opens that ledger's dates, and each date opens that day's donations. The open ledger is not changed.</p>
+    <div id="archive-list"></div>
+    <p id="archive-empty" class="empty" hidden>Nothing is archived yet.</p>
   </div>
 </dialog>
 

@@ -151,6 +151,18 @@ class ApiTests(unittest.TestCase):
         status, _headers, csv_body = self._request("/api/export.csv")
         self.assertEqual(status, 200)
         self.assertIn(b"ship it", csv_body)
+        self.store.set_setting("stream_title", "Friday")
+        from streamdonations.util import download_filename
+        created = self.store.list_donations()[0][0]["created_at"]
+        status, headers, _body = self._request("/api/export.csv")
+        self.assertEqual(status, 200)
+        disposition = headers.get("Content-Disposition", "")
+        csv_name = download_filename("Friday", created, "csv")
+        self.assertIn(f'filename="{csv_name}"', disposition)
+        self.assertIn("filename*=UTF-8''" + csv_name.replace(" ", "%20"), disposition)
+        status, headers, _body = self._request("/api/export.jsonl")
+        jsonl_name = download_filename("Friday", created, "jsonl")
+        self.assertIn(f'filename="{jsonl_name}"', headers.get("Content-Disposition", ""))
 
     def test_reset_clears_donations_and_keeps_settings(self):
         from streamdonations.normalize import normalize_super_chat_event
@@ -222,6 +234,16 @@ class ApiTests(unittest.TestCase):
         close_fn = script.split(b"function closeStream(", 1)[1].split(b"\nfunction ", 1)[0]
         self.assertNotIn(b"promptLedgerUrls", archive_fn)
         self.assertNotIn(b"promptLedgerUrls", close_fn)
+        self.assertIn(b"tab.entries", close_fn)
+        self.assertLess(
+            close_fn.index(b"Archive "),
+            close_fn.index(b"Close "),
+        )
+        self.assertIn(b"JSON.stringify({ id })", close_fn)
+        self.assertIn(
+            b"Archive \" + name + \" before closing it? Its donations are saved, then this ledger closes.",
+            close_fn,
+        )
         self.assertNotIn(b"const many = tabs.length > 1", script)
         self.assertIn(b'toggleMenu("ledger-help", "ledger-help-button")', script)
         self.assertIn(b'id="tab-log"', page)
@@ -2578,30 +2600,38 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b'id="archive-open"', page)
         self.assertIn(b'id="tab-archive"', page)
-        self.assertIn(b'id="archive-file"', page)
-        self.assertIn(b'id="archive-rows"', page)
+        self.assertIn(b'id="archive-list"', page)
+        self.assertNotIn(b'id="archive-file"', page)
+        self.assertNotIn(b'id="archive-rows"', page)
         self.assertIn(b"The open ledger is not changed.", page)
+        self.assertIn(b"Each row is one saved ledger.", page)
         self.assertLess(page.index(b'id="tab-button-settings"'), page.index(b'id="archive-open"'))
         self.assertLess(page.index(b'id="archive-open"'), page.index(b'class="menu-sep"'))
         self.assertLess(page.index(b'class="menu-sep"'), page.index(b'id="reset-ledger"'))
         button = page.split(b'id="archive-open"', 1)[1].split(b"</button>", 1)[0]
         self.assertIn(b"Open archive", button)
-        self.assertIn(b"View a JSONL export. It is not saved.", button)
+        self.assertIn(b"View saved ledgers in archive.db.", button)
         self.assertNotIn(b"data-tab", button)
         settings = page.split(b'id="tab-settings"', 1)[1].split(b"</dialog>", 1)[0]
         self.assertNotIn(b"archive-open", settings)
         self.assertNotIn(b"archive-file", settings)
         status, _headers, script = self._request("/app.js")
         self.assertEqual(status, 200)
-        self.assertIn(b"/api/ledger/archive", script)
+        self.assertIn(b'api("/api/archive")', script)
+        self.assertIn(b"function archiveLedgers(", script)
+        self.assertIn(b"archive-ledger", script)
+        self.assertIn(b"Show dates for ", script)
+        self.assertIn(b"archive-day-toggle", script)
         self.assertIn(b'openSheet("archive")', script)
-        self.assertIn(b"Not saved.", script)
-        self.assertIn(b"That ledger file is too large.", script)
+        self.assertNotIn(b"/api/ledger/archive", script)
+        self.assertNotIn(b"Not saved.", script)
+        self.assertNotIn(b"That ledger file is too large.", script)
         status, _headers, styles = self._request("/styles.css")
         self.assertEqual(status, 200)
         self.assertIn(b"#tab-archive.sheet", styles)
         self.assertIn(b"min(72rem, calc(100vw - 2rem))", styles)
-        self.assertIn(b"#archive-rows tr", styles)
+        self.assertIn(b".archive-ledger + .archive-ledger", styles)
+        self.assertIn(b'.archive-day-toggle[aria-expanded="true"] .icon', styles)
 
     def test_export_archive_saves_the_open_ledger_and_closes_it(self):
         self.store.add_many([
@@ -2629,6 +2659,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(report["streams"]["tabs"]), 1)
         self.assertEqual(report["title"], "")
         self.assertEqual(report["count"], 0)
+        from streamdonations.money import local_date_time
+
+        status, _headers, body = self._request("/api/archive")
+        self.assertEqual(status, 200)
+        archived = json.loads(body)
+        self.assertEqual(len(archived["groups"]), 1)
+        group = archived["groups"][0]
+        self.assertEqual(group["title"], "Stream")
+        self.assertEqual(group["date"], local_date_time("2024-06-01T00:00:00Z")[0])
+        self.assertEqual(group["count"], 1)
+        self.assertEqual(group["total_usd"], 2)
+        self.assertEqual(group["entries"][0]["author_name"], "Ada")
+        self.assertNotIn("raw", group["entries"][0])
+        status, _headers, body = self._request("/api/stream")
+        report = json.loads(body)
+        self.assertEqual(report["count"], 0)
+        self.assertEqual(report["title"], "")
 
         self.store.add_many([
             Donation(

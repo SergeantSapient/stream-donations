@@ -446,6 +446,7 @@ class Store:
         """
         doc = self._stream_doc()
         self._ensure_open_pause_default(doc)
+        counts = self._donation_counts()
         return {
             "active_id": doc["active_id"],
             "tabs": [
@@ -453,6 +454,7 @@ class Store:
                     "id": tab["id"],
                     "title": (tab.get("stream_title") or "").strip() or "Stream",
                     "paused": tab.get("collection_paused") != "0",
+                    "entries": counts.get(tab["id"], 0),
                 }
                 for tab in doc["tabs"]
             ],
@@ -523,17 +525,28 @@ class Store:
             self._save_stream_doc(doc)
         self._delete_stream_rows(tab_id)
 
-    def archive_open_ledger(self) -> dict:
-        """Copy the open ledger into archive.db, then close it.
+    def _donation_counts(self) -> dict[str, int]:
+        """Stored rows on each ledger, including ones hidden from the totals."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT stream_id, COUNT(*) AS n FROM donations GROUP BY stream_id"
+            ).fetchall()
+        return {str(row["stream_id"] or ""): int(row["n"]) for row in rows}
 
-        Hidden rows are included. Other ledgers stay. Closing the last ledger
-        leaves a new blank one.
+    def archive_open_ledger(self, tab_id: str | None = None) -> dict:
+        """Copy one ledger into archive.db, then close it.
+
+        No id means the open ledger. Hidden rows are included. Other ledgers
+        stay. Closing the last ledger leaves a new blank one.
         """
         from .archive import ARCHIVE_NAME, write_archived_ledger
 
         doc = self._stream_doc()
-        tab_id = str(doc["active_id"])
-        tab = next(item for item in doc["tabs"] if item["id"] == tab_id)
+        wanted = str(tab_id or "").strip() or str(doc["active_id"])
+        tab = next((item for item in doc["tabs"] if item["id"] == wanted), None)
+        if tab is None:
+            raise ValueError("Unknown stream tab.")
+        tab_id = wanted
         saved = {key: str(tab.get(key) or "") for key in _STREAM_FIELDS}
         saved["id"] = tab_id
         saved["archived_at"] = utc_now_iso()
@@ -1447,6 +1460,34 @@ class Store:
         for row in self.export_rows(**filters):
             lines.append(json.dumps(row, ensure_ascii=False, default=str))
         return "\n".join(lines) + ("\n" if lines else "")
+
+    def export_download_name(
+        self,
+        extension: str,
+        *,
+        rates: dict[str, float] | None = None,
+        membership_price: float | None = None,
+        zone: object = None,
+        **filters: object,
+    ) -> str:
+        """File name for this export: MMDDYYYY, a hyphen, then the ledger name."""
+        from .money import quote
+        from .util import download_filename, parse_datetime
+
+        filters = {key: value for key, value in filters.items() if key != "include_hidden"}
+        title = (self.get_setting("stream_title") or "").strip() or "Stream"
+        table = {"USD": 1.0, **(rates or {})}
+        first = ""
+        for row in self._money_rows(**filters):  # type: ignore[arg-type]
+            priced = quote(row, membership_price, table)
+            if not self._matches_priced_query(row, priced, filters):
+                continue
+            created = str(row.get("created_at") or "")
+            if parse_datetime(created) is None:
+                continue
+            first = created
+            break
+        return download_filename(title, first, extension, zone)  # type: ignore[arg-type]
 
     def set_status(self, platform: str, state: str, detail: str, error: str = "") -> None:
         with self._lock:

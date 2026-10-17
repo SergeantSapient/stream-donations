@@ -4,6 +4,26 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.8.4 — 2026-10-17
+
+- 2026-10-17 — Peripheral. A saved ledger stays one row when its donations fall on more than one day. The arrow opens those dates, and each date opens that day's donations.
+
+- 2026-10-17 — Minor. Open archive shows the ledgers saved in archive.db. Each row is a stream name and a date, and the arrow lists that day's donations. Nothing in that dialog can be edited.
+
+## 1.8.3 — 2026-10-17
+
+- 2026-10-17 — Minor. CSV and JSONL downloads are named with the oldest donation's date, then the ledger name.
+
+## 1.8.2 — 2026-10-17
+
+- 2026-10-17 — Minor. Closing a ledger that has donations asks whether to save it to the archive first. An empty ledger does not ask.
+
+## 1.8.1 — 2026-10-17
+
+- 2026-10-17 — Peripheral. The manual entry dialog's close button sits in from the corner.
+
+- 2026-10-17 — Minor. Kiosk view has a message box under the chats. Enter sends that message to the same chats as the combined chat, and Manual entry on that bar opens the manual entry form.
+
 ## 1.8.0 — 2026-10-17
 
 - 2026-10-17 — Considerable. Browser mode. serve --open, or SuperBerry --browser on Linux, runs the same collector and ledger with a normal web browser as the window. Quit is in the menu there, sign-ins and pop-out chats open in the browser, and browser notifications are offered where the computer has none. The page and API accept changes only from the SuperBerry page itself, so a web page on another local port cannot change the ledger. The desktop app, the AppImage, and the Windows exe and zip are unchanged.

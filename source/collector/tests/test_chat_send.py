@@ -721,6 +721,45 @@ class ChatSendPageTests(unittest.TestCase):
             self.assertLess(block.index("utility-chat-collapse"), block.index("utility-chat-unread"))
             self.assertIn('class="utility-chat-unread" hidden', block)
             self.assertIn('aria-label="New chat"', block)
+        self.assertLess(chats.index("utility-chat-row"), chats.index("utility-chat-youtube"))
+        self.assertLess(chats.index('id="utility-chat-kick"'), chats.index('id="kiosk-chat-compose"'))
+        compose = chats.split('id="kiosk-chat-compose"', 1)[1].split("</form>", 1)[0]
+        self.assertLess(compose.index('id="kiosk-chat-line"'), compose.index('id="kiosk-chat-send"'))
+        self.assertLess(compose.index('id="kiosk-chat-send"'), compose.index('id="kiosk-manual-open"'))
+        self.assertIn('type="text"', compose)
+        self.assertIn('maxlength="2000"', compose)
+        self.assertIn('aria-label="Message"', compose)
+        self.assertIn('aria-label="Send"', compose)
+        self.assertIn('aria-label="Manual entry"', compose)
+        self.assertIn('aria-controls="kiosk-manual"', compose)
+        dialog = page.split('<dialog id="kiosk-manual"', 1)[1].split("</dialog>", 1)[0]
+        self.assertIn('class="sheet"', dialog)
+        self.assertIn('id="kiosk-manual-host"', dialog)
+        self.assertNotIn('id="manual-entry"', dialog)
+        send_fn = script.split("function sendChatText(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("options.composer", send_fn)
+        self.assertIn('|| $("chat-compose")', send_fn)
+        self.assertIn("kiosk-chat-send", send_fn)
+        self.assertIn("fromComposer && composer", send_fn)
+        self.assertIn("kiosk-chat-compose", utility_bind)
+        self.assertIn("fromComposer: true, composer: box", utility_bind)
+        self.assertIn('addEventListener("click", openKioskManual)', utility_bind)
+        self.assertIn("restoreKioskManual", utility_bind)
+        opened_manual = script.split("function openKioskManual(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("kiosk-manual-host", opened_manual)
+        self.assertIn("appendChild(form)", opened_manual)
+        self.assertIn("setSectionExpanded(toggle, true)", opened_manual)
+        self.assertIn("showModal()", opened_manual)
+        self.assertIn("is-collapsed", opened_manual)
+        restored = script.split("function restoreKioskManual(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("insertBefore(form, home.next)", restored)
+        self.assertIn("setSectionExpanded(toggle, !home.collapsed)", restored)
+        row_rule = styles.split(".utility-chat-row {", 1)[1].split("}", 1)[0]
+        self.assertIn("display: flex", row_rule)
+        narrow_row = styles.split(".app-shell.is-utility .utility-chat-row {", 1)[1].split("}", 1)[0]
+        self.assertIn("flex-direction: column", narrow_row)
+        manual_head = styles.split("#kiosk-manual > .sheet-head {", 1)[1].split("}", 1)[0]
+        self.assertIn("padding: 1.15rem 1.25rem 0.35rem", manual_head)
         collapsed = styles.split(".utility-chat.is-collapsed {", 1)[1].split("}", 1)[0]
         self.assertIn("flex: 0 0 2.4rem", collapsed)
         self.assertIn("writing-mode: vertical-rl", styles)

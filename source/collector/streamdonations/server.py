@@ -27,7 +27,7 @@ from .service import Service, displayed_ledger_page_size
 from .ledger_file import parse_ledger_jsonl, present_archive
 from .settings_file import export_settings, parse_settings_file
 from .store import DuplicateManual, Store, _checked_manual_fields
-from .util import ApiError, redact, utc_now_iso
+from .util import ApiError, content_disposition, redact, utc_now_iso
 from .kick import SCOPES as KICK_SCOPES
 from .youtube import SCOPE as YOUTUBE_SCOPE, open_browser
 from .youtube_quota import clamp_poll_seconds
@@ -553,24 +553,47 @@ class App:
             return json_response(200, {"removed": donation_id})
         if path == "/api/export.csv" and method == "GET":
             rates, price = self._rates_and_price()
-            text = self.store.export_csv(rates=rates, membership_price=price, **_export_filters(query))
+            filters = _export_filters(query)
+            text = self.store.export_csv(rates=rates, membership_price=price, **filters)
+            name = self.store.export_download_name(
+                "csv", rates=rates, membership_price=price, **filters
+            )
             return text_response(
                 200,
                 text,
                 "text/csv; charset=utf-8",
-                [("Content-Disposition", 'attachment; filename="donations.csv"')],
+                [("Content-Disposition", content_disposition(name))],
             )
         if path == "/api/export.jsonl" and method == "GET":
-            text = self.store.export_jsonl(**_export_filters(query))
+            filters = _export_filters(query)
+            text = self.store.export_jsonl(**filters)
+            rates, price = self._rates_and_price()
+            name = self.store.export_download_name(
+                "jsonl", rates=rates, membership_price=price, **filters
+            )
             return text_response(
                 200,
                 text,
                 "application/x-ndjson; charset=utf-8",
-                [("Content-Disposition", 'attachment; filename="donations.jsonl"')],
+                [("Content-Disposition", content_disposition(name))],
             )
         if path == "/api/export/archive" and method == "POST":
-            # The whole open ledger, then close. The on-screen filter is not applied.
-            return json_response(200, self.store.archive_open_ledger())
+            # The whole ledger, then close. The on-screen filter is not applied.
+            # An id archives that ledger. No id archives the one that is open.
+            payload = _object(body)
+            raw_id = payload.get("id")
+            tab_id = raw_id.strip() if isinstance(raw_id, str) else ""
+            return json_response(200, self.store.archive_open_ledger(tab_id))
+        if path == "/api/archive" and method == "GET":
+            # Read only. archive.db is not written, and the open ledger stays.
+            from .archive import ARCHIVE_NAME, read_archive_groups
+
+            rates, price = self._rates_and_price()
+            return json_response(200, read_archive_groups(
+                self.store.path.parent / ARCHIVE_NAME,
+                membership_price=price,
+                rates=rates,
+            ))
         if path == "/api/ledger/archive" and method == "POST":
             # Preview only. The file is not stored and the open ledger is not changed.
             rows = parse_ledger_jsonl(body)

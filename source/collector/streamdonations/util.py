@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+from urllib.parse import quote
 
 _SECRET_RE = re.compile(
     r"(key|client_secret|code|access_token|refresh_token|code_verifier)=([^&\s]+)",
@@ -139,6 +140,58 @@ def collapsed_chat_text(value: object, limit: int = 2000) -> str:
     if len(text) > limit:
         raise ValueError("That message is too long.")
     return text
+
+
+# Windows refuses <>:"/\|?* and control characters. Linux refuses / and NUL.
+# macOS refuses / and treats : as a path separator. A name cannot end with a
+# space or a period, and CON, PRN, AUX, NUL, COM1–COM9, and LPT1–LPT9 are reserved.
+_FILENAME_INVALID = re.compile(r"[\x00-\x1f\x7f<>:\"/\\|?*]")
+_WINDOWS_DEVICE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.IGNORECASE)
+
+
+def download_filename(
+    title: str,
+    first_at: str,
+    extension: str,
+    zone: tzinfo | None = None,
+) -> str:
+    """MMDDYYYY-Ledger name, safe on Windows, Linux, and macOS.
+
+    The date is the oldest exported donation in local time. No donation leaves
+    the date off. A blank ledger name is Stream.
+    """
+    if extension not in {"csv", "jsonl"}:
+        raise ValueError("Export file must be csv or jsonl.")
+    label = _FILENAME_INVALID.sub("_", str(title or "")).strip(" ._")
+    if not label or set(label) <= {"_"}:
+        label = "Stream"
+    date = _mmddyyyy(first_at, zone)
+    stem = f"{date}-{label}" if date else label
+    if _WINDOWS_DEVICE.fullmatch(stem):
+        stem += "_"
+    suffix = "." + extension
+    while len(stem + suffix) > 255 or len((stem + suffix).encode("utf-8")) > 255:
+        stem = stem[:-1].rstrip(" .")
+        if not stem:
+            stem = "Stream"
+            break
+    return stem + suffix
+
+
+def content_disposition(filename: str) -> str:
+    """Attachment header. filename* keeps a ledger name that is not ASCII."""
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 else "_" for ch in filename).strip(" .") or "download"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
+
+
+def _mmddyyyy(iso: str, zone: tzinfo | None) -> str:
+    parsed = parse_datetime(iso)
+    if parsed is None:
+        return ""
+    if zone is None:
+        zone = datetime.now().astimezone().tzinfo
+    return parsed.astimezone(zone).strftime("%m%d%Y")
 
 
 def csv_safe(value: object) -> str:

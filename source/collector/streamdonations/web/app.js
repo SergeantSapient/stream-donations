@@ -116,6 +116,7 @@ function icon(name) {
     menu: '<path d="M4 7h16M4 12h16M4 17h16"></path>',
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
     send: '<path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path>',
+    chevron: '<path d="M9 6l6 6-6 6"></path>',
   };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -180,8 +181,6 @@ function toggleMenu(menuId, buttonId) {
 
 // Same cap as settings_file.MAX_BYTES. A larger file is not a settings file.
 const SETTINGS_FILE_MAX_BYTES = 262144;
-// Same cap as ledger_file.MAX_BYTES. A larger file is refused before it is sent.
-const ARCHIVE_MAX_BYTES = 1000000;
 
 let pendingUndo = null;
 const deletingManual = new Set();
@@ -679,23 +678,185 @@ function renderRows(page) {
 }
 
 function renderArchive(view) {
-  const rows = (view && view.donations) || [];
-  const count = Number(view && view.count);
-  const total = Number(view && view.total_usd);
-  const shown = Number.isFinite(count) ? count : rows.length;
+  const groups = (view && view.groups) || [];
+  const ledgers = archiveLedgers(groups);
+  const summary = $("archive-summary");
+  if (summary) {
+    if (!ledgers.length) summary.textContent = "Nothing is archived yet.";
+    else {
+      const noun = ledgers.length === 1 ? "saved ledger" : "saved ledgers";
+      summary.textContent = `${ledgers.length} ${noun}.`;
+    }
+  }
+  const empty = $("archive-empty");
+  if (empty) empty.hidden = ledgers.length !== 0;
+  const list = $("archive-list");
+  if (!list) return;
+  list.replaceChildren();
+  ledgers.forEach((ledger, index) => {
+    list.appendChild(archiveLedgerSection(ledger, index));
+  });
+}
+
+function archiveLedgers(groups) {
+  const ledgers = [];
+  const byId = new Map();
+  groups.forEach((group) => {
+    const id = String(group.stream_id || "");
+    let ledger = byId.get(id);
+    if (!ledger) {
+      ledger = { stream_id: id, title: group.title || "Stream", dates: [] };
+      byId.set(id, ledger);
+      ledgers.push(ledger);
+    }
+    ledger.dates.push(group);
+  });
+  return ledgers;
+}
+
+function archiveLedgerSection(ledger, index) {
+  const dates = ledger.dates.filter((group) => archiveCount(group) > 0);
+  const section = document.createElement("section");
+  section.className = "archive-ledger";
+  const title = ledger.title || "Stream";
+  const many = dates.length > 1;
+  const head = archiveToggle(dates.length > 0);
+  const name = el("span", "archive-day-name", title);
+  name.title = title;
+  head.appendChild(name);
+  if (!many && dates.length === 1 && dates[0].date) {
+    head.appendChild(el("span", "archive-day-date", dates[0].date));
+  }
+  head.appendChild(el("span", "archive-day-meta", archiveDayMeta(
+    dates.length
+      ? { count: archiveLedgerCount(dates), total_usd: archiveLedgerTotal(dates), entries: [] }
+      : { count: 0, total_usd: 0, entries: [] },
+  )));
+  section.appendChild(head);
+  if (!dates.length) return section;
+  const body = document.createElement("div");
+  body.id = "archive-ledger-" + index;
+  body.hidden = true;
+  head.setAttribute("aria-controls", body.id);
+  if (many) {
+    body.className = "archive-ledger-body";
+    head.setAttribute("aria-label", archiveLedgerLabel(title, false));
+    dates.forEach((group, dateIndex) => {
+      body.appendChild(archiveDateSection(group, title, index + "-" + dateIndex));
+    });
+    bindArchiveToggle(head, body, (open) => archiveLedgerLabel(title, open));
+  } else {
+    const group = dates[0];
+    body.className = "archive-day-body";
+    body.appendChild(archiveEntryTable(group.entries || []));
+    head.setAttribute("aria-label", archiveDayLabel(group, false));
+    bindArchiveToggle(head, body, (open) => archiveDayLabel(group, open));
+  }
+  section.appendChild(body);
+  return section;
+}
+
+function archiveDateSection(group, title, id) {
+  const section = document.createElement("section");
+  section.className = "archive-day";
+  const head = archiveToggle(true);
+  const when = el("span", "archive-day-name", group.date || "—");
+  head.append(when, el("span", "archive-day-meta", archiveDayMeta(group)));
+  const body = document.createElement("div");
+  body.className = "archive-day-body";
+  body.id = "archive-day-" + id;
+  body.hidden = true;
+  body.appendChild(archiveEntryTable(group.entries || []));
+  head.setAttribute("aria-controls", body.id);
+  const labeled = { title: title, date: group.date };
+  head.setAttribute("aria-label", archiveDayLabel(labeled, false));
+  bindArchiveToggle(head, body, (open) => archiveDayLabel(labeled, open));
+  section.append(head, body);
+  return section;
+}
+
+function archiveToggle(expandable) {
+  const head = document.createElement(expandable ? "button" : "div");
+  head.className = expandable ? "archive-day-toggle" : "archive-day-head";
+  if (expandable) {
+    head.type = "button";
+    head.setAttribute("aria-expanded", "false");
+    head.appendChild(icon("chevron"));
+  }
+  return head;
+}
+
+function bindArchiveToggle(head, body, labelFor) {
+  head.addEventListener("click", () => {
+    const open = head.getAttribute("aria-expanded") === "true";
+    head.setAttribute("aria-expanded", open ? "false" : "true");
+    head.setAttribute("aria-label", labelFor(!open));
+    body.hidden = open;
+  });
+}
+
+function archiveLedgerLabel(title, open) {
+  return (open ? "Hide dates for " : "Show dates for ") + title;
+}
+
+function archiveCount(group) {
+  const count = Number(group.count);
+  if (Number.isFinite(count)) return count;
+  return Array.isArray(group.entries) ? group.entries.length : 0;
+}
+
+function archiveLedgerCount(dates) {
+  return dates.reduce((sum, group) => sum + archiveCount(group), 0);
+}
+
+function archiveLedgerTotal(dates) {
+  return dates.reduce((sum, group) => {
+    const usd = Number(group.total_usd);
+    return Number.isFinite(usd) ? round2(sum + usd) : sum;
+  }, 0);
+}
+
+function archiveDayLabel(group, open) {
+  const name = group.title || "Stream";
+  const when = group.date ? " on " + group.date : "";
+  return (open ? "Hide donations for " : "Show donations for ") + name + when;
+}
+
+function archiveDayMeta(group) {
+  const count = Number(group.count);
+  const shown = Number.isFinite(count) ? count : (group.entries || []).length;
+  if (!shown) return "No donations";
   const noun = shown === 1 ? "donation" : "donations";
-  $("archive-summary").textContent = `${shown} ${noun} · ${formatUsd(Number.isFinite(total) ? total : 0)}. Not saved.`;
-  const body = $("archive-rows");
-  body.replaceChildren();
-  rows.forEach((row) => {
+  const total = Number(group.total_usd);
+  return Number.isFinite(total) ? `${shown} ${noun} · ${formatUsd(total)}` : `${shown} ${noun}`;
+}
+
+function archiveAmount(row) {
+  const amount = ledgerAmount(row);
+  const currency = ledgerCurrency(row);
+  if (amount === "—") return "—";
+  if (!currency || currency === "—") return amount;
+  return `${amount} ${currency}`;
+}
+
+function archiveEntryTable(entries) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const headRow = document.createElement("tr");
+  ["Time", "Donor", "Amount", "Platform", "Type", "USD", "Message"].forEach((label) => {
+    headRow.appendChild(el("th", null, label));
+  });
+  const thead = document.createElement("thead");
+  thead.appendChild(headRow);
+  const tbody = document.createElement("tbody");
+  entries.forEach((row) => {
     const tr = document.createElement("tr");
     tr.dataset.platform = row.platform || "other";
     tr.dataset.donoBand = String(donoAmountBand(row.amount_usd));
     if (row.hidden) tr.classList.add("is-hidden");
     const when = localParts(row.created_at);
-    const dateCell = el("td", "num", when.date);
     const timeCell = el("td", "num", when.time);
-    dateCell.title = row.created_at || "";
     timeCell.title = row.created_at || "";
     const donor = donorName(row.author_name);
     const donorCell = el("td", "donor-cell", donor);
@@ -703,21 +864,19 @@ function renderArchive(view) {
     const message = el("td", "message-cell", row.message || "—");
     if (row.message) message.title = row.message;
     tr.append(
-      dateCell,
       timeCell,
       donorCell,
-      el("td", "num", ledgerAmount(row)),
+      el("td", "num", archiveAmount(row)),
       platformCell(row),
-      el("td", null, row.kind_label || row.kind),
-      el("td", null, ledgerCurrency(row)),
-      el("td", "num", formatPlain(row.amount_usd)),
+      el("td", null, row.kind_label || row.kind || "—"),
+      el("td", "num", row.hidden ? "—" : formatPlain(row.amount_usd)),
       message,
-      el("td", "num", row.hidden ? "—" : formatRunning(row.running_usd)),
     );
-    body.appendChild(tr);
+    tbody.appendChild(tr);
   });
-  const empty = $("archive-empty");
-  if (empty) empty.hidden = rows.length !== 0;
+  table.append(thead, tbody);
+  wrap.appendChild(table);
+  return wrap;
 }
 
 function rowAction(row) {
@@ -1075,6 +1234,7 @@ function postRumbleChat(message, streamId) {
 
 function sendChatText(text, options) {
   const fromComposer = Boolean(options && options.fromComposer);
+  const composer = (options && options.composer) || $("chat-compose");
   const platforms = selectedChatPlatforms();
   if (!platforms.length) {
     const note = $("chat-target-note");
@@ -1092,8 +1252,10 @@ function sendChatText(text, options) {
   }
   if (chatSendBusy) return Promise.resolve();
   chatSendBusy = true;
-  const send = $("chat-send");
-  if (send) send.disabled = true;
+  const sendButtons = ["chat-send", "kiosk-chat-send"].map($).filter(Boolean);
+  sendButtons.forEach((button) => {
+    button.disabled = true;
+  });
   const apiPlatforms = platforms.filter((name) => name !== "rumble");
   const jobs = [];
   if (apiPlatforms.length) {
@@ -1117,10 +1279,7 @@ function sendChatText(text, options) {
     const failed = results.filter((row) => !row.ok);
     if (sent.length && !failed.length) {
       toast("Sent to " + chatSentLabel(sent) + ".");
-      if (fromComposer) {
-        const box = $("chat-compose");
-        if (box) box.value = "";
-      }
+      if (fromComposer && composer) composer.value = "";
       return;
     }
     const problem = failed.map((row) => row.error || "Chat was not sent.").join(" ");
@@ -1128,7 +1287,9 @@ function sendChatText(text, options) {
     else toast(problem || "Chat was not sent.", true);
   }).finally(() => {
     chatSendBusy = false;
-    if (send) send.disabled = false;
+    sendButtons.forEach((button) => {
+      button.disabled = false;
+    });
   });
 }
 
@@ -2511,6 +2672,23 @@ function closeStream(id, title) {
   const tabs = state.stream && state.stream.streams && state.stream.streams.tabs;
   const last = !tabs || tabs.length < 2;
   const name = title || "Stream";
+  const tab = (tabs || []).find((item) => item.id === id);
+  const entries = tab ? Number(tab.entries) : 0;
+  if (entries > 0 && window.confirm(
+    "Archive " + name + " before closing it? Its donations are saved, then this ledger closes."
+  )) {
+    return enqueueStream(async () => {
+      await commitStreamTitle();
+      const result = await api("/api/export/archive", {
+        method: "POST",
+        body: JSON.stringify({ id }),
+      });
+      await reloadOpenStream();
+      const count = Number(result.count) || 0;
+      const noun = count === 1 ? "donation" : "donations";
+      toast("Saved " + count + " " + noun + " to the archive and closed that ledger.");
+    });
+  }
   const sure = window.confirm(last
     ? "Close " + name + "? This ledger's donations are removed. A new blank ledger opens."
     : "Close " + name + "? This ledger's donations are removed. The other ledgers stay.");
@@ -3689,6 +3867,50 @@ function bindUtilityChats() {
   });
 }
 
+// The dialog lives outside .app-shell. Kiosk view hides #manual-entry only while that form stays in the shell, so the dialog borrows the same form and this puts it back.
+let kioskManualHome = null;
+
+function openKioskManual() {
+  const dialog = $("kiosk-manual");
+  const form = $("manual-entry");
+  const host = $("kiosk-manual-host");
+  if (!dialog || !form || !host || typeof dialog.showModal !== "function") return;
+  closeMenu();
+  document.querySelectorAll("dialog.sheet").forEach((other) => {
+    if (other !== dialog && other.open) other.close();
+  });
+  if (!kioskManualHome) {
+    kioskManualHome = {
+      parent: form.parentElement,
+      next: form.nextSibling,
+      collapsed: form.classList.contains("is-collapsed"),
+    };
+  }
+  host.appendChild(form);
+  const toggle = form.querySelector(".section-toggle");
+  if (toggle) setSectionExpanded(toggle, true);
+  if (!dialog.open) dialog.showModal();
+  const note = $("toast");
+  if (note) dialog.appendChild(note);
+  const opener = $("kiosk-manual-open");
+  if (opener) opener.setAttribute("aria-expanded", "true");
+  const donor = $("manual-donor");
+  if (donor) donor.focus();
+}
+
+function restoreKioskManual() {
+  const form = $("manual-entry");
+  const home = kioskManualHome;
+  const opener = $("kiosk-manual-open");
+  if (opener) opener.setAttribute("aria-expanded", "false");
+  if (!form || !home || !home.parent) return;
+  kioskManualHome = null;
+  const toggle = form.querySelector(".section-toggle");
+  if (toggle) setSectionExpanded(toggle, !home.collapsed);
+  if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(form, home.next);
+  else home.parent.appendChild(form);
+}
+
 function bindUtility() {
   bindUtilityChats();
   const toggle = $("utility-toggle");
@@ -3733,6 +3955,18 @@ function bindUtility() {
   if (sendTotal) sendTotal.addEventListener("click", () => sendChatText($("chat-line").value));
   const sendDonors = $("utility-send-donors");
   if (sendDonors) sendDonors.addEventListener("click", () => sendChatText(topDonorCopyText()));
+  const kioskCompose = $("kiosk-chat-compose");
+  if (kioskCompose) {
+    kioskCompose.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const box = $("kiosk-chat-line");
+      sendChatText(box ? box.value : "", { fromComposer: true, composer: box });
+    });
+  }
+  const kioskManual = $("kiosk-manual");
+  if (kioskManual) kioskManual.addEventListener("close", restoreKioskManual);
+  const kioskManualOpen = $("kiosk-manual-open");
+  if (kioskManualOpen) kioskManualOpen.addEventListener("click", openKioskManual);
   let on = false;
   try {
     on = sessionStorage.getItem(UTILITY_KEY) === "1";
@@ -4400,34 +4634,16 @@ function bind() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMenu();
   });
-  let archiveSerial = 0;
   const archiveOpen = $("archive-open");
-  const archiveFile = $("archive-file");
-  if (archiveOpen && archiveFile) {
+  if (archiveOpen) {
     archiveOpen.addEventListener("click", () => {
       closeMenu();
-      archiveFile.click();
-    });
-    archiveFile.addEventListener("change", () => {
-      const file = archiveFile.files && archiveFile.files[0];
-      archiveFile.value = "";
-      if (!file) return;
-      if (file.size > ARCHIVE_MAX_BYTES) {
-        toast("That ledger file is too large.", true);
-        return;
-      }
-      const serial = ++archiveSerial;
-      file.text()
-        .then((text) => api("/api/ledger/archive", { method: "POST", body: text }))
+      api("/api/archive")
         .then((view) => {
-          if (serial !== archiveSerial) return;
           renderArchive(view);
           openSheet("archive");
         })
-        .catch((error) => {
-          if (serial !== archiveSerial) return;
-          toast(error.message, true);
-        });
+        .catch((error) => toast(error.message, true));
     });
   }
   $("reset-ledger").addEventListener("click", () => {
