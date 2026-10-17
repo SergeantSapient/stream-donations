@@ -562,6 +562,8 @@ class PasteApiTests(unittest.TestCase):
         headers = {"Cookie": f"sd_session={self.token}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
+        if method not in {"GET", "HEAD"}:
+            headers["Origin"] = self.base
         request = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=5) as response:

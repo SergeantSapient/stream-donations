@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.8.0 — 2026-10-17
+
+- 2026-10-17 — Considerable. Browser mode. serve --open, or SuperBerry --browser on Linux, runs the same collector and ledger with a normal web browser as the window. Quit is in the menu there, sign-ins and pop-out chats open in the browser, and browser notifications are offered where the computer has none. The page and API accept changes only from the SuperBerry page itself, so a web page on another local port cannot change the ledger. The desktop app, the AppImage, and the Windows exe and zip are unchanged.
+
 ## 1.7.0 — 2026-10-16
 
 - 2026-10-16 — Peripheral. A self-contained SuperBerry.exe unpacks on its first launch and starts from that copy afterward.

@@ -6,6 +6,9 @@ same call. On Windows and macOS the desktop shell shows them: the collector
 writes one STREAM_DONATIONS_NOTIFY line per notice on stdout, and Electron
 turns that into a system notification. A collector run without the shell
 there has no backend.
+
+NoticeFeed keeps the last few notices in memory so a SuperBerry page open in
+a normal web browser can show them with the browser's own notifications.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections import deque
 from collections.abc import Callable, Sequence
 
 from .goals import format_usd, one_line
@@ -59,6 +63,38 @@ class UnavailableNotifier(NullNotifier):
             self._log(message)
         except Exception:
             return
+
+
+class NoticeFeed:
+    """The last few notices, numbered, for a browser page to read.
+
+    Nothing is written to disk. The numbers start again with each run.
+    """
+
+    def __init__(self, limit: int = 50) -> None:
+        self._items: deque[dict] = deque(maxlen=max(1, int(limit)))
+        self._last = 0
+        self._lock = threading.Lock()
+
+    def donations_added(self, donations: Sequence[Donation], *, membership_price: float | None) -> None:
+        for donation in donations:
+            summary, body = notification_text(donation, membership_price)
+            self.post(summary, body)
+
+    def post(self, summary: str, body: str = "") -> bool:
+        with self._lock:
+            self._last += 1
+            self._items.append({"id": self._last, "title": str(summary), "body": str(body)})
+        return True
+
+    def since(self, after: int | None) -> dict:
+        """Notices newer than after. Without a number, only the newest id is sent."""
+        with self._lock:
+            last = self._last
+            if after is None:
+                return {"notices": [], "last": last}
+            items = [dict(item) for item in self._items if item["id"] > after]
+        return {"notices": items, "last": last}
 
 
 SHELL_PREFIX = "STREAM_DONATIONS_NOTIFY "

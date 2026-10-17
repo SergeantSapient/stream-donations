@@ -140,6 +140,11 @@
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M7 7l1 12h8l1-12"></path><path d="M10 11v5M14 11v5"></path></svg>
         Reset ledger
       </button>
+      <div id="quit-sep" class="menu-sep" role="separator" hidden></div>
+      <button type="button" class="menu-item" role="menuitem" id="quit-app" title="Stop SuperBerry on this computer" hidden>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8"></path><path d="M6.4 6.6a8 8 0 1 0 11.2 0"></path></svg>
+        Quit SuperBerry
+      </button>
     </div>
     <input id="archive-file" type="file" accept=".jsonl,application/x-ndjson,text/plain" hidden>
     </div>
@@ -670,6 +675,14 @@
     <div class="row">
       <button type="button" id="fx-refresh">Update exchange rates</button>
     </div>
+    <section id="browser-mode" hidden>
+      <h3>Browser mode</h3>
+      <p class="hint">SuperBerry is open in a web browser instead of the desktop app. Collection, the ledger, and exports work the same. Sign-in and chat buttons open the platform in a new browser window. Sending to Rumble chat and the chats embedded beside the stream need the SuperBerry desktop app. Quit, in the menu, stops SuperBerry on this computer.</p>
+      <div id="browser-notify-row" class="row" hidden>
+        <button type="button" id="browser-notify">Turn on browser notifications</button>
+      </div>
+      <p id="browser-notify-status" class="hint" hidden></p>
+    </section>
     <p class="hint">The saved response from open.er-api.com is reused until the last check is more than an hour old. Their open endpoint allows about one request an hour, and the table itself changes about once a day. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
   </form>
 </dialog>

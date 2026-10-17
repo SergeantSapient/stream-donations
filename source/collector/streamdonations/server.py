@@ -75,6 +75,9 @@ class App:
         self.service.on_listen_change = self.restart_webhook
         self._webhook: ThreadingHTTPServer | None = None
         self._webhook_thread = None
+        # Set by `serve` when nothing else owns the process. The desktop shell
+        # stops the collector itself, so the page has no Quit there.
+        self.shutdown_hook = None
 
     def start(self) -> None:
         # Default is paused. Write that before the collector loops read the flag.
@@ -123,15 +126,54 @@ class App:
     def kick_redirect(self) -> str:
         return f"http://127.0.0.1:{self.ui_port}/oauth/kick/callback"
 
+    def own_origins(self) -> set[str]:
+        """The page's own origins. The Host check only lets these two names in."""
+        return {f"http://127.0.0.1:{self.ui_port}", f"http://localhost:{self.ui_port}"}
+
+    def _cross_origin_refusal(self, method: str, headers, body: bytes) -> Response | None:
+        """Refuse a changing request that a different web page could have sent.
+
+        The session cookie is SameSite=Strict, but another port on 127.0.0.1 is
+        the same site, so its pages carry the cookie. A browser always sends
+        Origin on a POST, PUT, PATCH, or DELETE, and the page here, in Electron
+        or a browser, sends its own origin. Referer is the fallback when Origin
+        is absent; this page sends none (Referrer-Policy: no-referrer), so an
+        absent pair is refused. A body must be JSON: a text/plain body is the
+        one a page elsewhere can send without the browser asking first.
+        A Bearer token is not sent by browsers on their own, so it is exempt.
+        """
+        if method in {"GET", "HEAD"}:
+            return None
+        if self._bearer(headers):
+            return None
+        origin = (headers.get("Origin") or "").strip()
+        if not origin:
+            referer = (headers.get("Referer") or "").strip()
+            parsed = urlparse(referer) if referer else None
+            if parsed and parsed.scheme and parsed.netloc:
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin.rstrip("/").lower() not in self.own_origins():
+            return json_response(403, {"error": "This request did not come from the SuperBerry page."})
+        if body:
+            content_type = (headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                return json_response(415, {"error": "Send JSON."})
+        return None
+
     def handle(self, method: str, path: str, query: dict[str, list[str]], headers, body: bytes) -> Response:
         try:
             if path == "/boot" and method == "GET":
                 return self._boot(query)
+            if path == "/favicon.ico" and method == "GET":
+                return self._file("icons/superberry.png", "image/png")
             if path in {"/oauth/google/callback", "/oauth/kick/callback"} and method == "GET":
                 provider = "youtube" if "google" in path else "kick"
                 return self._oauth_callback(provider, query)
             if not self._authorized(headers):
                 return json_response(401, {"error": "Sign in to this local app again."})
+            refusal = self._cross_origin_refusal(method, headers, body)
+            if refusal is not None:
+                return refusal
             if method == "GET" and path in {"/", "/index.html"}:
                 return self._file("index.html", "text/html; charset=utf-8")
             if method == "GET" and path == "/app.js":
@@ -166,6 +208,20 @@ class App:
             return json_response(200, {"ok": True})
         if path == "/api/meta" and method == "GET":
             return json_response(200, self._meta())
+        if path == "/api/notices" and method == "GET":
+            feed = self.store.notices
+            after_text = _one(query, "after")
+            after = int(after_text) if after_text.isdigit() else None
+            if feed is None:
+                return json_response(200, {"notices": [], "last": 0})
+            return json_response(200, feed.since(after))
+        if path == "/api/shutdown" and method == "POST":
+            hook = self.shutdown_hook
+            if hook is None:
+                return json_response(409, {"error": "The SuperBerry desktop app stops the collector itself."})
+            self.store.log("ledger", "info", "Quit from the browser page.")
+            hook()
+            return json_response(200, {"stopping": True})
         if path == "/api/status" and method == "GET":
             return json_response(200, {
                 "paused": self.service.paused(),
@@ -606,9 +662,12 @@ class App:
 """
         return text_response(200, page, "text/html; charset=utf-8")
 
+    def _bearer(self, headers) -> bool:
+        header = headers.get("Authorization", "") or ""
+        return header.startswith("Bearer ") and same_secret(header[7:].strip(), self.token)
+
     def _authorized(self, headers) -> bool:
-        header = headers.get("Authorization", "")
-        if header.startswith("Bearer ") and same_secret(header[7:].strip(), self.token):
+        if self._bearer(headers):
             return True
         cookie = headers.get("Cookie", "")
         for part in cookie.split(";"):
@@ -639,6 +698,8 @@ class App:
                 "youtube": YOUTUBE_SCOPE,
                 "kick": KICK_SCOPES,
             },
+            "can_quit": self.shutdown_hook is not None,
+            "system_notifications": self.store.system_notifications_available(),
         }
 
     def _log_view(self) -> dict:
