@@ -131,6 +131,7 @@ class Store:
         self._lock = threading.Lock()
         self._log_file_lock = threading.Lock()
         self._notifier = None
+        self.notices = None
         self.on_fresh_donations = None
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -288,9 +289,16 @@ class Store:
 
     def enable_system_notifications(self) -> None:
         """Tell the desktop when an automated row is stored. Manual rows stay quiet."""
-        from .notify import system_notifier
+        from .notify import NoticeFeed, system_notifier
 
         self._notifier = system_notifier(log=lambda message: self.log("ledger", "info", message))
+        self.notices = NoticeFeed()
+
+    def system_notifications_available(self) -> bool:
+        """True when this computer, or the desktop shell, shows the notices itself."""
+        from .notify import UnavailableNotifier
+
+        return self._notifier is not None and not isinstance(self._notifier, UnavailableNotifier)
 
     def _notify_automated(self, donations: list[Donation]) -> None:
         notifier = self._notifier
@@ -304,6 +312,12 @@ class Store:
             notifier.donations_added(automated, membership_price=price)
         except Exception:
             return
+        feed = self.notices
+        if feed is not None:
+            try:
+                feed.donations_added(automated, membership_price=price)
+            except Exception:
+                return
 
     def add_manual_entry(
         self,

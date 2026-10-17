@@ -215,7 +215,11 @@ function toast(message, bad, action) {
   }, action ? 8000 : 4200);
 }
 
+// Set once Quit has stopped the collector. Later calls wait forever instead of failing.
+let appStopped = false;
+
 async function api(path, options) {
+  if (appStopped) return new Promise(() => {});
   const request = options || {};
   const headers = { Accept: "application/json" };
   if (request.body) headers["Content-Type"] = "application/json";
@@ -1049,7 +1053,7 @@ function postRumbleChat(message, streamId) {
     return Promise.resolve({
       platform: "rumble",
       ok: false,
-      error: "Open SuperBerry to use the Rumble window.",
+      error: desktop ? "Open SuperBerry to use the Rumble window." : RUMBLE_SEND_NEEDS_DESKTOP,
     });
   }
   const rumblePath = streamId
@@ -1128,6 +1132,53 @@ function sendChatText(text, options) {
   });
 }
 
+// Without the desktop bridge, SuperBerry is open in a normal web browser.
+function browserMode() {
+  return !window.desktop;
+}
+
+const SITE_SIGN_IN = {
+  youtube: { label: "YouTube", url: "https://www.youtube.com/signin" },
+  kick: { label: "Kick", url: "https://kick.com/login" },
+  rumble: { label: "Rumble", url: "https://rumble.com/login.php" },
+};
+const EMBEDDED_CHAT_NEEDS_DESKTOP = "This chat is embedded only in the SuperBerry desktop app. Use the pop-out button to open it in a new window.";
+const RUMBLE_SEND_NEEDS_DESKTOP = "Sending to Rumble chat needs the SuperBerry desktop app.";
+
+function openSiteInBrowser(platform) {
+  const site = SITE_SIGN_IN[platform];
+  if (!site) return;
+  // With noopener the browser returns null even when the tab opened, so there is nothing to check.
+  window.open(site.url, "_blank", "noopener");
+  toast(site.label + " sign-in opened in a new tab. The browser keeps that session.");
+}
+
+// The window opens during the click, so a pop-up blocker allows it. The address arrives after.
+function openChatInBrowser(platform, path, failure) {
+  const popup = window.open("about:blank", "superberry-chat-" + platform, "popup,width=440,height=760");
+  if (!popup) {
+    toast("The browser blocked the chat window. Allow pop-ups for this page.", true);
+    return;
+  }
+  try {
+    popup.opener = null;
+  } catch (_error) {
+    // Some browsers do not let the opener be cleared. The chat page is still the platform's own.
+  }
+  api(path).then((payload) => {
+    const url = payload && payload.url;
+    if (!url || !/^https:\/\//.test(url)) throw new Error(failure);
+    popup.location.replace(url);
+  }).catch((error) => {
+    try {
+      popup.close();
+    } catch (_error) {
+      // Already closed.
+    }
+    toast((error && error.message) || failure, true);
+  });
+}
+
 function requireRumbleDesktop() {
   const desktop = window.desktop;
   if (!desktop || typeof desktop.rumbleSignIn !== "function" || typeof desktop.rumbleChat !== "function") {
@@ -1138,6 +1189,10 @@ function requireRumbleDesktop() {
 }
 
 function openRumbleSignIn() {
+  if (browserMode()) {
+    openSiteInBrowser("rumble");
+    return;
+  }
   const desktop = requireRumbleDesktop();
   if (!desktop) return;
   Promise.resolve(desktop.rumbleSignIn()).catch((error) => {
@@ -1146,6 +1201,10 @@ function openRumbleSignIn() {
 }
 
 function openRumbleChat() {
+  if (browserMode()) {
+    openChatInBrowser("rumble", "/api/chat/rumble", "That Rumble chat could not be opened.");
+    return;
+  }
   const desktop = requireRumbleDesktop();
   if (!desktop) return;
   api("/api/chat/rumble").then((payload) => {
@@ -1169,6 +1228,10 @@ function requireYoutubeDesktop() {
 }
 
 function openYoutubeSignIn() {
+  if (browserMode()) {
+    openSiteInBrowser("youtube");
+    return;
+  }
   const desktop = requireYoutubeDesktop();
   if (!desktop) return;
   Promise.resolve(desktop.youtubeSignIn()).catch((error) => {
@@ -1177,6 +1240,10 @@ function openYoutubeSignIn() {
 }
 
 function openYoutubeChat() {
+  if (browserMode()) {
+    openChatInBrowser("youtube", "/api/chat/youtube", "That YouTube chat could not be opened.");
+    return;
+  }
   const desktop = requireYoutubeDesktop();
   if (!desktop) return;
   api("/api/chat/youtube").then((payload) => {
@@ -1200,6 +1267,10 @@ function requireKickDesktop() {
 }
 
 function openKickSignIn() {
+  if (browserMode()) {
+    openSiteInBrowser("kick");
+    return;
+  }
   const desktop = requireKickDesktop();
   if (!desktop) return;
   Promise.resolve(desktop.kickSignIn()).catch((error) => {
@@ -1208,6 +1279,10 @@ function openKickSignIn() {
 }
 
 function openKickChat() {
+  if (browserMode()) {
+    openChatInBrowser("kick", "/api/chat/kick", "That Kick chat could not be opened.");
+    return;
+  }
   const desktop = requireKickDesktop();
   if (!desktop) return;
   api("/api/chat/kick").then((payload) => {
@@ -1298,7 +1373,7 @@ function sendBlueRumble(item) {
   if (!rumbleChatAllowed()) return reportBlue(item, RUMBLE_CHAT_BLOCK);
   const desktop = window.desktop;
   if (!desktop || typeof desktop.rumbleSend !== "function") {
-    return reportBlue(item, "Open SuperBerry to use the Rumble window.");
+    return reportBlue(item, desktop ? "Open SuperBerry to use the Rumble window." : RUMBLE_SEND_NEEDS_DESKTOP);
   }
   return postRumbleChat(item.text, item.stream_id).then((row) => {
     if (row && row.ok) return null;
@@ -3474,7 +3549,7 @@ function mountUtilityChat(platform, partition, url) {
   utilityChatUrls[platform] = url;
   host.replaceChildren();
   if (!window.desktop) {
-    setUtilityChatNote(platform, "Open SuperBerry to use this chat.");
+    setUtilityChatNote(platform, EMBEDDED_CHAT_NEEDS_DESKTOP);
     return;
   }
   const view = document.createElement("webview");
@@ -3499,7 +3574,7 @@ function openUtilityChat(spec, serial) {
         return;
       }
       mountUtilityChat(spec.platform, spec.partition, url);
-      setUtilityChatNote(spec.platform, window.desktop ? "" : "Open SuperBerry to use this chat.");
+      setUtilityChatNote(spec.platform, window.desktop ? "" : EMBEDDED_CHAT_NEEDS_DESKTOP);
     })
     .catch((error) => {
       if (serial !== utilityChatSerial || !utilityOn()) return;
@@ -4809,6 +4884,131 @@ function readFilters() {
   state.filters.hideReceipts = $("hide-receipts").checked;
 }
 
+const BROWSER_NOTIFY_KEY = "stream-donations-browser-notify";
+const NOTICE_POLL_MS = 4000;
+let noticeAfter = null;
+let noticeTimer = null;
+
+function browserNotifySupported() {
+  return typeof window.Notification === "function";
+}
+
+function browserNotifyOn() {
+  return browserNotifySupported()
+    && window.Notification.permission === "granted"
+    && localStorage.getItem(BROWSER_NOTIFY_KEY) === "1";
+}
+
+function paintBrowserNotify() {
+  const button = $("browser-notify");
+  const status = $("browser-notify-status");
+  if (!button || !status) return;
+  status.hidden = false;
+  if (!browserNotifySupported()) {
+    button.disabled = true;
+    status.textContent = "This browser cannot show notifications.";
+    return;
+  }
+  if (window.Notification.permission === "denied") {
+    button.disabled = true;
+    status.textContent = "Notifications are blocked for this page in the browser's site settings.";
+    return;
+  }
+  button.disabled = false;
+  const on = browserNotifyOn();
+  button.textContent = on ? "Turn off browser notifications" : "Turn on browser notifications";
+  status.textContent = on
+    ? "New automatic donations show a browser notification while this page is open. Manual entries stay quiet."
+    : "This computer has no system notifications for SuperBerry, so the browser can show them instead.";
+}
+
+function pollNotices() {
+  if (!browserNotifyOn()) return;
+  const path = noticeAfter === null ? "/api/notices" : "/api/notices?after=" + noticeAfter;
+  api(path).then((payload) => {
+    const items = (payload && Array.isArray(payload.notices)) ? payload.notices : [];
+    if (noticeAfter !== null) {
+      items.forEach((item) => {
+        try {
+          new window.Notification(String(item.title || "SuperBerry"), {
+            body: String(item.body || ""),
+            icon: "/icons/superberry.png",
+            tag: "superberry-" + item.id,
+          });
+        } catch (_error) {
+          // A browser that refuses page notifications still keeps the ledger.
+        }
+      });
+    }
+    if (payload && Number.isInteger(payload.last)) noticeAfter = payload.last;
+  }).catch(() => {});
+}
+
+function startNoticePolling() {
+  if (noticeTimer !== null) return;
+  pollNotices();
+  noticeTimer = window.setInterval(pollNotices, NOTICE_POLL_MS);
+}
+
+function toggleBrowserNotify() {
+  if (!browserNotifySupported()) return;
+  if (browserNotifyOn()) {
+    localStorage.removeItem(BROWSER_NOTIFY_KEY);
+    paintBrowserNotify();
+    return;
+  }
+  // Asked only from this click, as browsers expect.
+  Promise.resolve(window.Notification.requestPermission()).then((permission) => {
+    if (permission === "granted") {
+      localStorage.setItem(BROWSER_NOTIFY_KEY, "1");
+      noticeAfter = null;
+      startNoticePolling();
+    }
+    paintBrowserNotify();
+  }).catch(() => paintBrowserNotify());
+}
+
+function showStopped() {
+  appStopped = true;
+  if (noticeTimer !== null) window.clearInterval(noticeTimer);
+  const box = document.createElement("main");
+  box.className = "oauth-result";
+  const title = document.createElement("h1");
+  title.textContent = "SuperBerry has stopped";
+  const text = document.createElement("p");
+  text.textContent = "Collection is off and the ledger is closed. You can close this tab. Start SuperBerry again to keep collecting.";
+  box.append(title, text);
+  document.body.replaceChildren(box);
+  document.title = "SuperBerry has stopped";
+}
+
+function quitFromBrowser() {
+  closeMenu();
+  const sure = window.confirm("Quit SuperBerry? Collection stops until you start it again.");
+  if (!sure) return;
+  api("/api/shutdown", { method: "POST" })
+    .then(showStopped)
+    .catch((error) => toast(error.message || "SuperBerry could not quit.", true));
+}
+
+// Browser mode only. The desktop app keeps its own window, menu, and notifications.
+function setupBrowserMode(meta) {
+  if (!browserMode()) return;
+  const section = $("browser-mode");
+  if (section) section.hidden = false;
+  if (meta && meta.can_quit && $("quit-app")) {
+    $("quit-sep").hidden = false;
+    $("quit-app").hidden = false;
+    $("quit-app").addEventListener("click", quitFromBrowser);
+  }
+  if (meta && !meta.system_notifications && $("browser-notify")) {
+    $("browser-notify-row").hidden = false;
+    $("browser-notify").addEventListener("click", toggleBrowserNotify);
+    paintBrowserNotify();
+    if (browserNotifyOn()) startNoticePolling();
+  }
+}
+
 async function boot() {
   state.meta = await api("/api/meta");
   renderPlatformPills(state.meta.platforms);
@@ -4817,6 +5017,7 @@ async function boot() {
   if (state.meta.log_file && $("log-file")) $("log-file").textContent = state.meta.log_file;
   applySettingsToForm(await api("/api/settings"));
   bind();
+  setupBrowserMode(state.meta);
   await refresh();
   setInterval(() => {
     if (!document.hidden) {

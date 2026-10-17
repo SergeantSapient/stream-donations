@@ -56,6 +56,26 @@ PYTHONPATH=source/collector python3 -m streamdonations serve
 
 The process prints a one-time `http://127.0.0.1:47321/boot?token=...` link. Open that link in a browser on this machine. The UI and API stay on 127.0.0.1.
 
+### Browser mode
+
+SuperBerry can also run with a normal web browser as its window instead of Electron. The collector, the local server, and the ledger file are the same ones the desktop app uses. Starting SuperBerry with no flag still opens the desktop app, and the AppImage and the Windows exe and zip are built the same way.
+
+- From a checkout: `PYTHONPATH=source/collector python3 -m streamdonations serve --open`
+- From the Linux portable folder, the AppImage, or `bin/`: `SuperBerry --browser` (or `bin/stream-donations --browser`). `--browser` has to be the first argument. Other arguments after it go to `serve`, for example `--port 47400`.
+- From the Windows folder (`SuperBerry-windows-x64`, or `%LOCALAPPDATA%\SuperBerry\runtime\current` after the exe has run once), in a command prompt: `python\python.exe -m streamdonations serve --open`. `SuperBerry.cmd` and `SuperBerry.exe` still start the desktop app.
+
+`--open` opens the one-time sign-in link in the default browser. If SuperBerry is already running on that port, `--open` opens that copy instead of starting a second one. It signs in again when the running copy has the same `STREAM_DONATIONS_TOKEN`. Otherwise the page may ask to sign in, and the terminal says to use the link the running copy printed or to quit it first.
+
+In browser mode:
+
+- Quit, in the menu, stops SuperBerry. The ledger is closed cleanly and the tab says SuperBerry has stopped. Ctrl+C in the terminal does the same. The desktop app has no Quit item because closing its window already does this.
+- YouTube, Kick, and Rumble sign-in open the platform's own login in a new browser tab, and the browser keeps that session. Open chat opens the platform's pop-out chat in a new window. Allow pop-ups for the page if the browser blocks it.
+- Sending to Rumble chat, and the chats embedded beside the stream, need the desktop app. YouTube and Kick chat sending work the same, through their APIs.
+- On Linux the computer's own notifications still appear. Where the computer has none for SuperBerry (Windows and macOS without the desktop app), Settings → Browser mode has Turn on browser notifications. The browser asks once, from that click. New automatic donations then show a browser notification while the tab is open. Manual entries stay quiet, the same as the desktop notifications.
+- Keep the tab open. A browser slows timers in a background tab, so notices can come late, but collection runs in the collector and does not wait for the tab.
+
+The page and API only accept changes from the SuperBerry page itself. A POST, PUT, PATCH, or DELETE must carry the page's own origin (`http://127.0.0.1:PORT` or `http://localhost:PORT`) and, when it has a body, `Content-Type: application/json`. A web page on another port of this computer is a different origin, so it cannot change the ledger or post to chat even though the browser would otherwise send the sign-in cookie. Scripts that use `Authorization: Bearer <token>` are not affected. Reads, the sign-in link, and the YouTube and Kick sign-in callbacks are not affected.
+
 ## What is collected
 
 | Service | Endpoint | Events |

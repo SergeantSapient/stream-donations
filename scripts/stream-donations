@@ -8,6 +8,37 @@ if [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+# --browser, as the first argument only, runs the collector without Electron and
+# opens the ledger in the default web browser. Without it, nothing below changes.
+if [ "${1:-}" = "--browser" ]; then
+  shift
+  PY="${STREAM_DONATIONS_PYTHON:-}"
+  if [ -z "$PY" ]; then
+    if [ -x "$ROOT/python/bin/python3" ]; then
+      PY="$ROOT/python/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+      PY=python3
+    else
+      echo "python3 was not found. The portable Linux package carries one in python/bin." >&2
+      exit 1
+    fi
+  fi
+  if [ ! -f "$ROOT/collector/streamdonations/__main__.py" ]; then
+    echo "The collector is not next to this launcher. From a checkout, run scripts/build.sh." >&2
+    exit 1
+  fi
+  LEGACY=""
+  if [ -d "$ROOT/../source/collector/streamdonations" ]; then
+    LEGACY=$(CDPATH= cd -- "$ROOT/.." && pwd)/data
+  fi
+  case "${STREAM_DONATIONS_DATA:-}" in
+    "" ) ;;
+    "$ROOT"|"$ROOT"/*|"$LEGACY"|"$LEGACY"/*)
+      unset STREAM_DONATIONS_DATA
+      ;;
+  esac
+  PYTHONPATH="$ROOT/collector" PYTHONNOUSERSITE=1 exec "$PY" -m streamdonations serve --open "$@"
+fi
 if [ -x "$ROOT/electron/electron" ]; then
   ELECTRON="$ROOT/electron/electron"
 elif [ -x "$ROOT/app/node_modules/electron/dist/electron" ]; then

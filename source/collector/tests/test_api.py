@@ -54,6 +54,9 @@ class ApiTests(unittest.TestCase):
                 headers["Content-Type"] = "application/json"
         if cookie:
             headers["Cookie"] = f"sd_session={self.token}"
+        if method not in {"GET", "HEAD"}:
+            # The page's own origin, as a browser or Electron sends it.
+            headers["Origin"] = self.base
         if host:
             headers["Host"] = host
         request = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)

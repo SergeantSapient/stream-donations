@@ -9,6 +9,7 @@ import secrets
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from .fx import usd_rates
@@ -35,6 +36,11 @@ def main(argv: list[str] | None = None) -> int:
     serve = sub.add_parser("serve", help="Run the local API, UI, and collectors")
     serve.add_argument("--data-dir", help="Directory for donations.db (default: the home data directory)")
     serve.add_argument("--port", type=int, help="Loopback UI port (default: 47321)")
+    serve.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the ledger in the default web browser. If SuperBerry already runs on the port, open that copy.",
+    )
 
     export = sub.add_parser("export", help="Write the ledger as CSV or JSONL")
     export.add_argument("fmt", choices=["csv", "jsonl"])
@@ -88,6 +94,11 @@ def _serve(args) -> int:
     if port < 0 or port > 65535:
         print("Port must be between 0 and 65535.", file=sys.stderr)
         return 2
+    opening = bool(getattr(args, "open", False))
+    if opening and port:
+        running = running_superberry(port, None if generated else token)
+        if running is not None:
+            return _open_running_copy(port, token, running)
     store = Store(_data_dir(args) / "donations.db")
     store.enable_system_notifications()
     app = App(store, token, port or 47321)
@@ -100,6 +111,10 @@ def _serve(args) -> int:
     server.app = app
     app.ui_port = int(server.server_address[1])
     app.start()
+    if os.environ.get("STREAM_DONATIONS_STOP_ON_STDIN", "").strip() != "1":
+        # The desktop shell owns the process when it sets STOP_ON_STDIN. A
+        # browser page has no other way to stop a collector started without one.
+        app.shutdown_hook = lambda: _stop_soon(server)
     print(f"STREAM_DONATIONS_READY port={app.ui_port}", flush=True)
     if generated:
         print(f"Database: {store.path}", flush=True)
@@ -107,6 +122,11 @@ def _serve(args) -> int:
             f"Open http://127.0.0.1:{app.ui_port}/boot?token={token}",
             flush=True,
         )
+    if opening:
+        if open_in_browser(f"http://127.0.0.1:{app.ui_port}/boot?token={token}"):
+            print("Opened SuperBerry in your web browser. Quit is in the page menu.", flush=True)
+        else:
+            print("No web browser could be opened. Use the Open link above.", flush=True)
 
     def _stop(_signum, _frame) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
@@ -124,6 +144,71 @@ def _serve(args) -> int:
         server.server_close()
         store.close()
     return 0
+
+
+def open_in_browser(url: str) -> bool:
+    import webbrowser
+
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
+
+def running_superberry(port: int, token: str | None, timeout: float = 2.0) -> str | None:
+    """What answers on 127.0.0.1:port.
+
+    "session" when it is SuperBerry and accepts this token, "running" when it
+    is SuperBerry with another token, None when it is not SuperBerry or nothing
+    is listening.
+    """
+    import http.client
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        connection.request("GET", "/api/health", headers=headers)
+        response = connection.getresponse()
+        response.read()
+    except (OSError, http.client.HTTPException):
+        return None
+    finally:
+        connection.close()
+    if not str(response.getheader("Server") or "").startswith("StreamDonations"):
+        return None
+    if token and response.status == 200:
+        return "session"
+    return "running"
+
+
+def _open_running_copy(port: int, token: str, running: str) -> int:
+    if running == "session":
+        url = f"http://127.0.0.1:{port}/boot?token={token}"
+    else:
+        url = f"http://127.0.0.1:{port}/"
+    opened = open_in_browser(url)
+    print(f"SuperBerry is already running on port {port}.", flush=True)
+    if not opened:
+        print(f"No web browser could be opened. Visit http://127.0.0.1:{port}/", flush=True)
+    elif running == "session":
+        print("Opened that copy in your web browser.", flush=True)
+    else:
+        print(
+            "Opened it in your web browser. If the page says to sign in again, use the Open link "
+            "that copy printed, or quit it and start SuperBerry again.",
+            flush=True,
+        )
+    return 0
+
+
+def _stop_soon(server, delay: float = 0.3) -> None:
+    """Stop after the reply to Quit has gone out."""
+
+    def stop() -> None:
+        time.sleep(delay)
+        server.shutdown()
+
+    threading.Thread(target=stop, name="browser-quit", daemon=True).start()
 
 
 def _stop_when_stdin_closes(server, stream=None) -> None:

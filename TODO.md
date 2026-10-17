@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.7.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.8.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -42,7 +42,7 @@ Each item is a **considerable** version change unless the request says it is maj
 
 4. **Settings export without secrets.** Done. The Settings dialog exports and imports a versioned JSON file: membership price, the extra chat note, top donors, and the shared ledger page size. Goal tiers are not in that file. They live on a streamer preset and are written onto a ledger only when that preset is saved with the ledger's addresses. API keys and secrets are not in the file. A newer file still applies the settings this version understands, and settings the file leaves out stay as they are. A full JSON ledger export is still not part of this.
 
-5. **PWA instead of Electron.** Convert to a progressive web app. Account for what a browser will limit, including system resources.
+5. **PWA instead of Electron.** Convert to a progressive web app. Account for what a browser will limit, including system resources. Browser mode (1.8.0) is a step toward it: the collector stays on this computer and a normal browser is the window. Rumble chat sending and embedded chats still need Electron. A collector-free PWA is not started.
 
 6. **Update in place.** Check a list of repos for a newer version and update only after the user allows it. Tell them with a non-disruptive notification. Needs a reliable repo (most likely GitHub, if that stays inside its terms of service).
 
