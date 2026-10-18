@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.9.0 — 2026-10-18
+
+- 2026-10-18 — Considerable. Chat commands. With Answer !total and !top turned on for a platform in a ledger, a viewer who starts a chat line with !total gets that ledger's stream total line, and !top gets its top three named donors, posted back into the same chat. One reply per chat every 2 minutes, shared by both commands and by every ledger reading that chat; other commands in that time are ignored. History, repeats, the signed-in account's own lines, and the app's own replies never answer. Anonymous donors are skipped and nobody is pinged. Replies fit 200 characters on YouTube and Rumble and 500 on Kick. YouTube and Kick post as the signed-in account; Rumble is typed by the desktop window and is not available in browser mode. Every switch is off by default.
+
 ## 1.8.5 — 2026-10-18
 
 - 2026-10-18 — Minor. Signed-in YouTube calls are counted at Google's published quota cost. Reading the live chat is 5 units, not 1. That read now waits at least 30 seconds, or longer when YouTube asks, and takes up to 2,000 messages at a time. One live broadcast uses about 634 units an hour instead of about 3,600, so the 10,000 daily quota lasts about 15 hours of streaming instead of under 3. The pause at the quota limit is unchanged.

@@ -12,7 +12,8 @@ import urllib.parse
 from dataclasses import dataclass
 
 from .blue_host import BlueHost
-from .chat_feed import ChatFeed
+from .chat_feed import ChatFeed, CommandTap
+from .commands import ChatCommands
 from .giveaway import Giveaway
 from .goals import dump_tiers, normalize_tiers
 from .kick import KickClient
@@ -68,6 +69,9 @@ _ALLOWED_SETTINGS = {
     "chat_extra",
     "goal_tiers",
     "blue_script_id",
+    "youtube_chat_commands",
+    "rumble_chat_commands",
+    "kick_chat_commands",
 }
 
 PAUSED_DETAIL = (
@@ -139,11 +143,12 @@ class LedgerView:
 
 
 class _OtherLedger:
-    def __init__(self, view: LedgerView, transport: Transport):
+    def __init__(self, view: LedgerView, transport: Transport, tap: CommandTap | None = None):
+        # The tap passes chat to commands only. The panel and giveaway follow the open ledger.
         self.view = view
-        self.youtube = YouTubeClient(view, transport, chat_feed=None)
-        self.rumble = RumbleClient(view, transport, chat_feed=None)
-        self.kick = KickClient(view, transport, chat_feed=None)
+        self.youtube = YouTubeClient(view, transport, chat_feed=tap)
+        self.rumble = RumbleClient(view, transport, chat_feed=tap)
+        self.kick = KickClient(view, transport, chat_feed=tap)
 
     def rest(self) -> None:
         self.youtube.rest()
@@ -176,6 +181,8 @@ class Service:
         self.chat = ChatFeed()
         self.giveaway = Giveaway()
         self.chat.on_lines = self.giveaway.observe
+        self.commands = ChatCommands(self)
+        self.chat.command_tap = self._open_ledger_commands
         self.youtube = YouTubeClient(store, shared, chat_feed=self.chat)
         self.rumble = RumbleClient(store, shared, chat_feed=self.chat)
         self.kick = KickClient(store, shared, chat_feed=self.chat)
@@ -236,6 +243,9 @@ class Service:
 
     def paused(self) -> bool:
         return self.store.collection_paused()
+
+    def _open_ledger_commands(self, platform: str, rows: list[dict], *, chat: str = "", fresh: bool = False) -> None:
+        self.commands.listen(platform, rows, stream_id=None, chat=chat, fresh=fresh)
 
     def chat_destinations(self) -> dict:
         """Whether the signed-in YouTube and Kick accounts can post.
@@ -559,7 +569,7 @@ class Service:
     def _make_other(self, tab_id: str) -> _OtherLedger:
         view = LedgerView(self.store, tab_id)
         view.refresh()
-        return _OtherLedger(view, self._transport)
+        return _OtherLedger(view, self._transport, CommandTap(self.commands.listen, tab_id))
 
     def _drop_other_ledgers(self, keep: set[str]) -> None:
         for tab_id in list(self._others):
@@ -700,6 +710,8 @@ class Service:
                 else:
                     clears.append(key)
             elif key in {"rumble_follow_live", "kick_follow_live"}:
+                updates[key] = "1" if _flag(value) else "0"
+            elif key in {"youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands"}:
                 updates[key] = "1" if _flag(value) else "0"
             elif key == "kick_watch":
                 text = str(value or "").strip()

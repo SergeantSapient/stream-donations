@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.8.5` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.9.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -23,6 +23,8 @@ The 2026-09-30 resume reminder has fired. Do not put that timer back.
 7. **Version classification.** A shipped change is recorded with `python3 scripts/version.py`. The number is major.considerable.minor. Minor raises the last number, considerable raises the middle number, and major raises the first. A peripheral fix does not change the number. Wishlist work is considerable unless the request says it is major. The collector and Electron keep the same number. See Version rules.
 
 8. **BLUE scripts.** Berry Lexical User Events. BLUE in the menu saves, imports, and exports a script. A streamer preset can select one. The script runs while a ledger that uses it is connected, and a soft disconnect stops it. Connecting that ledger starts it over. Each line is its own command. A line that cannot be read is skipped. An action that cannot be sent is written to the log. ON GOAL runs when the script starts, including tier 0, and again when a goal tier from 1 to 5 is reached. DONOR is who reached that tier, NAME is the name set on it, and PLATFORM and AMOUNT are that donation. Those are empty at tier 0. TOTAL is the ledger total on every line. TIER is how many goals that total has reached, also on every line. On a goal line, TIER is the tier that line is about. A word that is not a keyword, such as is, is ignored.
+
+9. **Chat commands.** `!total` and `!top`, per ledger and per platform, off by default. The first word only, any case. One 2-minute cooldown per chat, shared by both commands and every ledger reading that chat, in memory, started when a reply is attempted. History, repeats, the signed-in account, and the app's own replies never answer. `!top` skips anonymous donors, has no `@`, and is off while top donors are hidden. YouTube and Kick post as the signed-in account (YouTube 21 units each); Rumble is typed by the desktop window and is not available in browser mode. See README, Chat commands. Not tried on a real live stream yet.
 
 ## To do
 

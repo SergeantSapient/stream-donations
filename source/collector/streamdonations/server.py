@@ -341,6 +341,13 @@ class App:
             ))
         if path == "/api/chat/destinations" and method == "GET":
             return json_response(200, self.service.chat_destinations())
+        if path == "/api/commands/rumble" and method == "GET":
+            # The desktop window asks with ready=1 while it can type into Rumble.
+            ready = _one(query, "ready").strip() == "1"
+            return json_response(200, {"pending": self.service.commands.claim_rumble(ready)})
+        if path == "/api/commands/rumble" and method == "POST":
+            self.service.commands.record_rumble(_object(body))
+            return json_response(200, {"ok": True})
         if path == "/api/chat/rumble" and method == "GET":
             stream = _one(query, "stream").strip()
             return json_response(200, self.service.rumble_popup(stream or None))
@@ -754,6 +761,9 @@ class App:
             "rumble_poll_seconds": seconds("rumble_poll_seconds", "8"),
             "kick_watch": self.store.get_setting("kick_watch"),
             "kick_follow_live": self.store.get_setting("kick_follow_live") == "1",
+            "youtube_chat_commands": self.store.get_setting("youtube_chat_commands") == "1",
+            "rumble_chat_commands": self.store.get_setting("rumble_chat_commands") == "1",
+            "kick_chat_commands": self.store.get_setting("kick_chat_commands") == "1",
             "kick_client_id": self.store.get_setting("kick_client_id"),
             "kick_client_secret_set": bool(self.store.get_setting("kick_client_secret")),
             "kick_connected": bool(self.store.get_setting("kick_refresh_token")),

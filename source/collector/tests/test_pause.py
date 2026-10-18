@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
+from streamdonations.chat_feed import CommandTap
 from streamdonations.normalize import Donation
 from streamdonations.service import Service
 from streamdonations.store import Store
@@ -174,9 +175,16 @@ class PauseTests(unittest.TestCase):
         self.assertTrue(started["rumble"].wait(1))
         self.assertTrue(started["kick"].wait(1))
         self.assertEqual(self.transport.urls, [])
-        self.assertIsNone(self.background.youtube._public._chat_feed)
-        self.assertIsNone(self.background.rumble._chat_feed)
-        self.assertIsNone(self.background.kick._public._chat_feed)
+        # Background chat reaches chat commands only, never the open ledger's panel.
+        for feed in (
+            self.background.youtube._public._chat_feed,
+            self.background.rumble._chat_feed,
+            self.background.kick._public._chat_feed,
+        ):
+            self.assertIsInstance(feed, CommandTap)
+            self.assertIsNot(feed, self.service.chat)
+            feed.add("kick", [{"key": "x", "author": "a", "text": "hello"}])
+        self.assertEqual(self.service.chat.since(0, 0, False)["lines"], [])
         self.background.tick()
         self.assertEqual(self.transport.urls, [])
 

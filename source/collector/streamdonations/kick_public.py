@@ -1032,7 +1032,12 @@ class PublicKickChat:
             return
         if event.startswith("pusher:"):
             return
-        offer_chat(self._chat_feed, "kick", chat_lines_from_kick_public(event, message.get("data")))
+        offer_chat(
+            self._chat_feed,
+            "kick",
+            chat_lines_from_kick_public(event, message.get("data")),
+            chat=channel_slug,
+        )
         inserted = self.store.add_many(donations_from_kick_public(event, message.get("data"), channel_slug))
         if inserted:
             self.store.log("kick", "info", f"Stored {inserted} event(s) from the public Kick chat.")
