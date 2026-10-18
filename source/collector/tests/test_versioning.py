@@ -77,7 +77,7 @@ class VersioningTests(unittest.TestCase):
 
     def test_published_files_agree(self):
         root = Path(__file__).resolve().parents[3]
-        self.assertEqual(published_version(root), "1.8.4")
+        self.assertEqual(published_version(root), "1.8.5")
         todo = (root / "TODO.md").read_text(encoding="utf-8")
         self.assertIn("Wishlist items are considerable unless the request says the update is major.", todo)
         self.assertNotIn("Each item below is a **major**", todo)

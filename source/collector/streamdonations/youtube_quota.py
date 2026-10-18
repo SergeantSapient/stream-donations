@@ -2,14 +2,17 @@
 
 Google's default project quota is 10,000 units per day for every method
 except search.list and videos.insert, which have their own buckets. The day
-resets at midnight Pacific Time. The published list cost used here is 1 unit
-for superChatEvents.list, liveBroadcasts.list, liveChatMessages.list, and
-videos.list. liveChatMessages.insert is 20 units and is reserved by the sender.
+resets at midnight Pacific Time. Each call is counted at Google's published
+cost before it is sent: 1 unit for channels.list, videos.list,
+superChatEvents.list, and liveBroadcasts.list, 5 units for
+liveChatMessages.list, and 20 units for liveChatMessages.insert.
 A quotaExceeded response, or a local count that reaches 10,000, pauses
 signed-in calls until that reset. Public innertube chat is not this API and
 is not counted.
 
 https://developers.google.com/youtube/v3/determine_quota_cost
+https://developers.google.com/youtube/v3/live/docs/liveChatMessages/list
+https://developers.google.com/youtube/v3/live/docs/liveChatMessages/insert
 """
 
 from __future__ import annotations
@@ -28,6 +31,19 @@ MIN_POLL_SECONDS = 300
 MAX_POLL_SECONDS = 3600
 DEFAULT_POLL_SECONDS = 900
 CALL_COST = 1
+# Units per call, from the quota calculator. A path that is not listed is
+# refused, so a new call cannot be counted at the wrong price by default.
+LIST_COSTS = {
+    "/channels": 1,
+    "/videos": 1,
+    "/superChatEvents": 1,
+    "/liveBroadcasts": 1,
+    "/liveChat/messages": 5,
+}
+INSERT_COST = 20
+# liveChatMessages.list is 5 units. Every 30 seconds is 600 units an hour for
+# one live chat. YouTube's pollingIntervalMillis is used when it is longer.
+LIVE_CHAT_MIN_SECONDS = 30
 
 QUOTA_LOG = (
     "YouTube Data API quota is used up. Signed-in requests are paused until "
@@ -37,6 +53,14 @@ BUDGET_LOG = (
     "Paused signed-in YouTube requests at the 10,000 unit daily quota. "
     "They resume at midnight Pacific Time. Public live chat is unaffected."
 )
+
+
+def list_cost(path: str) -> int:
+    """Units for one GET on this API path. Unknown paths raise ValueError."""
+    try:
+        return LIST_COSTS[path]
+    except KeyError:
+        raise ValueError(f"No quota cost is known for {path}") from None
 
 
 class QuotaPaused(Exception):
