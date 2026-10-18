@@ -55,6 +55,9 @@ _STREAM_FIELDS = (
     "blue_started_at",
     "blue_timer_minute",
     "blue_goal_tier",
+    "youtube_chat_commands",
+    "rumble_chat_commands",
+    "kick_chat_commands",
 )
 _BLUE_FIELDS = ("blue_script_id", "blue_started_at", "blue_timer_minute", "blue_goal_tier")
 # A new ledger copies presentation only. Title, donations, addresses, follow-live,
@@ -67,6 +70,8 @@ _COPIED_ON_NEW_LEDGER = (
 _WATCH_FIELDS = ("youtube_watch", "rumble_watch", "kick_watch")
 _CHANNEL_FIELDS = ("youtube_channel", "rumble_channel")
 _FOLLOW_FIELDS = ("youtube_follow_live", "rumble_follow_live", "kick_follow_live")
+# Chat commands are per ledger and per platform, and off unless turned on.
+_COMMAND_FIELDS = ("youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands")
 _STREAM_ID_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
 LOG_NAME = "stream-donations.log"
 _LOG_KEEP = 400
@@ -743,6 +748,8 @@ class Store:
             tab[key] = tab[key].strip()[:2000]
         for key in _FOLLOW_FIELDS:
             tab[key] = "1" if tab[key] == "1" else "0"
+        for key in _COMMAND_FIELDS:
+            tab[key] = "1" if tab[key] == "1" else "0"
         if tab["collection_paused"] not in {"0", "1"}:
             tab["collection_paused"] = "1"
         if tab["tiers_enabled"] not in {"0", "1"}:
@@ -930,6 +937,10 @@ class Store:
                 str(row.get("platform") or ""),
             ))
         return found
+
+    def command_rows(self, stream_id: str, rates: dict[str, float]) -> list[dict]:
+        """This ledger's rows for a chat command reply, as the banner counts them."""
+        return self._goal_rows(stream_id, rates)
 
     def _goal_rows(self, stream_id: str, rates: dict[str, float]) -> list[dict]:
         tab = next((item for item in self.ledger_snapshots() if item["id"] == stream_id), None)

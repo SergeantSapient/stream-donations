@@ -584,7 +584,7 @@ class PublicChatFollower:
                 if not self._live(stop):
                     return
                 channel = str(session.get("channel") or "")
-                self._store(session.get("actions") or [], channel, stop)
+                self._store(session.get("actions") or [], channel, stop, chat=video_id, fresh=True)
                 continuation = str(session["continuation"])
                 timeout_ms = int(session.get("timeout_ms") or 5000)
                 if not self._live(stop):
@@ -604,7 +604,7 @@ class PublicChatFollower:
                     continuation, timeout_ms, actions, ended = self._poll(session, continuation)
                     if not self._live(stop):
                         return
-                    self._store(actions, channel, stop)
+                    self._store(actions, channel, stop, chat=video_id)
                     if not self._live(stop):
                         return
                     if ended:
@@ -691,10 +691,24 @@ class PublicChatFollower:
             raise ApiError(api_error_message(result), status=result.status)
         return result.body.decode("utf-8", "replace")
 
-    def _store(self, actions: object, channel: str, stop: threading.Event) -> None:
+    def _store(
+        self,
+        actions: object,
+        channel: str,
+        stop: threading.Event,
+        *,
+        chat: str = "",
+        fresh: bool = False,
+    ) -> None:
         if not self._live(stop):
             return
-        offer_chat(self._chat_feed, "youtube", chat_lines_from_live_chat_actions(actions))
+        offer_chat(
+            self._chat_feed,
+            "youtube",
+            chat_lines_from_live_chat_actions(actions),
+            chat=chat,
+            fresh=fresh,
+        )
         inserted = self.store.add_many(donations_from_live_chat_actions(actions, channel))
         if inserted:
             self.store.log("youtube", "info", f"Stored {inserted} event(s) from the public YouTube chat.")

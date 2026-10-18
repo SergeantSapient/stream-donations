@@ -148,12 +148,50 @@ class ChatFeed:
             }
 
 
-def offer_chat(feed: ChatFeed | None, platform: str, rows: list[dict]) -> None:
-    """Record lines. A feed failure must not stop the donation that arrived with them."""
+class CommandTap:
+    """Chat for a ledger that is not on screen. Lines go to chat commands only.
+
+    The panel and the giveaway follow the open ledger, so nothing is kept here.
+    """
+
+    def __init__(self, listen, stream_id: str):
+        self._listen = listen
+        self.stream_id = stream_id
+
+    def add(self, platform: str, rows: list[dict]) -> None:
+        return None
+
+    def clear(self, platform: str | None = None) -> None:
+        return None
+
+    def command_tap(self, platform: str, rows: list[dict], *, chat: str = "", fresh: bool = False) -> None:
+        self._listen(platform, rows, stream_id=self.stream_id, chat=chat, fresh=fresh)
+
+
+def offer_chat(
+    feed: ChatFeed | None,
+    platform: str,
+    rows: list[dict],
+    *,
+    chat: str = "",
+    fresh: bool = False,
+) -> None:
+    """Record lines. A feed failure must not stop the donation that arrived with them.
+
+    chat is the chat these lines came from (video id, chat id, or channel slug).
+    fresh marks the first batch after a connect, which can hold history.
+    """
     if feed is None or not rows:
         return
     try:
         feed.add(platform, rows)
+    except Exception:
+        pass
+    tap = getattr(feed, "command_tap", None)
+    if tap is None:
+        return
+    try:
+        tap(platform, rows, chat=chat, fresh=fresh)
     except Exception:
         return
 

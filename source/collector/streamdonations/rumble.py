@@ -433,6 +433,8 @@ class RumbleClient:
         self.transport = transport or Transport()
         self._chat_feed = chat_feed
         self._chat_for = ""
+        self._chat_live_id = ""
+        self._chat_fresh = False
         self._next_poll = 0.0
         self._chat_target = ""
         self._chat_stop = threading.Event()
@@ -704,6 +706,9 @@ class RumbleClient:
                 raise ApiError(f"Rumble chat returned HTTP {response.status} for video {chat_id}.")
             if stop.is_set() or self.store.collection_paused():
                 return
+            self._chat_live_id = str(chat_id)
+            # The first event after connecting carries recent history.
+            self._chat_fresh = True
             self._chat_error = ""
             self._chat_level = "ok"
             self._chat_detail = (
@@ -750,7 +755,15 @@ class RumbleClient:
             return
         if not isinstance(payload, dict):
             return
-        offer_chat(self._chat_feed, "rumble", chat_lines_from_chat_event(payload))
+        fresh = self._chat_fresh
+        self._chat_fresh = False
+        offer_chat(
+            self._chat_feed,
+            "rumble",
+            chat_lines_from_chat_event(payload),
+            chat=self._chat_live_id,
+            fresh=fresh,
+        )
         donations = donations_from_chat_event(payload)
         inserted = self.store.add_many(donations)
         if inserted:

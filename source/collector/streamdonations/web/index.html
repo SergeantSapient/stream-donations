@@ -483,6 +483,9 @@
       <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Super Chat history poll (seconds) <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="300" max="3600" step="60" value="900"></label>
       <p class="hint">Google sign-in reads your own channel’s Super Chats from the last 30 days and can post into a live chat as that account. A sign-in from before chat was added can still read. Click Connect again so posting is allowed. YouTube’s default Data API quota is 10,000 units a day. A history or broadcast check costs 1 unit. Posting one message costs 20. The day resets at midnight Pacific Time. The shortest history interval is 5 minutes. If the quota is used up, signed-in calls wait for that reset. Public live chat does not spend this quota. A waiting room can be read here before YouTube will accept a message. While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
+      <label class="check"><input id="youtube-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
+      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The reply is posted as the signed-in YouTube account and uses 21 units of the Data API quota. Commands are read from the public video URL or followed channel above, which does not use quota.</p>
+      <p id="youtube-commands-note" class="hint commands-note" hidden></p>
       <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
       <p class="hint">YouTube sign-in, under the chat, opens YouTube’s own sign-in and keeps that website session on this computer. The password is not stored. Open YouTube chat is YouTube’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <p class="hint">Register this redirect URI on the Google client:</p>
@@ -520,6 +523,9 @@
       <div class="row">
         <button type="button" id="rumble-chat-continue" aria-describedby="rumble-chat-warning">Continue</button>
       </div>
+      <label class="check"><input id="rumble-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
+      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The desktop app types the reply into the signed-in Rumble chat after Continue above, so the same terms risk applies. Browser mode cannot answer on Rumble.</p>
+      <p id="rumble-commands-note" class="hint commands-note" hidden></p>
       <div class="row">
         <button type="submit" class="primary">Save</button>
         <button type="button" id="rumble-clear">Remove URL</button>
@@ -542,6 +548,9 @@
       <p class="hint">Kick sign-in, under the chat, opens Kick’s own login and keeps that website session on this computer. The password is not stored. Open Kick chat is Kick’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <label class="check"><input id="kick-follow-live" type="checkbox"> Show whether this channel is live</label>
       <p class="hint">Chat is read either way. When this is on, the status also says whether a broadcast is live. That does not change the chat. This belongs to the open ledger.</p>
+      <label class="check"><input id="kick-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
+      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The reply is posted as the signed-in Kick account.</p>
+      <p id="kick-commands-note" class="hint commands-note" hidden></p>
       <label>Client id <input id="kick-client-id" autocomplete="off" spellcheck="false"></label>
       <label>Client secret <input id="kick-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Listen host <input id="kick-host" autocomplete="off" value="127.0.0.1"></label>

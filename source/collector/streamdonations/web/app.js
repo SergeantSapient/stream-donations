@@ -1077,6 +1077,7 @@ function setRumbleChatAllowed(on) {
   }
   applyRumbleChatAck();
   applyChatTargets();
+  renderCommandNotes();
 }
 
 function applyRumbleChatAck() {
@@ -1168,7 +1169,87 @@ function loadChatDestinations() {
     };
     chatDestinationsLoaded = true;
     applyChatTargets();
+    renderCommandNotes();
   }).catch(() => {});
+}
+
+// Chat commands. The collector reads !total and !top from public chat and
+// answers YouTube and Kick itself. Rumble replies are typed by this window.
+const COMMAND_POLL_MS = 3000;
+let commandDrainBusy = false;
+
+function rumbleCommandsReady() {
+  const desktop = window.desktop;
+  return Boolean(desktop && typeof desktop.rumbleSend === "function" && rumbleChatAllowed());
+}
+
+function commandReadNote(platform, settings) {
+  if (platform === "kick") {
+    return settings.kick_watch ? "" : "Commands are read from the public channel above. Add one first.";
+  }
+  const follow = Boolean(settings[platform + "_follow_live"]);
+  const target = follow ? settings[platform + "_channel"] : settings[platform + "_watch"];
+  if (target) return "";
+  if (platform === "youtube") {
+    return "Commands are read from a public video URL or a followed channel. Add one first. The Google sign-in alone does not read ordinary chat.";
+  }
+  return "Commands are read from a public video URL or a followed channel. Add one first.";
+}
+
+function commandSendNote(platform) {
+  if (platform === "rumble") {
+    const desktop = window.desktop;
+    if (!desktop || typeof desktop.rumbleSend !== "function") {
+      return "This chat can be read but not answered here. Rumble replies need the SuperBerry desktop app.";
+    }
+    if (!rumbleChatAllowed()) return "This chat can be read but not answered until Continue is used above.";
+    return "";
+  }
+  if (!chatDestinationsLoaded) return "";
+  const destination = chatDestinations[platform] || {};
+  if (destination.can_send) return "";
+  return "This chat can be read but not answered. " + (destination.reason || "Connect an account that can post.");
+}
+
+function renderCommandNotes() {
+  const settings = state.settings || {};
+  ["youtube", "rumble", "kick"].forEach((platform) => {
+    const box = $(platform + "-chat-commands");
+    const note = $(platform + "-commands-note");
+    if (!box || !note) return;
+    const text = box.checked ? (commandReadNote(platform, settings) || commandSendNote(platform)) : "";
+    note.textContent = text;
+    note.hidden = !text;
+  });
+}
+
+function drainCommandReplies() {
+  // Browser mode never takes Rumble replies, so the collector skips them.
+  if (!window.desktop || commandDrainBusy) return;
+  commandDrainBusy = true;
+  const ready = rumbleCommandsReady();
+  api("/api/commands/rumble?ready=" + (ready ? "1" : "0"))
+    .then((payload) => {
+      let chain = Promise.resolve();
+      ((payload && payload.pending) || []).forEach((item) => {
+        if (!item || !item.text) return;
+        chain = chain
+          .then(() => postRumbleChat(item.text, item.stream_id))
+          .then((row) => {
+            if (row && row.ok) return null;
+            return api("/api/commands/rumble", {
+              method: "POST",
+              body: JSON.stringify({ id: item.id, ok: false, reason: (row && row.error) || "Rumble chat was not sent." }),
+            });
+          })
+          .catch(() => {});
+      });
+      return chain;
+    })
+    .catch(() => {})
+    .finally(() => {
+      commandDrainBusy = false;
+    });
 }
 
 function selectedChatPlatforms() {
@@ -4124,6 +4205,7 @@ function applySettingsToForm(settings) {
   $("youtube-watch").value = settings.youtube_watch || "";
   $("youtube-channel").value = settings.youtube_channel || "";
   $("youtube-follow-live").checked = Boolean(settings.youtube_follow_live);
+  $("youtube-chat-commands").checked = Boolean(settings.youtube_chat_commands);
   $("youtube-poll").value = settings.youtube_poll_seconds;
   $("youtube-redirect").value = settings.google_redirect_uri || "";
   $("youtube-secret").placeholder = settings.youtube_client_secret_set
@@ -4133,11 +4215,14 @@ function applySettingsToForm(settings) {
   $("rumble-watch").value = settings.rumble_watch || "";
   $("rumble-channel").value = settings.rumble_channel || "";
   $("rumble-follow-live").checked = Boolean(settings.rumble_follow_live);
+  $("rumble-chat-commands").checked = Boolean(settings.rumble_chat_commands);
   $("rumble-url").placeholder = settings.rumble_api_url_set
     ? "Saved. Leave blank to keep it."
     : "https://rumble.com/-livestream-api/get-data?key=…";
   $("kick-watch").value = settings.kick_watch || "";
   $("kick-follow-live").checked = Boolean(settings.kick_follow_live);
+  $("kick-chat-commands").checked = Boolean(settings.kick_chat_commands);
+  renderCommandNotes();
   $("kick-client-id").value = settings.kick_client_id || "";
   $("kick-host").value = settings.kick_webhook_host || "127.0.0.1";
   $("kick-port").value = settings.kick_webhook_port;
@@ -4456,6 +4541,7 @@ function bind() {
       youtube_watch: $("youtube-watch").value.trim(),
       youtube_channel: $("youtube-channel").value.trim(),
       youtube_follow_live: $("youtube-follow-live").checked,
+      youtube_chat_commands: $("youtube-chat-commands").checked,
       youtube_poll_seconds: Number($("youtube-poll").value),
     };
     if ($("youtube-secret").value) body.youtube_client_secret = $("youtube-secret").value;
@@ -4481,6 +4567,7 @@ function bind() {
       rumble_watch: $("rumble-watch").value.trim(),
       rumble_channel: $("rumble-channel").value.trim(),
       rumble_follow_live: $("rumble-follow-live").checked,
+      rumble_chat_commands: $("rumble-chat-commands").checked,
     };
     if ($("rumble-url").value) body.rumble_api_url = $("rumble-url").value.trim();
     $("rumble-url").value = "";
@@ -4495,6 +4582,7 @@ function bind() {
     const body = {
       kick_watch: $("kick-watch").value.trim(),
       kick_follow_live: $("kick-follow-live").checked,
+      kick_chat_commands: $("kick-chat-commands").checked,
       kick_client_id: $("kick-client-id").value.trim(),
       kick_webhook_host: $("kick-host").value.trim(),
       kick_webhook_port: Number($("kick-port").value),
@@ -5240,6 +5328,12 @@ async function boot() {
       refresh().catch(() => {});
     }
   }, 5000);
+  // Not tied to a visible window: a minimized desktop window still answers on Rumble.
+  setInterval(drainCommandReplies, COMMAND_POLL_MS);
+  ["youtube", "rumble", "kick"].forEach((platform) => {
+    const box = $(platform + "-chat-commands");
+    if (box) box.addEventListener("change", renderCommandNotes);
+  });
 }
 
 boot().catch((error) => toast(error.message, true));
