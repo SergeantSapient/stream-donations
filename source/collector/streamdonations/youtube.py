@@ -10,7 +10,9 @@ A message posted as the signed-in account:
 Reading accepts youtube.readonly. Posting requires youtube.force-ssl, which
 superChatEvents.list also accepts, so the app requests force-ssl. A grant from
 before that change can still read and cannot post until Connect is used again.
-The live chat read is skipped when the channel is offline. Posting uses
+The live chat read is skipped when the channel is offline. While it is live,
+the chat is read at YouTube's pollingIntervalMillis, and not more often than
+every 30 seconds, because each read is 5 quota units. Posting uses
 videos.list liveStreamingDetails.activeLiveChatId for the open ledger's video.
 That id exists while the broadcast is live.
 """
@@ -27,7 +29,14 @@ from .store import Store
 from .transport import HttpResult, Transport, api_error_message
 from .util import ApiError, AuthError, collapsed_chat_text, redact
 from .youtube_public import PublicChatFollower, video_id_from_target
-from .youtube_quota import QuotaPaused, YouTubeQuota, clamp_poll_seconds
+from .youtube_quota import (
+    INSERT_COST,
+    LIVE_CHAT_MIN_SECONDS,
+    QuotaPaused,
+    YouTubeQuota,
+    clamp_poll_seconds,
+    list_cost,
+)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -39,8 +48,6 @@ _SEND_SCOPES = {
     "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtube",
 }
-# https://developers.google.com/youtube/v3/live/docs/liveChatMessages/insert
-INSERT_COST = 20
 API_HOSTS = {"www.googleapis.com"}
 TOKEN_HOSTS = {"oauth2.googleapis.com"}
 _SEND_REASONS = {
@@ -454,12 +461,13 @@ class YouTubeClient:
             self.store.set_setting("youtube_superchat_backfill_done", "0")
 
     def _api(self, path: str, query: dict[str, str], token: str):
+        cost = list_cost(path)
         url = API_ROOT + path + "?" + urllib.parse.urlencode(query)
-        result = self._get(url, token)
+        result = self._get(url, token, cost)
         if result.status == 401:
             self.store.delete_setting("youtube_access_token")
             token = self._access_token()
-            result = self._get(url, token)
+            result = self._get(url, token, cost)
         if result.status >= 400:
             if _is_quota_response(result):
                 self._quota.note_exceeded()
@@ -469,9 +477,9 @@ class YouTubeClient:
             raise ApiError("YouTube returned a response that was not an object")
         return payload
 
-    def _get(self, url: str, token: str) -> HttpResult:
+    def _get(self, url: str, token: str, cost: int) -> HttpResult:
         # Count the call before sending it. Google bills a failed request too.
-        self._quota.reserve()
+        self._quota.reserve(cost)
         return self.transport.request(
             "GET",
             url,
@@ -583,13 +591,15 @@ class YouTubeClient:
         return chats
 
     def _poll_chats_once(self, token: str) -> tuple[int, float]:
+        # Each read is 5 units. The page token keeps the place between reads,
+        # so a slower read still sees every message, up to 2,000 per read.
         inserted = 0
-        wait_ms = 5000
+        wait_ms = LIVE_CHAT_MIN_SECONDS * 1000
         for chat in self._chats:
             query = {
                 "liveChatId": chat["id"],
                 "part": "snippet,authorDetails",
-                "maxResults": "200",
+                "maxResults": "2000",
             }
             page = self._chat_tokens.get(chat["id"], "")
             if page:
@@ -611,7 +621,7 @@ class YouTubeClient:
                 wait_ms = max(wait_ms, int(payload.get("pollingIntervalMillis") or 0))
             except (TypeError, ValueError):
                 pass
-        return inserted, max(2.0, wait_ms / 1000)
+        return inserted, max(float(LIVE_CHAT_MIN_SECONDS), wait_ms / 1000)
 
 
 def _live_streaming_disabled(exc: BaseException) -> bool:

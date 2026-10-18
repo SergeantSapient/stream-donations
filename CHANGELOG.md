@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.8.5 — 2026-10-18
+
+- 2026-10-18 — Minor. Signed-in YouTube calls are counted at Google's published quota cost. Reading the live chat is 5 units, not 1. That read now waits at least 30 seconds, or longer when YouTube asks, and takes up to 2,000 messages at a time. One live broadcast uses about 634 units an hour instead of about 3,600, so the 10,000 daily quota lasts about 15 hours of streaming instead of under 3. The pause at the quota limit is unchanged.
+
 ## 1.8.4 — 2026-10-17
 
 - 2026-10-17 — Peripheral. A saved ledger stays one row when its donations fall on more than one day. The arrow opens those dates, and each date opens that day's donations.
