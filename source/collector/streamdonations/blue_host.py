@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .blue import BlueEvent, evaluate
 from .fx import cached_usd_rates
@@ -38,6 +38,8 @@ class BlueHost:
         self._pending: list[dict] = []
         self._seen: set[tuple] = set()
         self._missing: set[tuple] = set()
+        # Last clock minute each ledger's TIME lines saw: (blue_started_at, minute).
+        self._clock_minutes: dict[str, tuple[str, int]] = {}
 
     def on_donations(self, stream_id: str, donations) -> None:
         """Fresh ledger rows only. A duplicate insert does not call this."""
@@ -170,11 +172,38 @@ class BlueHost:
             elapsed = int((now - started).total_seconds() // 60)
             raw_minute = str(fresh.get("blue_timer_minute") or "")
             last = int(raw_minute) if raw_minute.isdigit() else 0
-            if elapsed <= last or elapsed <= 0:
+            new_elapsed = elapsed > last and elapsed > 0
+            new_clock = self._new_clock_minute(fresh, now)
+            if not new_elapsed and not new_clock:
                 return
             tier, total = self._ledger_facts(fresh)
-            self.service.store.set_stream_values(fresh["id"], {"blue_timer_minute": str(elapsed)})
-            self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total))
+            if new_elapsed:
+                self.service.store.set_stream_values(fresh["id"], {"blue_timer_minute": str(elapsed)})
+                self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total), "elapsed")
+            if new_clock:
+                self._dispatch(fresh, script, self._timer_event(max(0, elapsed), now, tier, total), "clock")
+
+    def _new_clock_minute(self, tab: dict, now: datetime) -> bool:
+        """True once for each clock minute after the script started. TIME lines use it.
+
+        The minute-since-start tick can sit on either side of a clock minute, so
+        TIME lines are checked when the clock minute changes instead. The minute
+        the script started in, or the one SuperBerry restarted in, does not run.
+        """
+        minute = int(now.timestamp() // 60)
+        started = str(tab.get("blue_started_at") or "")
+        seen = self._clock_minutes.get(tab["id"])
+        if seen is None or seen[0] != started:
+            # Count from the start when it was just now, so the first full clock
+            # minute after it runs. Otherwise (a restart) start from this minute.
+            moment = parse_datetime(started)
+            recent = moment is not None and timedelta(0) <= now - moment <= timedelta(seconds=90)
+            seen = (started, int(moment.timestamp() // 60) if recent else minute)
+            self._clock_minutes[tab["id"]] = seen
+        if minute <= seen[1]:
+            return False
+        self._clock_minutes[tab["id"]] = (started, minute)
+        return True
 
     def _start(self, stream_id: str) -> None:
         with self._busy:
@@ -394,9 +423,9 @@ class BlueHost:
             rates,
         )
 
-    def _dispatch(self, tab: dict, script: dict, event: BlueEvent) -> None:
+    def _dispatch(self, tab: dict, script: dict, event: BlueEvent, timer: str = "") -> None:
         self._report(tab["id"], script)
-        run = evaluate(script["source"], event)
+        run = evaluate(script["source"], event, timer)
         for action in run.actions:
             try:
                 self._perform(tab, script, action)

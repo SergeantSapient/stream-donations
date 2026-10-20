@@ -17,15 +17,21 @@ from .util import display_donor
 
 _KEYWORDS = frozenset({
     "on", "donation", "timer", "goal", "time", "minutes", "platform", "amount", "total", "donor", "type", "tier", "name",
-    "if", "equal", "equals", "above", "below", "modulus", "modulo",
+    "if", "equal", "equals", "above", "below", "modulus", "modulo", "mod",
     "and", "or", "not", "then", "send", "chat", "to",
     "youtube", "rumble", "kick", "all", "notice", "app", "log", "system",
 })
 _FIELDS = frozenset({"platform", "amount", "total", "donor", "type", "time", "minutes", "tier", "name"})
 _STRUCTURAL = frozenset({
     "on", "if", "and", "or", "not", "then", "send", "chat", "notice", "to",
-    "equal", "equals", "above", "below", "modulus", "modulo",
+    "equal", "equals", "above", "below", "modulus", "modulo", "mod",
 })
+_NUMBER_FIELDS = frozenset({"amount", "minutes", "tier", "total"})
+# Whole numbers only, so MODULO leaves 0 through n - 1.
+_WHOLE_FIELDS = frozenset({"minutes", "tier", "time"})
+_MODULO_FIELDS = _NUMBER_FIELDS | {"time"}
+# "%" is MODULO right after a field. Anywhere else it is punctuation.
+_PERCENT = "%"
 _CHAT_ORDER = ("youtube", "rumble", "kick")
 _NOTICE_TARGETS = frozenset({"app", "log", "system"})
 _TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?")
@@ -85,6 +91,11 @@ class _Command:
     actions: tuple
     payload: str
 
+    @property
+    def uses_time(self) -> bool:
+        """A TIME comparison. On ON TIMER such a line runs once per clock minute."""
+        return any(item.field_name == "time" for group in self.groups for item in group)
+
 
 @dataclass
 class BlueProgram:
@@ -139,14 +150,23 @@ def parse_script(source: object) -> BlueProgram:
     return program
 
 
-def evaluate(source: object, event: BlueEvent) -> BlueRun:
-    """Actions whose event and conditions match. A bad line adds nothing."""
+def evaluate(source: object, event: BlueEvent, timer: str = "") -> BlueRun:
+    """Actions whose event and conditions match. A bad line adds nothing.
+
+    timer picks ON TIMER lines: "elapsed" runs the lines without TIME (once per
+    minute since the start), "clock" runs the lines with TIME (once per clock
+    minute). Empty runs every line.
+    """
     program = parse_script(source)
     actions: list[BlueAction] = []
     if event.name not in {"donation", "timer", "goal"}:
         return BlueRun(actions, program.problems)
     for command in program.commands:
         if command.event != event.name:
+            continue
+        if event.name == "timer" and timer == "elapsed" and command.uses_time:
+            continue
+        if event.name == "timer" and timer == "clock" and not command.uses_time:
             continue
         if not _matches(command.groups, event):
             continue
@@ -185,10 +205,21 @@ def _tokenize(line: str) -> list[_Token]:
             tokens.append(_Token("value", timed.group(0)))
             index = timed.end()
             continue
+        if char == "-" and _after_modulo(tokens):
+            # Keep the sign of a modulus so MODULO -5 is reported, not read as 5.
+            signed = _NUMBER.match(line, index + 1)
+            if signed:
+                tokens.append(_Token("value", "-" + signed.group(0)))
+                index = signed.end()
+                continue
         number = _NUMBER.match(line, index)
         if number:
             tokens.append(_Token("value", number.group(0)))
             index = number.end()
+            continue
+        if char == _PERCENT:
+            tokens.append(_Token("word", _PERCENT))
+            index += 1
             continue
         if char.isalpha():
             end = index + 1
@@ -201,6 +232,15 @@ def _tokenize(line: str) -> list[_Token]:
             continue
         index += 1
     return tokens
+
+
+def _after_modulo(tokens: list[_Token]) -> bool:
+    if not tokens:
+        return False
+    last = tokens[-1]
+    if last.kind == "word":
+        return last.text == _PERCENT
+    return last.kind == "keyword" and last.text.casefold() in {"modulo", "modulus", "mod"}
 
 
 def _quoted(line: str, start: int, mark: str) -> tuple[str, int]:
@@ -276,13 +316,13 @@ class _Parser:
         if not self._is_field():
             raise BlueSyntax("That comparison needs a field.")
         field_name = self._advance().text.casefold()
-        self._skip_words()
+        self._skip_words(stop_at_percent=True)
         while self._is("not"):
             negate = not negate
             self._advance()
-            self._skip_words()
+            self._skip_words(stop_at_percent=True)
         modulo = None
-        if self._is("modulo") or self._is("modulus"):
+        if self._at_modulo():
             self._advance()
             self._skip_words()
             modulo = self._modulo()
@@ -300,7 +340,15 @@ class _Parser:
         else:
             raise BlueSyntax("That comparison needs equal, above, or below.")
         self._advance()
-        return _Comparison(negate, field_name, modulo, op, self._value())
+        item = _Comparison(negate, field_name, modulo, op, self._value())
+        _check_comparison(item)
+        return item
+
+    def _at_modulo(self) -> bool:
+        if self._is("modulo") or self._is("modulus") or self._is("mod"):
+            return True
+        token = self._peek()
+        return token is not None and token.kind == "word" and token.text == _PERCENT
 
     def _actions(self) -> list[tuple[str, str]]:
         actions: list[tuple[str, str]] = []
@@ -381,9 +429,11 @@ class _Parser:
     def _payload(self) -> str:
         return " ".join(getattr(self, "_payloads", []))
 
-    def _skip_words(self) -> None:
+    def _skip_words(self, stop_at_percent: bool = False) -> None:
         """A word that is not a keyword is filler, unless it is a comparison value."""
         while self._has() and self._peek().kind == "word":
+            if stop_at_percent and self._peek().text == _PERCENT:
+                return
             self._advance()
 
     def _modulo(self) -> float:
@@ -395,6 +445,8 @@ class _Parser:
             raise BlueSyntax("The modulus needs a number.")
         if number == 0:
             raise BlueSyntax("The modulus is zero.")
+        if number < 0:
+            raise BlueSyntax("The modulus must be above zero.")
         return number
 
     def _value(self) -> str:
@@ -437,6 +489,12 @@ def _comparison_holds(item: _Comparison, event: BlueEvent) -> bool:
 
 
 def _compare(item: _Comparison, event: BlueEvent) -> bool:
+    if item.field_name == "time" and item.modulo is not None:
+        # Minutes since local midnight on this event's clock.
+        if event.clock is None:
+            return False
+        minutes = event.clock.hour * 60 + event.clock.minute
+        return _number_cmp(minutes % item.modulo, item.value, item.op)
     if item.field_name == "time":
         left = event.clock
         right = _parse_clock(item.value)
@@ -467,6 +525,47 @@ def _compare(item: _Comparison, event: BlueEvent) -> bool:
     if item.op != "equal":
         return False
     return left == right
+
+
+_LABELS = {"time": "TIME", "amount": "AMOUNT", "minutes": "MINUTES", "tier": "TIER", "total": "TOTAL"}
+
+
+def _check_comparison(item: _Comparison) -> None:
+    """Refuse a comparison that can never be read or never match."""
+    label = _LABELS.get(item.field_name, item.field_name.upper())
+    if item.modulo is not None and item.field_name not in _MODULO_FIELDS:
+        raise BlueSyntax("MODULO works on AMOUNT, TOTAL, MINUTES, TIER, and TIME.")
+    if item.field_name == "time" and item.modulo is None:
+        if _parse_clock(item.value) is None:
+            raise BlueSyntax(
+                "TIME needs a clock time such as 14:30 or 9:00 PM. "
+                "TIME MODULO takes minutes since midnight."
+            )
+        return
+    if item.field_name not in _MODULO_FIELDS:
+        return
+    if item.field_name == "time" and ":" in item.value:
+        raise BlueSyntax("TIME MODULO counts minutes since midnight, so it needs a number, not a clock time.")
+    value = _parse_number(item.value)
+    if value is None:
+        raise BlueSyntax(f"{label} needs a number.")
+    if item.modulo is None:
+        return
+    n = item.modulo
+    whole = item.field_name in _WHOLE_FIELDS and float(n).is_integer()
+    largest = n - 1 if whole else n
+    never = (
+        (item.op == "equal" and (value < 0 or value >= n or (whole and not float(value).is_integer())))
+        or (item.op == "above" and value >= largest)
+        or (item.op == "below" and value <= 0)
+    )
+    if never:
+        span = f"0 through {_plain(n - 1)}" if whole else f"from 0 up to {_plain(n)}"
+        raise BlueSyntax(f"That can never match. {label} MODULO {_plain(n)} is {span}.")
+
+
+def _plain(number: float) -> str:
+    return str(int(number)) if float(number).is_integer() else str(number)
 
 
 def _number_cmp(number: object, raw: str, op: str) -> bool:
