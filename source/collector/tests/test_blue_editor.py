@@ -408,10 +408,10 @@ class EndpointTests(unittest.TestCase):
             self.assertIn(needle, page)
         self.assertNotIn("style=", page)
         # The explanation is behind Help, closed by default, in short sections.
-        self.assertIn('id="blue-help-button" class="blue-help-button" aria-expanded="false" aria-controls="blue-help"', page)
-        self.assertIn('<div id="blue-help" class="blue-help" role="region" aria-labelledby="blue-help-button" hidden>', page)
+        self.assertIn('id="blue-help-button" class="help-toggle" data-help="blue" aria-expanded="false" aria-controls="blue-help"', page)
+        self.assertIn('<div id="blue-help" class="help-block" role="region" aria-labelledby="blue-help-button" hidden>', page)
         panel = page[page.index('<div id="blue-help"'):page.index('<p id="blue-problems"')]
-        for heading in ("Events", "Conditions and fields", "MODULO and TIME", "Targets", "Placeholders",
+        for heading in ("Running a script", "Events", "Conditions and fields", "MODULO and TIME", "Targets", "Placeholders",
                         "Limits and guards", "Editor colors", "Test box"):
             self.assertIn(f"<h3>{heading}</h3>", panel)
         for placeholder in blue.PLACEHOLDERS:

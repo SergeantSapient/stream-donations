@@ -2665,40 +2665,49 @@ function renderBlueTestLine(line, numbered) {
   return card;
 }
 
-const BLUE_HELP_KEY = "stream-donations-blue-help";
+const HELP_KEY_PREFIX = "stream-donations-help-";
 
-// BLUE help starts closed. Opening it is remembered on this computer.
-function setBlueHelp(open, remember) {
-  const button = $("blue-help-button");
-  const panel = $("blue-help");
-  if (!button || !panel) return;
+// Help panels start closed. Each one remembers on this computer whether it was left open.
+function setHelp(button, open, remember) {
+  const panel = $(button.getAttribute("aria-controls"));
+  if (!panel) return;
   panel.hidden = !open;
   button.setAttribute("aria-expanded", open ? "true" : "false");
-  button.title = open ? "Hide BLUE help" : "Show BLUE help";
+  button.title = open ? "Hide help" : "Show help";
   if (!remember) return;
   try {
-    if (open) localStorage.setItem(BLUE_HELP_KEY, "1");
-    else localStorage.removeItem(BLUE_HELP_KEY);
+    const key = HELP_KEY_PREFIX + button.dataset.help;
+    if (open) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
   } catch (_error) {
     // Storage can be off. The panel still opens and closes.
   }
 }
 
-function setupBlueHelp() {
-  const button = $("blue-help-button");
-  if (!button) return;
-  let open = false;
-  try {
-    open = localStorage.getItem(BLUE_HELP_KEY) === "1";
-  } catch (_error) {
-    open = false;
-  }
-  setBlueHelp(open, false);
-  button.addEventListener("click", () => setBlueHelp(button.getAttribute("aria-expanded") !== "true", true));
+// Shared help text lives once in a <template> and is copied where it is used.
+function fillHelpIncludes() {
+  document.querySelectorAll("[data-help-include]").forEach((slot) => {
+    const source = $("help-text-" + slot.dataset.helpInclude);
+    if (!source || !source.content || slot.childElementCount) return;
+    slot.appendChild(source.content.cloneNode(true));
+  });
+}
+
+function setupHelpToggles() {
+  fillHelpIncludes();
+  document.querySelectorAll("button[data-help]").forEach((button) => {
+    let open = false;
+    try {
+      open = localStorage.getItem(HELP_KEY_PREFIX + button.dataset.help) === "1";
+    } catch (_error) {
+      open = false;
+    }
+    setHelp(button, open, false);
+    button.addEventListener("click", () => setHelp(button, button.getAttribute("aria-expanded") !== "true", true));
+  });
 }
 
 function setupBlueEditor() {
-  setupBlueHelp();
   const source = $("blue-source");
   if (source) {
     source.addEventListener("input", () => {
@@ -5059,6 +5068,7 @@ function bind() {
   }
   const blueExport = $("blue-export");
   if (blueExport) blueExport.addEventListener("click", () => exportBlue());
+  setupHelpToggles();
   setupBlueEditor();
   document.querySelectorAll("dialog.sheet").forEach((dialog) => {
     dialog.addEventListener("click", (event) => {

@@ -1872,7 +1872,17 @@ button.archive-day-toggle:hover {
 
 .blue-script-head label { margin: 0; }
 
-.blue-help-button {
+.help-lead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.help-lead .hint { margin: 0.35rem 0; flex: 1 1 auto; }
+.help-lead .help-toggle { flex: none; margin-top: 0.3rem; }
+
+.help-toggle {
   gap: 0.35rem;
   padding: 0.25rem 0.65rem;
   border-radius: 999px;
@@ -1882,11 +1892,11 @@ button.archive-day-toggle:hover {
   cursor: pointer;
 }
 
-.blue-help-button .icon { width: 1rem; height: 1rem; }
-.blue-help-button:hover, .blue-help-button:focus-visible { color: var(--ink); border-color: var(--line-strong); }
-.blue-help-button[aria-expanded="true"] { color: var(--ink); border-color: var(--line-strong); background: var(--raise-2); }
+.help-toggle .icon { width: 1rem; height: 1rem; }
+.help-toggle:hover, .help-toggle:focus-visible { color: var(--ink); border-color: var(--line-strong); }
+.help-toggle[aria-expanded="true"] { color: var(--ink); border-color: var(--line-strong); background: var(--raise-2); }
 
-.blue-help {
+.help-block {
   margin: 0 0 0.7rem;
   padding: 0.3rem 0.9rem 0.6rem;
   border: 1px solid var(--line);
@@ -1897,7 +1907,7 @@ button.archive-day-toggle:hover {
   line-height: 1.45;
 }
 
-.blue-help h3 {
+.help-block h3 {
   margin: 0.6rem 0 0.25rem;
   color: var(--ink);
   font-size: 0.78rem;
@@ -1905,10 +1915,10 @@ button.archive-day-toggle:hover {
   text-transform: uppercase;
 }
 
-.blue-help ul { margin: 0; padding-left: 1.1rem; }
-.blue-help li { margin: 0.15rem 0; }
+.help-block ul { margin: 0; padding-left: 1.1rem; }
+.help-block li { margin: 0.15rem 0; }
 
-.blue-help code {
+.help-block code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
   color: var(--brand-gold);
