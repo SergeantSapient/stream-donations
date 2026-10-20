@@ -337,6 +337,67 @@ class HostTests(unittest.TestCase):
         self.store.add_many([_gift("rumble:rant:2", platform="rumble", donor="Bea", channel="MyShow")])
         self.assertEqual([item["target"] for item in self.host.claim()], ["rumble"])
 
+    def test_rumble_channel_tab_and_query_still_match(self):
+        self.script('ON DONATION THEN SEND CHAT TO PLATFORM "thanks {DONOR}"')
+        for index, saved in enumerate((
+            "https://rumble.com/c/MyShow/livestreams",
+            "https://rumble.com/c/MyShow/videos/",
+            "https://rumble.com/user/MyShow/live",
+            "https://rumble.com/c/MyShow?ref=1",
+        )):
+            self.store.set_setting("rumble_channel", saved)
+            self.store.add_many([_gift(f"rumble:rant:t{index}", platform="rumble", donor=f"D{index}", channel="myshow")])
+            self.assertEqual([item["text"] for item in self.host.claim()], [f"thanks D{index}"], saved)
+        self.store.set_setting("rumble_channel", "https://rumble.com/c/Other/livestreams")
+        self.store.add_many([_gift("rumble:rant:no", platform="rumble", donor="No", channel="MyShow")])
+        self.assertEqual(self.host.claim(), [])
+
+    def test_other_platform_rows_are_logged_once(self):
+        self.script('ON DONATION THEN SEND CHAT TO PLATFORM "thanks"\nON DONATION THEN SEND NOTICE TO APP "seen"')
+        for index in range(2):
+            self.store.add_many([_gift(f"other:{index}", platform="other", kind="donation", donor=f"D{index}")])
+        self.assertEqual([item["target"] for item in self.host.claim()], ["app", "app"])
+        self.assertEqual(sum("Other-platform" in line for line in self.logged()), 1)
+
+    def test_tier_zero_goal_platform_stays_quiet(self):
+        self.script('ON GOAL THEN SEND CHAT TO PLATFORM "x"')
+        self.host._start_body(self.stream)
+        self.assertEqual(self.host.claim(), [])
+        self.assertFalse(any("PLATFORM" in line for line in self.logged()), self.logged())
+
+    def _start_goal(self, gift):
+        from streamdonations.goals import GoalTier, dump_tiers
+
+        self.store.set_setting("tiers_enabled", "1")
+        self.store.set_setting("goal_tiers", dump_tiers([GoalTier(True, 10, "Bronze", "")]))
+        self.store.add_many([gift])
+        self.script('ON GOAL IF TIER ABOVE 0 THEN SEND CHAT TO PLATFORM "{NAME} {MENTION}"')
+        self.host._start_body(self.stream)
+        return self.host.claim()
+
+    def test_start_goal_platform_uses_the_stored_channel(self):
+        channel = "UC" + "b" * 22
+        self.store.set_setting("youtube_channel", "https://www.youtube.com/channel/" + channel)
+        pending = self._start_goal(_gift("youtube:superChatEvent:9", donor="Cam", amount=20.0, channel=channel))
+        self.assertEqual([(item["target"], item["text"]) for item in pending], [("youtube", "Bronze @Cam")])
+
+    def test_start_goal_platform_still_refuses_another_chat(self):
+        self.store.set_setting("youtube_channel", "https://www.youtube.com/channel/UC" + "b" * 22)
+        pending = self._start_goal(_gift("youtube:superChatEvent:9", donor="Cam", amount=20.0, channel="UC" + "c" * 22))
+        self.assertEqual(pending, [])
+        self.assertTrue(any("could not confirm" in line for line in self.logged()))
+
+    def test_start_goal_platform_skips_a_manual_gift(self):
+        from streamdonations.goals import GoalTier, dump_tiers
+
+        self.store.set_setting("tiers_enabled", "1")
+        self.store.set_setting("goal_tiers", dump_tiers([GoalTier(True, 10, "Bronze", "")]))
+        self.store.add_manual_entry(author_name="Ada", platform="youtube", kind="super_chat", amount=20)
+        self.script('ON GOAL IF TIER ABOVE 0 THEN SEND CHAT TO PLATFORM "x"')
+        self.host._start_body(self.stream)
+        self.assertEqual(self.host.claim(), [])
+        self.assertTrue(any("manual or pasted" in line for line in self.logged()))
+
     def test_the_same_gift_is_thanked_once_in_two_minutes(self):
         self.script('ON DONATION THEN SEND CHAT TO PLATFORM "thanks {DONOR}"\nON DONATION THEN SEND NOTICE TO APP "n"')
         self.store.add_many([_gift("youtube:public:1", amount=500.0, currency="JPY")])

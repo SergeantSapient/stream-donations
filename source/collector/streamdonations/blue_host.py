@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from .blue import BlueEvent, evaluate
 from .commands import LIMITS, blurb, ledger_rows, mention, trim_reply
@@ -21,6 +22,7 @@ from .goals import format_usd, load_tiers, reached_tier, round2, tier_breach, ti
 from .kick_public import kick_slug
 from .kinds import PLATFORM_LABELS
 from .money import format_raw_amount, parse_membership_price, quote, raw_amount
+from .rumble import rumble_channel_page_url
 from .util import display_donor, format_utc, parse_datetime, utc_now
 from .youtube_public import video_id_from_target
 
@@ -256,7 +258,11 @@ class BlueHost:
                         donor = breach["donor"]
                         platform = breach["platform"]
                         amount = breach["amount_usd"]
-                        origin = {"dedupe_key": breach.get("key") or "", "channel": "", "raw": {}}
+                        origin = {
+                            "dedupe_key": breach.get("key") or "",
+                            "channel": breach.get("channel") or "",
+                            "raw": {"manual": True} if breach.get("manual") else {},
+                        }
                 except Exception:
                     self._log("BLUE could not read the goal tier.")
                     tier = 0
@@ -389,12 +395,20 @@ class BlueHost:
             {"amount_usd": usd, "donor": donor, "platform": platform, "key": key}
             for key, usd, donor, platform in self.service.store.stream_goal_amounts(tab["id"], rates)
         ]
-        return tier_breach(
+        breach = tier_breach(
             rows,
             str(tab.get("tiers_enabled") or "") == "1",
             load_tiers(tab.get("goal_tiers")),
             tier,
         )
+        if breach is not None and breach.get("key"):
+            # PLATFORM checks the chat that gift came from, so bring its channel along.
+            for row in self.service.store.command_rows(tab["id"], rates):
+                if str(row.get("dedupe_key") or "") == breach["key"]:
+                    breach["channel"] = str(row.get("channel") or "")
+                    breach["manual"] = bool(row.get("manual"))
+                    break
+        return breach
 
     def _tier_name(self, tab: dict, tier: int) -> str:
         """The name saved on this tier. Tier 0 and a blank name are empty."""
@@ -484,6 +498,18 @@ class BlueHost:
             if getattr(action, "via_platform", False):
                 if not action.target:
                     # Other-platform rows and tier 0 have no chat to answer in.
+                    # Tier 0 has no gift, so it stays quiet. An Other row is logged once.
+                    source = str((event.values.get("platform") if event is not None else "") or "").strip()
+                    if source:
+                        key = _origin_value(origin, "dedupe_key")
+                        raw = _origin_value(origin, "raw")
+                        if key.startswith("manual:") or (isinstance(raw, dict) and raw.get("manual")):
+                            self._quiet_log(tab, script, "manual", "PLATFORM does not answer manual or pasted entries.")
+                        else:
+                            self._quiet_log(
+                                tab, script, "other",
+                                "PLATFORM does not answer Other-platform entries, since they have no chat.",
+                            )
                     return
                 problem = self._platform_problem(tab, action.target, origin)
                 if problem is not None:
@@ -600,8 +626,7 @@ class BlueHost:
                 for chat in chats
             )
         if platform == "rumble":
-            saved = str(tab.get("rumble_channel") or "").strip().rstrip("/")
-            name = saved.rsplit("/", 1)[-1] if saved else ""
+            name = _rumble_slug(str(tab.get("rumble_channel") or ""))
             return bool(name) and name.casefold() == channel.casefold()
         return False
 
@@ -788,6 +813,16 @@ class BlueHost:
             self.service.store.log("blue", "info", message)
         except Exception:
             return
+
+
+def _rumble_slug(saved: str) -> str:
+    """The channel name in a saved Rumble address, without a tab such as /livestreams or a query."""
+    try:
+        page = rumble_channel_page_url(saved.strip())
+    except ValueError:
+        return ""
+    parts = [part for part in urlparse(page).path.split("/") if part]
+    return parts[1] if len(parts) >= 2 else ""
 
 
 def _origin_value(origin, name: str):
