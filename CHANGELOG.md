@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.9.1 — 2026-10-19
+
+- 2026-10-19 — Minor. YouTube chat shows emoji. Standard emoji in YouTube chat were dropped, and a line that was only emoji did not show at all; they now appear as the emoji. Channel and member emoji show as YouTube's picture in the chat panel and kiosk, with the shortcut such as :hand-pink-waving: as hover text and as the text in the ledger, chat commands, the giveaway, and copies. Emoji joined with a zero-width joiner and subdivision flags stay whole on every platform.
+
 ## 1.9.0 — 2026-10-18
 
 - 2026-10-18 — Considerable. Chat commands. With Answer !total and !top turned on for a platform in a ledger, a viewer who starts a chat line with !total gets that ledger's stream total line, and !top gets its top three named donors, posted back into the same chat. One reply per chat every 2 minutes, shared by both commands and by every ledger reading that chat; other commands in that time are ignored. History, repeats, the signed-in account's own lines, and the app's own replies never answer. Anonymous donors are skipped and nobody is pinged. Replies fit 200 characters on YouTube and Rumble and 500 on Kick. YouTube and Kick post as the signed-in account; Rumble is typed by the desktop window and is not available in browser mode. Every switch is off by default.

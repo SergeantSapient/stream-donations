@@ -19,7 +19,7 @@ import threading
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .chat_feed import chat_time, offer_chat, remember_chat
+from .chat_feed import chat_time, emoji_image_ok, offer_chat, remember_chat
 from .money import is_anniversary_text, parse_display_amount, youtube_paid_amount
 from .normalize import Donation
 from .store import Store
@@ -277,12 +277,16 @@ def chat_lines_from_live_chat_actions(actions: object) -> list[dict]:
             if key in seen:
                 continue
             seen.add(key)
-            found.append({
+            line = {
                 "key": key,
                 "author": author,
                 "text": text,
                 "time": chat_time(renderer.get("timestampUsec")),
-            })
+            }
+            parts = yt_parts(renderer.get("message"))
+            if parts:
+                line["parts"] = parts
+            found.append(line)
     return found
 
 
@@ -423,6 +427,12 @@ def _row(
 
 
 def yt_text(node: object) -> str:
+    """Plain text of a YouTube text node. Emoji runs count as text.
+
+    A standard emoji is its Unicode character. A channel or member emoji is
+    its shortcut, such as :hand-pink-waving:, so commands, the giveaway, the
+    ledger, and logs still see a word there.
+    """
     if isinstance(node, str):
         return node
     if not isinstance(node, dict):
@@ -431,8 +441,96 @@ def yt_text(node: object) -> str:
         return node["simpleText"]
     runs = node.get("runs")
     if isinstance(runs, list):
-        return "".join(str(run.get("text") or "") if isinstance(run, dict) else str(run) for run in runs)
+        out = ""
+        out_custom = False
+        for run in runs:
+            piece = _run_text(run)
+            if not piece:
+                continue
+            emoji = run.get("emoji") if isinstance(run, dict) else None
+            custom = isinstance(emoji, dict) and bool(emoji.get("isCustomEmoji"))
+            # A shortcut stays its own word: "hi :wave:" rather than "hi:wave:".
+            if out and (custom or out_custom) and not out[-1].isspace() and not piece[0].isspace():
+                out += " "
+            out += piece
+            out_custom = custom
+        return out
     return ""
+
+
+def yt_parts(node: object) -> list[dict]:
+    """Text and custom-emoji pieces for the chat panel. Empty when plain text is enough.
+
+    Each piece is {"text": ...} or {"emoji": shortcut, "src": https image}.
+    Only custom emoji with an image on a YouTube image host become pictures.
+    """
+    if not isinstance(node, dict) or not isinstance(node.get("runs"), list):
+        return []
+    parts: list[dict] = []
+    pictured = False
+    for run in node["runs"]:
+        emoji = run.get("emoji") if isinstance(run, dict) else None
+        src = _custom_emoji_src(emoji) if isinstance(emoji, dict) else ""
+        if src:
+            parts.append({"emoji": _emoji_text(emoji), "src": src})
+            pictured = True
+            continue
+        text = _run_text(run)
+        if not text:
+            continue
+        if parts and "text" in parts[-1]:
+            parts[-1] = {"text": parts[-1]["text"] + text}
+        else:
+            parts.append({"text": text})
+    return parts if pictured else []
+
+
+def _run_text(run: object) -> str:
+    if not isinstance(run, dict):
+        return str(run or "")
+    if isinstance(run.get("text"), str):
+        return run["text"]
+    emoji = run.get("emoji")
+    if isinstance(emoji, dict):
+        return _emoji_text(emoji)
+    return ""
+
+
+def _emoji_text(emoji: dict) -> str:
+    """Unicode for a standard emoji, the first shortcut for a custom one."""
+    emoji_id = str(emoji.get("emojiId") or "")
+    custom = bool(emoji.get("isCustomEmoji"))
+    # A standard emoji's id is the emoji itself. A custom one is a channel/id path.
+    if not custom and emoji_id and len(emoji_id) <= 16 and not emoji_id.isascii() and "/" not in emoji_id:
+        return emoji_id
+    for shortcut in emoji.get("shortcuts") or []:
+        if isinstance(shortcut, str) and shortcut.strip():
+            return shortcut.strip()
+    label = str(_dig(emoji, ("image", "accessibility", "accessibilityData", "label")) or "").strip()
+    if label:
+        return label if not custom else f":{label.strip(':')}:"
+    return ""
+
+
+def _custom_emoji_src(emoji: dict) -> str:
+    if not emoji.get("isCustomEmoji"):
+        return ""
+    thumbnails = _dig(emoji, ("image", "thumbnails"))
+    if not isinstance(thumbnails, list):
+        return ""
+    best = ""
+    best_width = -1
+    for item in thumbnails:
+        if not isinstance(item, dict) or not emoji_image_ok(item.get("url")):
+            continue
+        try:
+            width = int(item.get("width") or 0)
+        except (TypeError, ValueError):
+            width = 0
+        # The 48 px copy stays sharp on a high-density screen.
+        if width <= 48 and width > best_width:
+            best, best_width = str(item["url"]), width
+    return best
 
 
 def _usec_to_iso(value: object) -> str:

@@ -11,15 +11,106 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from urllib.parse import urlparse
+
 from .util import format_utc, to_utc_iso, utc_now_iso
 
 _PLATFORMS = {"youtube", "rumble", "kick"}
 _LIMIT = 200
 
 
+# Not printable by Python's rules, but part of an emoji: the zero-width joiner
+# (family and profession emoji) and the tag characters (subdivision flags).
+_EMOJI_JOINERS = frozenset({"\u200d"}) | frozenset(chr(code) for code in range(0xE0020, 0xE0080))
+_MAX_PARTS = 120
+
+
+def _visible(ch: str) -> bool:
+    return ch.isprintable() or ch in _EMOJI_JOINERS
+
+
 def clean_chat_text(value: object, limit: int) -> str:
-    text = "".join(ch if ch.isprintable() else " " for ch in str(value or ""))
+    text = "".join(ch if _visible(ch) else " " for ch in str(value or ""))
     return " ".join(text.split())[:limit]
+
+
+# Custom YouTube emoji pictures come from yt3.ggpht.com (seen in live chat,
+# 2026-10-19). yt4 is YouTube's other avatar host. The page's img-src names
+# exactly these hosts, without a wildcard.
+EMOJI_IMAGE_HOSTS = ("yt3.ggpht.com", "yt4.ggpht.com")
+
+
+def emoji_image_ok(url: object) -> bool:
+    """An https image on a YouTube emoji host, with no login or port."""
+    text = str(url or "")
+    if not text or len(text) > 500 or any(ch.isspace() or ch in "\\\"'<>" for ch in text):
+        return False
+    parsed = urlparse(text)
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port not in (None, 443):
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in EMOJI_IMAGE_HOSTS
+
+
+def clean_chat_parts(value: object, limit: int) -> list[dict]:
+    """Display pieces for one line: text, and custom emoji pictures on YouTube's image hosts.
+
+    A picture whose address is not allowed becomes its shortcut text. The pieces
+    never hold more text than the line itself.
+    """
+    if not isinstance(value, list) or not value:
+        return []
+    parts: list[dict] = []
+    used = 0
+    pictured = False
+    for piece in value[:_MAX_PARTS]:
+        if not isinstance(piece, dict):
+            continue
+        shortcut = clean_chat_text(piece.get("emoji"), 80) if "emoji" in piece else ""
+        if "emoji" in piece and emoji_image_ok(piece.get("src")) and shortcut:
+            if used + len(shortcut) > limit:
+                break
+            parts.append({"emoji": shortcut, "src": str(piece["src"])})
+            used += len(shortcut)
+            pictured = True
+            continue
+        raw = shortcut if "emoji" in piece else str(piece.get("text") or "")
+        text = _squash_spaces("".join(ch if _visible(ch) else " " for ch in raw))
+        if not text:
+            continue
+        if not parts and text.startswith(" "):
+            text = text.lstrip()
+        text = text[: max(0, limit - used)]
+        if not text:
+            break
+        if parts and "text" in parts[-1]:
+            parts[-1] = {"text": _squash_spaces(parts[-1]["text"] + text)}
+        else:
+            parts.append({"text": text})
+        used += len(text)
+    if parts and "text" in parts[-1]:
+        parts[-1] = {"text": parts[-1]["text"].rstrip()}
+        if not parts[-1]["text"]:
+            parts.pop()
+    return parts if pictured else []
+
+
+def _squash_spaces(text: str) -> str:
+    out = []
+    for ch in text:
+        if ch.isspace():
+            if out and out[-1] == " ":
+                continue
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def chat_time(value: object) -> str:
@@ -91,6 +182,9 @@ class ChatFeed:
                     "time": when,
                     "key": token,
                 }
+                parts = clean_chat_parts(row.get("parts"), 500)
+                if parts:
+                    item["parts"] = parts
                 _insert_by_time(self._lines, item)
                 added.append({
                     "platform": platform,
@@ -128,17 +222,20 @@ class ChatFeed:
     def since(self, after: int, generation: int, paused: bool) -> dict:
         with self._lock:
             start = 0 if generation != self._generation else after
-            lines = [
-                {
+            lines = []
+            for row in self._lines:
+                if row["id"] <= start:
+                    continue
+                line = {
                     "id": row["id"],
                     "platform": row["platform"],
                     "author": row["author"],
                     "text": row["text"],
                     "time": row["time"],
                 }
-                for row in self._lines
-                if row["id"] > start
-            ]
+                if row.get("parts"):
+                    line["parts"] = [dict(piece) for piece in row["parts"]]
+                lines.append(line)
             lines.sort(key=lambda row: (row["time"], row["id"]))
             return {
                 "lines": lines,

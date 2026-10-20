@@ -799,6 +799,14 @@ button.primary:hover { border-color: var(--accent); background: #f7f6f1; }
 
 .watch-chat-text { overflow-wrap: anywhere; }
 
+.watch-chat-emoji {
+  width: 1.4em;
+  height: 1.4em;
+  margin: 0 0.05em;
+  vertical-align: -0.35em;
+  object-fit: contain;
+}
+
 .watch-chat-compose {
   flex: none;
   display: flex;
