@@ -17,6 +17,7 @@ from . import __version__
 from .battery import host_battery
 from .blue import inspect_script
 from .currencies import SUPPORTED_CURRENCIES
+from .chat_feed import EMOJI_IMAGE_HOSTS
 from .embed import FRAME_SRC, player_for_ledger
 from .fx import rate_status, refresh_rates, usd_rates
 from .kinds import KIND_LABELS, PLATFORM_LABELS
@@ -876,7 +877,9 @@ def _export_filters(query: dict[str, list[str]]) -> dict:
 _SECURITY_HEADERS = [
     (
         "Content-Security-Policy",
-        "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'; "
+        "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' "
+        + " ".join("https://" + host for host in EMOJI_IMAGE_HOSTS)
+        + "; "
         "connect-src 'self'; frame-src "
         + " ".join(FRAME_SRC)
         + "; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",

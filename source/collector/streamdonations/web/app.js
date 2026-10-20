@@ -3339,6 +3339,51 @@ function holdWatchChatPlace(scroller, item) {
   if (shift > 0) scroller.scrollTop += shift;
 }
 
+// Custom YouTube emoji pictures. The collector checks these too, and the
+// page's img-src allows only these hosts.
+const CHAT_EMOJI_HOSTS = ["yt3.ggpht.com", "yt4.ggpht.com"];
+
+function chatEmojiSrc(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch (_error) {
+    return "";
+  }
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) return "";
+  const host = url.hostname.toLowerCase();
+  return CHAT_EMOJI_HOSTS.includes(host) ? url.href : "";
+}
+
+function fillWatchChatText(node, line) {
+  const parts = Array.isArray(line.parts) ? line.parts : null;
+  if (!parts || !parts.length) {
+    node.textContent = line.text;
+    return;
+  }
+  parts.forEach((part) => {
+    if (!part || typeof part !== "object") return;
+    const shortcut = typeof part.emoji === "string" ? part.emoji : "";
+    const src = shortcut ? chatEmojiSrc(part.src) : "";
+    if (src) {
+      const image = document.createElement("img");
+      image.className = "watch-chat-emoji";
+      image.alt = shortcut;
+      image.title = shortcut;
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => image.replaceWith(document.createTextNode(shortcut)), { once: true });
+      image.src = src;
+      node.appendChild(image);
+      return;
+    }
+    const words = shortcut || (typeof part.text === "string" ? part.text : "");
+    if (words) node.appendChild(document.createTextNode(words));
+  });
+  if (!node.childNodes.length) node.textContent = line.text;
+}
+
 function appendWatchChatLine(list, line) {
   const platform = line && line.platform;
   const icon = WATCH_CHAT_ICONS[platform];
@@ -3363,7 +3408,7 @@ function appendWatchChatLine(list, line) {
   author.textContent = line.author || "Someone";
   const text = document.createElement("span");
   text.className = "watch-chat-text";
-  text.textContent = line.text;
+  fillWatchChatText(text, line);
   body.append(author, text);
   item.append(mark, when, body);
   const before = nextWatchChatRow(list, line);
