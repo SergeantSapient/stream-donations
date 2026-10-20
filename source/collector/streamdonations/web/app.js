@@ -2320,6 +2320,7 @@ function saveBlue() {
       renderBlueList(state.blueScripts);
       fillPresetScriptSelect(state.blueScripts);
       if (form) form.reset();
+      refreshBlueEditor(false);
       showBlueProblems(payload && payload.problems);
       toast("Saved BLUE script " + ((payload.script && payload.script.name) || name) + ".");
     })
@@ -2335,6 +2336,8 @@ function editBlue(script) {
   const source = $("blue-source");
   if (name) name.value = script.name || "";
   if (source) source.value = script.source || "";
+  if (source) source.scrollTop = 0;
+  refreshBlueEditor(true);
   if (name) name.focus();
 }
 
@@ -2377,6 +2380,7 @@ function importBlueFile(file) {
       const source = $("blue-source");
       if (source) source.value = text;
       showBlueProblems([]);
+      refreshBlueEditor(true);
     })
     .catch((error) => toast(error.message, true));
 }
@@ -2394,6 +2398,285 @@ function exportBlue() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// BLUE editor: a highlighted <pre> under a transparent textarea. The textarea
+// is still the editor, so typing, IME, undo, import, and export are unchanged.
+const blueEditor = {
+  grammar: window.BlueHighlight ? window.BlueHighlight.compile(null) : null,
+  problems: new Map(),
+  timer: 0,
+  asked: 0,
+  lines: 0,
+};
+
+function loadBlueGrammar() {
+  if (!window.BlueHighlight || blueEditor.loaded) return;
+  blueEditor.loaded = true;
+  api("/api/blue/grammar")
+    .then((grammar) => {
+      blueEditor.grammar = window.BlueHighlight.compile(grammar);
+      paintBlue();
+    })
+    .catch(() => {
+      blueEditor.loaded = false;
+    });
+}
+
+function paintBlue() {
+  const source = $("blue-source");
+  const pre = $("blue-highlight");
+  const gutter = $("blue-gutter-lines");
+  if (!source || !pre || !gutter || !window.BlueHighlight) return;
+  const count = window.BlueHighlight.render(document, pre, source.value, blueEditor.grammar, blueEditor.problems);
+  const rows = [];
+  for (let number = 1; number <= count; number += 1) {
+    const row = el("div", "blue-gutter-line", String(number));
+    const problem = blueEditor.problems.get(number);
+    if (problem) {
+      row.classList.add("bad");
+      row.title = "Line " + number + ": " + problem;
+    }
+    rows.push(row);
+  }
+  gutter.replaceChildren(...rows);
+  syncBlueScroll();
+}
+
+function syncBlueScroll() {
+  const source = $("blue-source");
+  const pre = $("blue-highlight");
+  const gutter = $("blue-gutter-lines");
+  if (!source || !pre || !gutter) return;
+  pre.style.transform = "translate(" + -source.scrollLeft + "px, " + -source.scrollTop + "px)";
+  gutter.style.transform = "translateY(" + -source.scrollTop + "px)";
+}
+
+function setBlueProblems(problems) {
+  blueEditor.problems = new Map();
+  (problems || []).forEach((item) => {
+    const before = blueEditor.problems.get(item.line);
+    blueEditor.problems.set(item.line, before ? before + " " + item.message : item.message);
+  });
+}
+
+function inspectBlueSoon() {
+  window.clearTimeout(blueEditor.timer);
+  blueEditor.timer = window.setTimeout(inspectBlue, 300);
+}
+
+function inspectBlue() {
+  const source = ($("blue-source") && $("blue-source").value) || "";
+  const asked = ++blueEditor.asked;
+  if (!source.trim()) {
+    setBlueProblems([]);
+    showBlueProblems([]);
+    paintBlue();
+    return;
+  }
+  api("/api/blue/inspect", { method: "POST", body: JSON.stringify({ source }) })
+    .then((payload) => {
+      if (asked !== blueEditor.asked) return;
+      const problems = (payload && payload.problems) || [];
+      setBlueProblems(problems);
+      showBlueProblems(problems);
+      paintBlue();
+    })
+    .catch(() => {});
+}
+
+// After the textarea's text was set from code: import, edit, or save.
+function refreshBlueEditor(check) {
+  window.clearTimeout(blueEditor.timer);
+  blueEditor.asked += 1;
+  setBlueProblems([]);
+  paintBlue();
+  if (check) inspectBlueSoon();
+}
+
+const BLUE_TEST_KINDS = { youtube: "super_chat", rumble: "rant", kick: "kicks", other: "donation" };
+
+function fillBlueTestForm() {
+  const ledger = $("blue-test-ledger");
+  if (ledger) {
+    const streams = (state.stream && state.stream.streams) || { active_id: "", tabs: [] };
+    const tabs = streams.tabs || [];
+    const keep = ledger.value;
+    ledger.replaceChildren(...tabs.map((tab) => {
+      const option = el("option", "", tab.title || "Stream");
+      option.value = tab.id;
+      return option;
+    }));
+    const wanted = tabs.some((tab) => tab.id === keep) && ledger.dataset.picked === "1" ? keep : streams.active_id;
+    if (wanted) ledger.value = wanted;
+  }
+  const kind = $("blue-test-kind");
+  if (kind && !kind.options.length) {
+    const kinds = (state.meta && state.meta.kinds) || [];
+    kind.replaceChildren(...kinds.map((item) => {
+      const option = el("option", "", item.label);
+      option.value = item.id;
+      return option;
+    }));
+    syncBlueTestKind();
+  }
+  syncBlueTestEvent();
+}
+
+function syncBlueTestKind() {
+  const platform = $("blue-test-platform");
+  const kind = $("blue-test-kind");
+  const currency = $("blue-test-currency");
+  if (!platform || !kind) return;
+  const wanted = BLUE_TEST_KINDS[platform.value] || "donation";
+  if ([...kind.options].some((option) => option.value === wanted)) kind.value = wanted;
+  if (currency && (currency.value === "" || currency.value === "USD" || currency.value === "KICKS")) {
+    currency.value = platform.value === "kick" ? "KICKS" : "USD";
+  }
+}
+
+function syncBlueTestEvent() {
+  const event = ($("blue-test-event") && $("blue-test-event").value) || "donation";
+  document.querySelectorAll("#blue-test-form [data-blue-for]").forEach((label) => {
+    label.hidden = !label.dataset.blueFor.split(" ").includes(event);
+  });
+  const tier = $("blue-test-tier-label");
+  if (tier) tier.textContent = event === "goal" ? "Tier reached" : "TIER";
+}
+
+function detectBlueTestEvent() {
+  const line = ($("blue-test-line") && $("blue-test-line").value) || "";
+  const found = /^\s*on\s+(donation|timer|goal)\b/i.exec(line);
+  const select = $("blue-test-event");
+  if (found && select && select.value !== found[1].toLowerCase()) {
+    select.value = found[1].toLowerCase();
+    syncBlueTestEvent();
+  }
+}
+
+function runBlueTest(whole) {
+  const value = (id) => ($(id) && $(id).value) || "";
+  const source = whole ? value("blue-source") : value("blue-test-line");
+  if (!source.trim()) {
+    toast(whole ? "The script is empty." : "Type a BLUE line to test.", true);
+    return;
+  }
+  const event = value("blue-test-event");
+  const body = {
+    source,
+    event,
+    stream_id: value("blue-test-ledger"),
+    minutes: value("blue-test-minutes"),
+    time: value("blue-test-time"),
+    total: value("blue-test-total"),
+    tier: value("blue-test-tier"),
+  };
+  if (event !== "timer") {
+    Object.assign(body, {
+      amount: value("blue-test-amount"),
+      currency: value("blue-test-currency"),
+      donor: value("blue-test-donor"),
+      platform: value("blue-test-platform"),
+      kind: value("blue-test-kind"),
+    });
+  }
+  api("/api/blue/test", { method: "POST", body: JSON.stringify(body) })
+    .then((result) => renderBlueTest(result))
+    .catch((error) => toast(error.message, true));
+}
+
+function renderBlueTest(result) {
+  const box = $("blue-test-result");
+  if (!box || !result) return;
+  const parts = [el("p", "blue-dry-run", "Dry run - nothing is sent.")];
+  const ledger = result.ledger || {};
+  const facts = [
+    "Ledger " + (ledger.title || "Stream"),
+    "TOTAL " + (ledger.total || "unknown") + (ledger.total_from === "typed" ? " (typed)" : ""),
+    "TIER " + ledger.tier + (ledger.tier_from === "typed" ? " (typed)" : ""),
+    "TIME " + (result.time || ""),
+  ];
+  if (result.minutes != null) facts.push("MINUTES " + result.minutes);
+  facts.push(ledger.script ? "runs " + ledger.script : "no script on this ledger");
+  parts.push(el("p", "hint", facts.join(" · ")));
+  (result.problems || []).forEach((item) => {
+    parts.push(el("p", "blue-test-bad", "Line " + item.line + " is skipped: " + item.message));
+  });
+  const lines = result.lines || [];
+  if (!lines.length && !(result.problems || []).length) parts.push(el("p", "hint", "There is no line to run."));
+  lines.forEach((line) => parts.push(renderBlueTestLine(line, lines.length > 1)));
+  (result.notes || []).forEach((note) => parts.push(el("p", "hint", note)));
+  box.replaceChildren(...parts);
+  box.hidden = false;
+}
+
+function renderBlueTestLine(line, numbered) {
+  const card = el("div", "blue-test-line");
+  const where = numbered ? "Line " + line.line + ": " : "";
+  if (!line.applies) {
+    card.appendChild(el("p", "hint", where + "ON " + line.event.toUpperCase() + " does not run for this event."));
+    return card;
+  }
+  const head = el("p", line.matched ? "blue-test-good" : "blue-test-bad",
+    where + (line.matched ? "Matched." : "Did not match, so nothing would happen."));
+  card.appendChild(head);
+  if (line.timer === "clock") card.appendChild(el("p", "hint", "Uses TIME, so it runs once for each new clock minute."));
+  if (line.timer === "elapsed") card.appendChild(el("p", "hint", "Runs once for each minute since connect."));
+  const groups = line.groups || [];
+  if (!groups.length) card.appendChild(el("p", "hint", "No IF, so it always matches."));
+  groups.forEach((group, index) => {
+    if (index > 0) card.appendChild(el("p", "blue-test-or", "OR"));
+    const list = el("ul", "blue-test-checks");
+    group.forEach((item) => {
+      const row = el("li", item.result ? "blue-test-good" : "blue-test-bad");
+      row.appendChild(el("span", "blue-test-mark", item.result ? "yes" : "no"));
+      row.appendChild(el("code", "", item.text));
+      row.appendChild(document.createTextNode(" "));
+      row.appendChild(el("span", "hint", "saw " + item.saw));
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+  });
+  (line.actions || []).forEach((action) => {
+    const row = el("div", "blue-test-action " + (action.would === "skip" ? "skip" : "go"));
+    row.appendChild(el("p", "", action.would === "skip" ? "Would skip: " + action.why : action.why));
+    if (action.final) row.appendChild(el("pre", "blue-test-text", action.final));
+    (action.checks || []).forEach((check) => {
+      if (check.message === action.why) return;
+      row.appendChild(el("p", check.ok ? "hint" : "blue-test-bad", check.name + ": " + check.message));
+    });
+    card.appendChild(row);
+  });
+  return card;
+}
+
+function setupBlueEditor() {
+  const source = $("blue-source");
+  if (source) {
+    source.addEventListener("input", () => {
+      paintBlue();
+      inspectBlueSoon();
+    });
+    source.addEventListener("scroll", syncBlueScroll);
+    paintBlue();
+  }
+  const form = $("blue-test-form");
+  if (form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      runBlueTest(false);
+    });
+  }
+  const whole = $("blue-test-use-script");
+  if (whole) whole.addEventListener("click", () => runBlueTest(true));
+  const line = $("blue-test-line");
+  if (line) line.addEventListener("input", detectBlueTestEvent);
+  const event = $("blue-test-event");
+  if (event) event.addEventListener("change", syncBlueTestEvent);
+  const platform = $("blue-test-platform");
+  if (platform) platform.addEventListener("change", syncBlueTestKind);
+  const ledger = $("blue-test-ledger");
+  if (ledger) ledger.addEventListener("change", () => { ledger.dataset.picked = "1"; });
 }
 
 function refreshPresets() {
@@ -4728,6 +5011,7 @@ function bind() {
   }
   const blueExport = $("blue-export");
   if (blueExport) blueExport.addEventListener("click", () => exportBlue());
+  setupBlueEditor();
   document.querySelectorAll("dialog.sheet").forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
@@ -5127,6 +5411,9 @@ function openSheet(name) {
       .catch((error) => toast(error.message, true));
   }
   if (name === "blue") {
+    loadBlueGrammar();
+    fillBlueTestForm();
+    paintBlue();
     refreshBlueScripts().catch((error) => toast(error.message, true));
   }
   if (name === "giveaway") startGiveawayPoll();

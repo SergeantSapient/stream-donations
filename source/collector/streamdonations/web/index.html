@@ -615,8 +615,15 @@
     <p class="hint">A script runs while a ledger that uses it is connected. Soft disconnect stops it, and connecting that ledger starts it over, including the minute timer. Each line is its own command. A line that cannot be read is skipped. An action that cannot be sent is written to the log, and the next line still runs. Chat to more than one platform waits a few seconds between those sends. Rumble still needs Continue on the Rumble page.</p>
     <form id="blue-form">
       <label>Name <input id="blue-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
-      <label>Script <textarea id="blue-source" rows="12" spellcheck="false" placeholder="ON DONATION IF AMOUNT IS ABOVE 49.89 THEN SEND CHAT TO PLATFORM &quot;Thank you {MENTION}!&quot;"></textarea></label>
-      <p class="hint">A line starts with ON DONATION, ON TIMER, or ON GOAL. IF can compare PLATFORM, AMOUNT, RAW AMOUNT, CURRENCY, TOTAL, DONOR, TYPE, TIME, MINUTES, TIER, and NAME. A word that is not a keyword, such as is, is ignored, except that IS with one value at the end means EQUALS, as in CURRENCY IS JPY. TIME takes a clock time such as 14:30. MODULO, MOD, or % takes the remainder, and on TIME it counts minutes since midnight, so TIME MODULO 20 EQUALS 1 is true at 00:01, 00:21, and so on. ON TIMER lines with TIME run once for each new clock minute. A value that cannot work, such as a word for AMOUNT or MODULO 20 EQUALS 20, is reported and that line is skipped. AMOUNT is US dollars. RAW AMOUNT is the number as sent in its own currency, such as 1000 for ¥1000 or the Kick coin count, and RAW only goes before AMOUNT. CURRENCY is a code such as JPY, or KICKS. TOTAL is this ledger's total. TIER is how many goal amounts that total has reached, from 0 through 5, on every line. ON GOAL runs once when the script starts, then again for each new tier, and on that line TIER is the tier just reached. DONOR is who reached that tier, NAME is the name set on it, and PLATFORM and AMOUNT are that donation. Those are empty at tier 0. ON DONATION skips gifts more than 2 minutes old or from before the script started. THEN SEND CHAT TO YOUTUBE, RUMBLE, KICK, ALL, or PLATFORM, the chat the gift came from (not on ON TIMER, and not for manual entries), or NOTICE TO APP, LOG, or SYSTEM. The message stays in double quotes. {TOTAL}, {TIER}, {DONOR}, {MENTION}, {AMOUNT}, {RAWAMOUNT}, {CURRENCY}, {PLATFORM}, {TYPE}, {TIME}, {MINUTES}, and {NAME} are filled in. {NAME} is filled in on ON GOAL. {MENTION} is @name, or empty for anonymous. {TOTALLINE} and {TOPLINE} are the !total and !top lines, fitted to each chat. Chat lines are cut to 200 characters on YouTube and Rumble and 500 on Kick. The same gift is thanked once in 2 minutes, and at most 6 BLUE chat lines go to one chat in a minute.</p>
+      <label for="blue-source">Script</label>
+      <div id="blue-editor" class="blue-editor">
+        <div class="blue-gutter" aria-hidden="true"><div id="blue-gutter-lines" class="blue-gutter-lines"></div></div>
+        <div class="blue-code">
+          <pre id="blue-highlight" class="blue-highlight" aria-hidden="true"></pre>
+          <textarea id="blue-source" rows="12" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="blue-problems" placeholder="ON DONATION IF AMOUNT IS ABOVE 49.89 THEN SEND CHAT TO PLATFORM &quot;Thank you {MENTION}!&quot;"></textarea>
+        </div>
+      </div>
+      <p class="hint">A line starts with ON DONATION, ON TIMER, or ON GOAL. IF can compare PLATFORM, AMOUNT, RAW AMOUNT, CURRENCY, TOTAL, DONOR, TYPE, TIME, MINUTES, TIER, and NAME. A word that is not a keyword, such as is, is ignored, except that IS with one value at the end means EQUALS, as in CURRENCY IS JPY. TIME takes a clock time such as 14:30. MODULO, MOD, or % takes the remainder, and on TIME it counts minutes since midnight, so TIME MODULO 20 EQUALS 1 is true at 00:01, 00:21, and so on. ON TIMER lines with TIME run once for each new clock minute. A value that cannot work, such as a word for AMOUNT or MODULO 20 EQUALS 20, is reported and that line is skipped. AMOUNT is US dollars. RAW AMOUNT is the number as sent in its own currency, such as 1000 for ¥1000 or the Kick coin count, and RAW only goes before AMOUNT. CURRENCY is a code such as JPY, or KICKS. TOTAL is this ledger's total. TIER is how many goal amounts that total has reached, from 0 through 5, on every line. ON GOAL runs once when the script starts, then again for each new tier, and on that line TIER is the tier just reached. DONOR is who reached that tier, NAME is the name set on it, and PLATFORM and AMOUNT are that donation. Those are empty at tier 0. ON DONATION skips gifts more than 2 minutes old or from before the script started. THEN SEND CHAT TO YOUTUBE, RUMBLE, KICK, ALL, or PLATFORM, the chat the gift came from (not on ON TIMER, and not for manual entries), or NOTICE TO APP, LOG, or SYSTEM. The message stays in double quotes. {TOTAL}, {TIER}, {DONOR}, {MENTION}, {AMOUNT}, {RAWAMOUNT}, {CURRENCY}, {PLATFORM}, {TYPE}, {TIME}, {MINUTES}, and {NAME} are filled in. {NAME} is filled in on ON GOAL. {MENTION} is @name, or empty for anonymous. {TOTALLINE} and {TOPLINE} are the !total and !top lines, fitted to each chat. Chat lines are cut to 200 characters on YouTube and Rumble and 500 on Kick. The same gift is thanked once in 2 minutes, and at most 6 BLUE chat lines go to one chat in a minute. Colors show how each word is read, a red mark in the margin is a line that will be skipped (hover it for why), and a red placeholder is one BLUE does not fill in.</p>
       <p id="blue-problems" class="hint" hidden></p>
       <div class="row">
         <button type="submit" class="primary">Save script</button>
@@ -624,6 +631,41 @@
         <button type="button" id="blue-export">Export</button>
         <input id="blue-import-file" type="file" accept=".blue,.txt,text/plain" hidden>
       </div>
+    </form>
+    <form id="blue-test-form" class="blue-test" aria-labelledby="blue-test-title">
+      <p class="endpoint" id="blue-test-title">Test a line</p>
+      <p class="blue-dry-run"><strong>Dry run - nothing is sent.</strong> The line is checked against a made-up event on the ledger you pick. Nothing is sent, queued, logged, or saved, and the guards are only looked at.</p>
+      <label for="blue-test-line">Line</label>
+      <div class="row blue-test-line-row">
+        <input id="blue-test-line" class="blue-mono" autocomplete="off" spellcheck="false" maxlength="2000" placeholder="ON DONATION IF AMOUNT IS ABOVE 4.99 THEN SEND CHAT TO PLATFORM &quot;Thanks {MENTION}!&quot;">
+        <button type="button" id="blue-test-use-script" title="Test every line of the script above against this event">Whole script</button>
+      </div>
+      <div class="blue-test-grid">
+        <label>Event <select id="blue-test-event">
+          <option value="donation">Donation</option>
+          <option value="timer">Timer minute</option>
+          <option value="goal">Goal</option>
+        </select></label>
+        <label>Ledger <select id="blue-test-ledger"></select></label>
+        <label data-blue-for="donation goal">Amount <input id="blue-test-amount" inputmode="decimal" autocomplete="off" value="5"></label>
+        <label data-blue-for="donation goal">Currency <input id="blue-test-currency" autocomplete="off" maxlength="8" value="USD"></label>
+        <label data-blue-for="donation goal">Donor <input id="blue-test-donor" autocomplete="off" maxlength="80" value="Ada"></label>
+        <label data-blue-for="donation goal">Platform <select id="blue-test-platform">
+          <option value="youtube">YouTube</option>
+          <option value="rumble">Rumble</option>
+          <option value="kick">Kick</option>
+          <option value="other">Other</option>
+        </select></label>
+        <label data-blue-for="donation goal">Type <select id="blue-test-kind"></select></label>
+        <label>Minutes <input id="blue-test-minutes" inputmode="numeric" autocomplete="off" placeholder="since connect"></label>
+        <label>Clock time, blank is now <input id="blue-test-time" type="time" autocomplete="off"></label>
+        <label>TOTAL <input id="blue-test-total" inputmode="decimal" autocomplete="off" placeholder="ledger"></label>
+        <label><span id="blue-test-tier-label">TIER</span> <input id="blue-test-tier" inputmode="numeric" autocomplete="off" placeholder="ledger"></label>
+      </div>
+      <div class="row">
+        <button type="submit" class="primary">Dry run</button>
+      </div>
+      <div id="blue-test-result" class="blue-test-result" aria-live="polite" hidden></div>
     </form>
     <p class="endpoint">Saved</p>
     <p id="blue-empty" class="hint">No BLUE scripts yet.</p>
@@ -797,6 +839,7 @@
 </dialog>
 
 <div id="toast" class="toast" hidden role="status"></div>
+<script src="/blue_highlight.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

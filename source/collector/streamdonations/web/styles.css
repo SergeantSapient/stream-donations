@@ -1862,9 +1862,197 @@ button.archive-day-toggle:hover {
 #preset-error,
 #blue-problems { color: var(--bad); }
 
+/* BLUE editor: the textarea's text is clear, and the <pre> under it shows the colors.
+   Both use the same font, size, line height, and padding, and do not wrap. */
+.blue-editor {
+  --blue-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --blue-size: 0.9rem;
+  --blue-line: 1.5;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 16rem;
+  min-height: 8rem;
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raise-2);
+  margin-bottom: 0.7rem;
+}
+
+.blue-editor:focus-within { border-color: var(--line-strong); }
+
+.blue-gutter {
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--raise);
+  user-select: none;
+}
+
+.blue-gutter-lines {
+  padding: 0.55rem 0;
+  font-family: var(--blue-font);
+  font-size: var(--blue-size);
+  line-height: var(--blue-line);
+  color: var(--faint);
+  text-align: right;
+  min-width: 2.6rem;
+}
+
+.blue-gutter-line { padding: 0 0.5rem 0 0.7rem; }
+
+.blue-gutter-line.bad {
+  color: var(--bad);
+  box-shadow: inset 3px 0 0 var(--bad);
+  cursor: help;
+}
+
+.blue-code {
+  position: relative;
+  overflow: hidden;
+}
+
+.blue-code pre,
+.blue-code textarea {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--blue-font);
+  font-size: var(--blue-size);
+  line-height: var(--blue-line);
+  letter-spacing: 0;
+  tab-size: 4;
+  white-space: pre;
+  word-wrap: normal;
+}
+
+.blue-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+  color: var(--ink);
+  pointer-events: none;
+}
+
 #blue-source {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--ink);
+  outline: none;
+}
+
+#blue-source::placeholder {
+  color: var(--faint);
+  -webkit-text-fill-color: var(--faint);
+}
+
+#blue-source::selection { background: rgba(122, 163, 196, 0.35); }
+
+.blue-line-bad { text-decoration: underline wavy var(--bad); text-underline-offset: 3px; }
+.bt-logic, .bt-event { color: var(--brand-gold); }
+.bt-event { font-weight: 600; }
+.bt-action, .bt-target-chat, .bt-target-notice { color: var(--ledger-rumble); }
+.bt-field { color: var(--kick); }
+.bt-operator, .bt-modulo { color: var(--muted); }
+.bt-modulo { font-weight: 600; }
+.bt-value { color: var(--rumble); }
+.bt-payload { color: var(--good); }
+.bt-placeholder { color: var(--ledger-rumble); font-weight: 600; }
+.bt-placeholder-unknown { color: var(--bad); text-decoration: underline wavy var(--bad); }
+.bt-target-youtube { color: var(--youtube); }
+.bt-target-rumble { color: var(--rumble); }
+.bt-target-kick { color: var(--kick); }
+.bt-word { color: var(--ink); }
+.bt-filler { color: var(--faint); }
+.bt-error { color: var(--bad); }
+
+.blue-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.blue-test {
+  margin-top: 1rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--line);
+}
+
+.blue-dry-run {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.blue-dry-run strong { color: var(--brand-gold); }
+
+.blue-test-line-row { gap: 0.5rem; flex-wrap: nowrap; }
+.blue-test-line-row input { flex: 1 1 auto; min-width: 0; }
+.blue-test-line-row button { flex: 0 0 auto; }
+
+.blue-test-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  column-gap: 0.7rem;
+}
+
+.blue-test-grid label { margin: 0.45rem 0; }
+
+.blue-test-result {
+  margin-top: 0.7rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raise);
+}
+
+.blue-test-result p { margin: 0.35rem 0; }
+.blue-test-line + .blue-test-line { border-top: 1px solid var(--line); margin-top: 0.5rem; padding-top: 0.3rem; }
+.blue-test-good { color: var(--good); }
+.blue-test-bad { color: var(--bad); }
+.blue-test-or { color: var(--faint); font-size: 0.75rem; letter-spacing: 0.08em; }
+
+.blue-test-checks {
+  list-style: none;
+  margin: 0.2rem 0;
+  padding: 0;
+}
+
+.blue-test-checks li { margin: 0.15rem 0; }
+.blue-test-checks code { color: var(--ink); font-size: 0.85rem; }
+
+.blue-test-mark {
+  display: inline-block;
+  min-width: 2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.blue-test-action {
+  margin: 0.35rem 0;
+  padding-left: 0.6rem;
+  border-left: 3px solid var(--good);
+}
+
+.blue-test-action.skip { border-left-color: var(--bad); }
+
+.blue-test-text {
+  margin: 0.2rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  min-height: 12rem;
+  font-size: 0.85rem;
+  color: var(--ink);
 }
 
 .preset-list {

@@ -2,6 +2,6 @@
 
 from .trust import use_bundled_ca_bundle
 
-__version__ = "1.10.1"
+__version__ = "1.11.0"
 
 use_bundled_ca_bundle()

@@ -195,6 +195,109 @@ def evaluate(source: object, event: BlueEvent, timer: str = "") -> BlueRun:
     return BlueRun(actions, program.problems)
 
 
+# Placeholders the host fills in. {RAW_AMOUNT} is {RAWAMOUNT}: underscores do not count.
+PLACEHOLDERS = (
+    "total", "tier", "donor", "mention", "amount", "rawamount", "currency", "platform", "type",
+    "time", "minutes", "name", "totalline", "topline",
+)
+_OPERATORS = ("equal", "equals", "above", "below")
+_MODULO_WORDS = ("modulo", "modulus", "mod")
+
+
+def grammar() -> dict:
+    """The words BLUE knows, for the editor's highlighting. blue.py is the source."""
+    return {
+        "events": ["donation", "timer", "goal"],
+        "keywords": sorted(_KEYWORDS),
+        "fields": sorted(_FIELDS | {"raw"}),
+        "operators": list(_OPERATORS),
+        "is_word": "is",
+        "modulo": list(_MODULO_WORDS) + [_PERCENT],
+        "logic": ["on", "if", "and", "or", "not", "then"],
+        "actions": ["send", "chat", "notice", "to"],
+        "chat_targets": list(_CHAT_ORDER) + ["all", PLATFORM_TARGET],
+        "notice_targets": sorted(_NOTICE_TARGETS),
+        "placeholders": list(PLACEHOLDERS),
+        "placeholder_aliases": dict(_PLACEHOLDER_ALIASES),
+        "time_pattern": _TIME.pattern,
+        "number_pattern": _NUMBER.pattern,
+        "placeholder_pattern": _PLACEHOLDER.pattern,
+        "word_joiners": "-_",
+        "payload_quote": '"',
+        "value_quote": "'",
+    }
+
+
+def explain(source: object, event: BlueEvent) -> dict:
+    """Every line for this event, each condition with the value it saw, and what it would do.
+
+    Nothing is sent. ON TIMER lines are all checked against this one moment.
+    """
+    program = parse_script(source)
+    lines: list[dict] = []
+    for command in program.commands:
+        entry = {
+            "line": command.line,
+            "event": command.event,
+            "applies": command.event == event.name,
+            "timer": ("clock" if command.uses_time else "elapsed") if command.event == "timer" else "",
+            "groups": [],
+            "matched": False,
+            "actions": [],
+        }
+        if command.event == event.name:
+            for group in command.groups:
+                entry["groups"].append([
+                    {"text": _describe(item), "saw": _actual(item, event), "result": _comparison_holds(item, event)}
+                    for item in group
+                ])
+            entry["matched"] = _matches(command.groups, event)
+            if entry["matched"]:
+                for kind, target, via_platform in _resolve(command.actions, event):
+                    entry["actions"].append({
+                        "kind": kind,
+                        "target": target,
+                        "via_platform": via_platform,
+                        "text": _fill(command.payload, event, target),
+                    })
+        lines.append(entry)
+    return {
+        "lines": lines,
+        "problems": [{"line": problem.line, "message": problem.message} for problem in program.problems],
+    }
+
+
+def _describe(item: _Comparison) -> str:
+    parts = ["NOT"] if item.negate else []
+    parts.append(_LABELS.get(item.field_name, item.field_name.upper()))
+    if item.modulo is not None:
+        parts += ["MODULO", _plain(item.modulo)]
+    parts += [{"equal": "EQUALS", "above": "ABOVE", "below": "BELOW"}.get(item.op, item.op.upper()), item.value]
+    return " ".join(parts)
+
+
+def _actual(item: _Comparison, event: BlueEvent) -> str:
+    """What the left side of the comparison was, in words."""
+    if item.field_name == "time":
+        if event.clock is None:
+            return "no time"
+        shown = event.clock.strftime("%H:%M")
+        if item.modulo is None:
+            return shown
+        minutes = event.clock.hour * 60 + event.clock.minute
+        return f"{shown} is minute {minutes} of the day; {minutes} MODULO {_plain(item.modulo)} is {_plain(minutes % item.modulo)}"
+    if item.modulo is not None or item.field_name in _NUMBER_FIELDS:
+        number = event.numbers.get(item.field_name)
+        if number is None:
+            return "no value"
+        shown = _plain(round(float(number), 6))
+        if item.modulo is None:
+            return shown
+        return f"{shown} MODULO {_plain(item.modulo)} is {_plain(round(float(number) % item.modulo, 6))}"
+    value = str(event.values.get(item.field_name, "") or "")
+    return value if value else "empty"
+
+
 def _resolve(actions: tuple, event: BlueEvent) -> list[tuple[str, str, bool]]:
     """Concrete targets for one line. PLATFORM becomes the gift's platform.
 

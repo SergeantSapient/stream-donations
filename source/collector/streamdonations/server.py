@@ -15,7 +15,9 @@ from urllib.parse import parse_qs, urlparse
 
 from . import __version__
 from .battery import host_battery
-from .blue import inspect_script
+from .blue import grammar as blue_grammar, inspect_script
+from .blue_dryrun import dry_run as blue_dry_run
+from .blue_scripts import MAX_SOURCE as BLUE_MAX_SOURCE
 from .currencies import SUPPORTED_CURRENCIES
 from .chat_feed import EMOJI_IMAGE_HOSTS
 from .embed import FRAME_SRC, player_for_ledger
@@ -41,6 +43,7 @@ _STATIC_FILES = {
     "/icons/kick.svg": ("icons/kick.svg", "image/svg+xml"),
     "/icons/superberry.png": ("icons/superberry.png", "image/png"),
     "/fonts/fredoka.woff2": ("fonts/fredoka.woff2", "font/woff2"),
+    "/blue_highlight.js": ("blue_highlight.js", "text/javascript; charset=utf-8"),
 }
 
 
@@ -322,6 +325,18 @@ class App:
                 self.store.log("ledger", "info", f"Removed BLUE script {name}.")
                 return json_response(200, {"scripts": self.store.blue_scripts()})
             raise ValueError("BLUE script action must be save or delete.")
+        if path == "/api/blue/grammar" and method == "GET":
+            # Read only. The editor colors words from this list.
+            return json_response(200, blue_grammar())
+        if path == "/api/blue/inspect" and method == "POST":
+            # Read only. The editor marks the lines a run would skip.
+            source = str(_object(body).get("source") or "")
+            if len(source) > BLUE_MAX_SOURCE:
+                raise ValueError("That BLUE script is too long.")
+            return json_response(200, {"problems": inspect_script(source)})
+        if path == "/api/blue/test" and method == "POST":
+            # A dry run. Nothing is sent, queued, logged, or saved.
+            return json_response(200, blue_dry_run(self.service.blue, _object(body)))
         if path == "/api/blue/pending" and method == "GET":
             return json_response(200, {"pending": self.service.blue.claim()})
         if path == "/api/blue/result" and method == "POST":
