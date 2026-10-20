@@ -6,7 +6,7 @@ Wishlist work is considerable unless the request says it is major. Record a chan
 
 ## 1.9.2 — 2026-10-20
 
-- 2026-10-20 — Minor. BLUE TIME MODULO counts minutes since local midnight, so time modulo 20 equals 1 is true at 00:01, 00:21, and so on. MOD and % mean MODULO. ON TIMER lines that use TIME now run once for each new clock minute, about a second after it starts, so a clock check lands every time even when the connect was mid-minute. Other ON TIMER lines still run once per completed minute since the connect. A value that cannot work is reported in the editor and the log and that line is skipped: a TIME that is not a clock time, a clock time after TIME MODULO, a word where a number is needed, a modulus of zero or below, and a modulo check that can never be true. A % anywhere else is still ignored.
+- 2026-10-20 — Minor. BLUE TIME MODULO counts minutes since local midnight, so time modulo 20 equals 1 is true at 00:01, 00:21, and so on. MOD and % mean MODULO. ON TIMER lines that use TIME now run once for each new clock minute, about a second after it starts, so a clock check lands every time even when the connect was mid-minute. Other ON TIMER lines still run once per completed minute since the connect. A value that cannot work is reported in the editor and the log and that line is skipped: a TIME that is not a clock time, a clock time after TIME MODULO, a word where a number is needed, a modulus of zero or below, and a modulo check that can never be true. The last clock minute is saved with the ledger, so a restart does not run it again. A % anywhere else is still ignored, and a - before a number, even with a space, makes it negative.
 
 ## 1.9.1 — 2026-10-19
 

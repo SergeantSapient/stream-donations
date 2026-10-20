@@ -94,6 +94,24 @@ class TimeModuloTests(unittest.TestCase):
         self.assertEqual(_texts(_line("MINUTES MOD 20 EQUALS 0"), _timer(time(3, 0), minutes=41)), [])
         self.assertEqual(_texts(_line("AMOUNT % 5 EQUALS 0", "DONATION"), _donation(time(3, 0), 25.0)), ["hit"])
 
+    def test_percent_and_minus_before_a_value(self):
+        donation = _donation(time(3, 0), 6.0)
+        for condition in ("AMOUNT ABOVE %5", "AMOUNT ABOVE % 5", "AMOUNT % ABOVE 5", "DONOR EQUALS % Ada"):
+            source = _line(condition, "DONATION")
+            self.assertEqual(_problems(source), [], condition)
+            self.assertEqual(_texts(source, donation), ["hit"], condition)
+        self.assertEqual(_texts(_line("TIME EQUALS %3:00", "DONATION"), donation), ["hit"])
+        self.assertEqual(_texts(_line("TIME EQUALS 3:00%", "DONATION"), donation), ["hit"])
+        never = "That can never match. TIME MODULO 20 is 0 through 19."
+        for condition in ("TIME MODULO 20 EQUALS -1", "TIME MODULO 20 EQUALS - 1", "TIME MODULO 20 BELOW -5"):
+            self.assertEqual(_problems(_line(condition)), [never], condition)
+            self.assertEqual(_texts(_line(condition), _timer(time(0, 1))), [], condition)
+        for condition in ("TIME MODULO - 5 EQUALS 1", "TIME % - 5 EQUALS 1", "TIME MOD -5 EQUALS 1"):
+            self.assertEqual(_problems(_line(condition)), ["The modulus must be above zero."], condition)
+        self.assertEqual(_texts(_line("AMOUNT ABOVE -1", "DONATION"), _donation(time(3, 0), 0.5)), ["hit"])
+        self.assertEqual(_texts(_line("AMOUNT ABOVE - 10", "DONATION"), _donation(time(3, 0), 0.5)), ["hit"])
+        self.assertEqual(_texts(_line("TIME MODULO 20 ABOVE -1"), _timer(time(0, 0))), ["hit"])
+
     def test_percent_elsewhere_is_harmless(self):
         source = 'ON DONATION IF AMOUNT ABOVE 5% THEN SEND NOTICE TO APP "100% thanks, {DONOR}" %'
         self.assertEqual(_problems(source), [])
@@ -169,7 +187,19 @@ class _Host:
             "blue_script_id": saved["id"],
             "blue_started_at": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "blue_timer_minute": "0",
+            "blue_clock_minute": str(int(started.timestamp() // 60)),
         })
+
+    def restart(self):
+        """A new SuperBerry process on the same ledger file."""
+        from streamdonations.blue_host import BlueHost
+
+        self.host = BlueHost(SimpleNamespace(store=self.store))
+        self.store.on_fresh_donations = self.host.on_donations
+
+    def stored_minute(self):
+        tab = next(tab for tab in self.store.ledger_snapshots() if tab["id"] == self.stream_id)
+        return tab["blue_clock_minute"]
 
     def run(self, start, seconds, seed=7):
         rnd = random.Random(seed)
@@ -238,34 +268,58 @@ class ClockMinuteTimerTests(unittest.TestCase):
         self.assertTrue(all(minute % 1440 % 20 == 1 for minute in minutes), minutes)
         self.assertEqual({text for _, text in fired}, {"$150.00 total for the stream!"})
 
-    def test_a_restart_waits_for_the_next_clock_minute(self):
+    def test_a_restart_does_not_repeat_a_clock_minute(self):
+        source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
+        started = datetime(2026, 10, 20, 15, 0, 50, tzinfo=timezone.utc)
+        box = _Host(self, source, started)
+        box.host.tick(started + timedelta(seconds=11))
+        self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
+        self.assertEqual(box.stored_minute(), str(int((started + timedelta(seconds=11)).timestamp() // 60)))
+        # A new process in the same minute, with the same start, stays quiet.
+        box.restart()
+        box.host.tick(started + timedelta(seconds=30))
+        self.assertEqual(box.host.claim(), [])
+        box.host.tick(started + timedelta(seconds=71))
+        self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
+
+    def test_a_late_first_tick_still_runs_its_minute(self):
         source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
         started = datetime(2026, 10, 20, 15, 0, 0, tzinfo=timezone.utc)
         box = _Host(self, source, started)
+        # Over 90 seconds after the start, this minute has not been sent yet.
+        box.host.tick(started + timedelta(minutes=3, seconds=20))
+        self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
+        box.host.tick(started + timedelta(minutes=3, seconds=40))
+        self.assertEqual(box.host.claim(), [])
+
+    def test_the_start_minute_does_not_run_and_a_stop_clears_the_minute(self):
+        source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
+        started = datetime(2026, 10, 20, 15, 0, 10, tzinfo=timezone.utc)
+        box = _Host(self, source, started)
+        box.host.tick(started + timedelta(seconds=40))
+        self.assertEqual(box.host.claim(), [])
+        box.host._stop(box.stream_id)
+        self.assertEqual(box.stored_minute(), "")
+
+    def test_a_connect_stores_its_start_minute(self):
+        from streamdonations.util import parse_datetime
+
+        source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
+        box = _Host(self, source, datetime(2026, 10, 20, 15, 0, 0, tzinfo=timezone.utc))
+        box.host._start_body(box.stream_id)
+        tab = next(tab for tab in box.store.ledger_snapshots() if tab["id"] == box.stream_id)
+        started = parse_datetime(tab["blue_started_at"])
+        self.assertEqual(tab["blue_clock_minute"], str(int(started.timestamp() // 60)))
+
+    def test_a_script_running_before_the_upgrade_starts_with_the_next_minute(self):
+        source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
+        started = datetime(2026, 10, 20, 15, 0, 0, tzinfo=timezone.utc)
+        box = _Host(self, source, started)
+        box.store.set_stream_values(box.stream_id, {"blue_clock_minute": ""})
         later = started + timedelta(hours=1, seconds=20)
         box.host.tick(later)
         self.assertEqual(box.host.claim(), [])
-        box.host.tick(later + timedelta(seconds=30))
-        self.assertEqual(box.host.claim(), [])
         box.host.tick(later + timedelta(seconds=41))
-        self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
-        # A new start counts from its own minute.
-        restart = later + timedelta(minutes=5, seconds=10)
-        box.store.set_stream_values(box.stream_id, {
-            "blue_started_at": restart.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "blue_timer_minute": "0",
-        })
-        box.host.tick(restart)
-        self.assertEqual(box.host.claim(), [])
-        box.host.tick(restart + timedelta(seconds=51))
-        self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
-
-    def test_the_first_clock_minute_after_a_start_runs(self):
-        source = 'ON TIMER IF TIME MODULO 1 EQUALS 0 THEN SEND NOTICE TO APP "clock"\n'
-        started = datetime(2026, 10, 20, 15, 0, 59, tzinfo=timezone.utc)
-        box = _Host(self, source, started)
-        # The first tick after the start lands in the next clock minute.
-        box.host.tick(started + timedelta(seconds=1.2))
         self.assertEqual([item["text"] for item in box.host.claim()], ["clock"])
 
     def test_a_reported_line_reaches_the_log(self):

@@ -32,6 +32,9 @@ _WHOLE_FIELDS = frozenset({"minutes", "tier", "time"})
 _MODULO_FIELDS = _NUMBER_FIELDS | {"time"}
 # "%" is MODULO right after a field. Anywhere else it is punctuation.
 _PERCENT = "%"
+# "-" is the sign of the number after it, even with a space between them.
+_MINUS = "-"
+_MARKS = frozenset({_PERCENT, _MINUS})
 _CHAT_ORDER = ("youtube", "rumble", "kick")
 _NOTICE_TARGETS = frozenset({"app", "log", "system"})
 _TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?")
@@ -205,20 +208,14 @@ def _tokenize(line: str) -> list[_Token]:
             tokens.append(_Token("value", timed.group(0)))
             index = timed.end()
             continue
-        if char == "-" and _after_modulo(tokens):
-            # Keep the sign of a modulus so MODULO -5 is reported, not read as 5.
-            signed = _NUMBER.match(line, index + 1)
-            if signed:
-                tokens.append(_Token("value", "-" + signed.group(0)))
-                index = signed.end()
-                continue
         number = _NUMBER.match(line, index)
         if number:
             tokens.append(_Token("value", number.group(0)))
             index = number.end()
             continue
-        if char == _PERCENT:
-            tokens.append(_Token("word", _PERCENT))
+        if char in {_PERCENT, _MINUS}:
+            # Filler, except "%" as MODULO and "-" as the sign of a number.
+            tokens.append(_Token("word", char))
             index += 1
             continue
         if char.isalpha():
@@ -232,15 +229,6 @@ def _tokenize(line: str) -> list[_Token]:
             continue
         index += 1
     return tokens
-
-
-def _after_modulo(tokens: list[_Token]) -> bool:
-    if not tokens:
-        return False
-    last = tokens[-1]
-    if last.kind == "word":
-        return last.text == _PERCENT
-    return last.kind == "keyword" and last.text.casefold() in {"modulo", "modulus", "mod"}
 
 
 def _quoted(line: str, start: int, mark: str) -> tuple[str, int]:
@@ -324,7 +312,6 @@ class _Parser:
         modulo = None
         if self._at_modulo():
             self._advance()
-            self._skip_words()
             modulo = self._modulo()
             self._skip_words()
             while self._is("not"):
@@ -347,8 +334,25 @@ class _Parser:
     def _at_modulo(self) -> bool:
         if self._is("modulo") or self._is("modulus") or self._is("mod"):
             return True
+        return self._percent_modulo()
+
+    def _percent_modulo(self) -> bool:
+        """A "%" here is MODULO when a number follows it. Any other "%" is filler."""
         token = self._peek()
-        return token is not None and token.kind == "word" and token.text == _PERCENT
+        if token is None or token.kind != "word" or token.text != _PERCENT:
+            return False
+        index = self.index + 1
+        while index < len(self.tokens) and self.tokens[index].kind == "word" and self.tokens[index].text == _MINUS:
+            index += 1
+        return index < len(self.tokens) and self.tokens[index].kind == "value"
+
+    def _signed(self) -> bool:
+        """Skip "%" and "-" before a value. True when a "-" was among them."""
+        negative = False
+        while self._has() and self._peek().kind == "word" and self._peek().text in _MARKS:
+            if self._advance().text == _MINUS:
+                negative = True
+        return negative
 
     def _actions(self) -> list[tuple[str, str]]:
         actions: list[tuple[str, str]] = []
@@ -432,15 +436,20 @@ class _Parser:
     def _skip_words(self, stop_at_percent: bool = False) -> None:
         """A word that is not a keyword is filler, unless it is a comparison value."""
         while self._has() and self._peek().kind == "word":
-            if stop_at_percent and self._peek().text == _PERCENT:
+            if stop_at_percent and self._percent_modulo():
                 return
             self._advance()
 
     def _modulo(self) -> float:
-        self._skip_words()
+        negative = False
+        while self._has() and self._peek().kind == "word":
+            if self._advance().text == _MINUS:
+                negative = True
         if not self._has() or self._peek().kind not in {"value", "word"}:
             raise BlueSyntax("The modulus needs a number.")
         number = _parse_number(self._advance().text)
+        if number is not None and negative:
+            number = -number
         if number is None:
             raise BlueSyntax("The modulus needs a number.")
         if number == 0:
@@ -450,12 +459,16 @@ class _Parser:
         return number
 
     def _value(self) -> str:
+        negative = self._signed()
         if not self._has():
             raise BlueSyntax("That comparison needs a value.")
         token = self._peek()
         if token.kind == "payload" or token.text.casefold() in _STRUCTURAL:
             raise BlueSyntax("That comparison needs a value.")
-        return self._advance().text
+        text = self._advance().text
+        if negative and token.kind == "value" and _NUMBER.fullmatch(text):
+            return _MINUS + text
+        return text
 
     def _is_field(self) -> bool:
         return self._has() and self._peek().text.casefold() in _FIELDS

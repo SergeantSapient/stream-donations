@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from .blue import BlueEvent, evaluate
 from .fx import cached_usd_rates
 from .goals import format_usd, load_tiers, reached_tier, round2, tier_breach, tier_name
 from .kinds import PLATFORM_LABELS
 from .money import parse_membership_price, quote
-from .util import display_donor, parse_datetime, utc_now_iso
+from .util import display_donor, format_utc, parse_datetime, utc_now
 
 _MAX_PENDING = 40
 _GOAL_TIERS = frozenset({"0", "1", "2", "3", "4", "5"})
@@ -38,8 +38,6 @@ class BlueHost:
         self._pending: list[dict] = []
         self._seen: set[tuple] = set()
         self._missing: set[tuple] = set()
-        # Last clock minute each ledger's TIME lines saw: (blue_started_at, minute).
-        self._clock_minutes: dict[str, tuple[str, int]] = {}
 
     def on_donations(self, stream_id: str, donations) -> None:
         """Fresh ledger rows only. A duplicate insert does not call this."""
@@ -187,22 +185,20 @@ class BlueHost:
         """True once for each clock minute after the script started. TIME lines use it.
 
         The minute-since-start tick can sit on either side of a clock minute, so
-        TIME lines are checked when the clock minute changes instead. The minute
-        the script started in, or the one SuperBerry restarted in, does not run.
+        TIME lines are checked when the clock minute changes instead. The last
+        clock minute is stored on the ledger, like the elapsed minute, so a
+        restart of SuperBerry does not run that minute again. The minute the
+        script started in does not run.
         """
         minute = int(now.timestamp() // 60)
-        started = str(tab.get("blue_started_at") or "")
-        seen = self._clock_minutes.get(tab["id"])
-        if seen is None or seen[0] != started:
-            # Count from the start when it was just now, so the first full clock
-            # minute after it runs. Otherwise (a restart) start from this minute.
-            moment = parse_datetime(started)
-            recent = moment is not None and timedelta(0) <= now - moment <= timedelta(seconds=90)
-            seen = (started, int(moment.timestamp() // 60) if recent else minute)
-            self._clock_minutes[tab["id"]] = seen
-        if minute <= seen[1]:
+        raw = str(tab.get("blue_clock_minute") or "")
+        if not raw.isdigit():
+            # A script started before this was stored: begin with this minute.
+            self.service.store.set_stream_values(tab["id"], {"blue_clock_minute": str(minute)})
             return False
-        self._clock_minutes[tab["id"]] = (started, minute)
+        if minute <= int(raw):
+            return False
+        self.service.store.set_stream_values(tab["id"], {"blue_clock_minute": str(minute)})
         return True
 
     def _start(self, stream_id: str) -> None:
@@ -232,9 +228,11 @@ class BlueHost:
                     donor = ""
                     platform = ""
                     amount = None
+        started = utc_now()
         self.service.store.set_stream_values(stream_id, {
-            "blue_started_at": utc_now_iso(),
+            "blue_started_at": format_utc(started),
             "blue_timer_minute": "0",
+            "blue_clock_minute": str(int(started.timestamp() // 60)),
             "blue_goal_tier": str(tier),
         })
         if script is None or tab is None:
@@ -264,6 +262,7 @@ class BlueHost:
         self.service.store.set_stream_values(stream_id, {
             "blue_started_at": "",
             "blue_timer_minute": "",
+            "blue_clock_minute": "",
             "blue_goal_tier": "",
         })
         self._drop(stream_id, "The ledger was disconnected.")
