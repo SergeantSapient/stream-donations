@@ -410,6 +410,92 @@ class HostTests(unittest.TestCase):
         self.store.add_many([_gift("youtube:public:later", amount=500.0, currency="JPY")])
         self.assertEqual([item["target"] for item in self.host.claim()], ["youtube", "app"])
 
+    def restart(self, now):
+        """A new SuperBerry process on the same ledger file, with the wall clock at now."""
+        self.now = now
+        self.host = BlueHost(self.service)
+        self.host._clock = lambda: self.now
+        self.store.on_fresh_donations = self.host.on_donations
+
+    def guard(self):
+        tab = next(tab for tab in self.store.ledger_snapshots() if tab["id"] == self.stream)
+        return tab["blue_chat_guard"]
+
+    def test_a_restart_keeps_the_thank_you_guard(self):
+        self.script('ON DONATION THEN SEND CHAT TO PLATFORM "thanks {DONOR}"')
+        self.store.add_many([_gift("youtube:public:r1", amount=500.0, currency="JPY")])
+        self.assertEqual([item["target"] for item in self.host.claim()], ["youtube"])
+        self.assertNotIn("Ada", self.guard())
+        self.restart(self.now + 30)
+        self.store.add_many([_gift("youtube:superChatEvent:r1", amount=500.0, currency="JPY", channel="")])
+        self.store.add_many([_gift("youtube:public:r1-copy", amount=500.0, currency="JPY")])
+        self.assertEqual(self.host.claim(), [])
+        self.assertTrue(any("already thanked" in line for line in self.logged()))
+        self.restart(self.now + 91)
+        self.store.add_many([_gift("youtube:public:r1-later", amount=500.0, currency="JPY")])
+        self.assertEqual([item["text"] for item in self.host.claim()], ["thanks Ada"])
+
+    def test_a_restart_keeps_the_chat_cap(self):
+        self.script('ON DONATION THEN SEND CHAT TO YOUTUBE "thanks {DONOR}"')
+        for index in range(4):
+            self.store.add_many([_gift(f"youtube:public:c{index}", donor=f"D{index}")])
+        self.assertEqual(len(self.host.claim()), 4)
+        self.restart(self.now + 10)
+        for index in range(4, 8):
+            self.store.add_many([_gift(f"youtube:public:c{index}", donor=f"D{index}")])
+        self.assertEqual([item["text"] for item in self.host.claim()], ["thanks D4", "thanks D5"])
+        self.assertTrue(any("in the last minute" in line for line in self.logged()))
+        self.restart(self.now + 51)
+        self.store.add_many([_gift("youtube:public:c9", donor="D9")])
+        self.assertEqual([item["text"] for item in self.host.claim()], ["thanks D9"])
+
+    def test_a_clock_that_goes_back_holds_nothing_past_its_window(self):
+        self.script('ON DONATION THEN SEND CHAT TO YOUTUBE "thanks {DONOR}"')
+        for index in range(CHAT_LINES_PER_MINUTE):
+            self.store.add_many([_gift(f"youtube:public:b{index}", donor=f"D{index}", amount=7.0)])
+        self.assertEqual(len(self.host.claim()), CHAT_LINES_PER_MINUTE)
+        # The wall clock jumps back an hour, then the app restarts.
+        self.restart(self.now - 3600)
+        self.store.add_many([_gift("youtube:public:b-dupe", donor="D0", amount=7.0)])
+        self.assertEqual(self.host.claim(), [])
+        self.restart(self.now + 61)
+        self.store.add_many([_gift("youtube:public:b-new", donor="New", amount=7.0)])
+        self.assertEqual([item["text"] for item in self.host.claim()], ["thanks New"])
+        self.restart(self.now + 60)
+        self.store.add_many([_gift("youtube:public:b-dupe2", donor="D1", amount=7.0)])
+        self.assertEqual([item["text"] for item in self.host.claim()], ["thanks D1"])
+
+    def test_the_guard_is_bounded_and_survives_a_soft_disconnect(self):
+        import json
+
+        from streamdonations.blue_host import _MAX_THANKED, _load_guard, _prune_guard
+        from streamdonations.settings_file import TAB_KEYS
+
+        self.assertNotIn("blue_chat_guard", TAB_KEYS)
+        self.script('ON DONATION THEN SEND CHAT TO KICK "thanks {DONOR}"')
+        for index in range(3):
+            self.now += 21
+            self.store.add_many([_gift(f"kick:public:kicks:g{index}", platform="kick", donor=f"D{index}",
+                                       amount=100.0, currency="KICKS")])
+        self.host.claim()
+        saved = json.loads(self.guard())
+        self.assertEqual(len(saved["thanked"]), 3)
+        self.assertEqual(len(saved["sent"]["kick"]), 3)
+        self.host._stop_body(self.stream)
+        self.assertEqual(json.loads(self.guard()), saved)
+        guard = _load_guard(json.dumps({
+            "thanked": {f"k{index}": 5000.0 + index for index in range(_MAX_THANKED + 50)},
+            "sent": {"kick": [4990.0 + index for index in range(20)], "nope": [1.0]},
+        }))
+        _prune_guard(guard, 5000.0)
+        self.assertEqual(len(guard["thanked"]), _MAX_THANKED)
+        self.assertNotIn("k0", guard["thanked"])
+        self.assertEqual(len(guard["sent"]["kick"]), CHAT_LINES_PER_MINUTE)
+        self.assertNotIn("nope", guard["sent"])
+        self.assertEqual(_load_guard("not json"), {"thanked": {}, "sent": {}})
+        self.store.set_stream_values(self.stream, {"blue_chat_guard": "{" + "x" * 20000})
+        self.assertEqual(self.guard(), "")
+
     def test_chat_lines_are_capped_per_chat_per_minute(self):
         self.script('ON DONATION THEN SEND CHAT TO YOUTUBE "thanks {DONOR}"\nON DONATION THEN SEND NOTICE TO APP "n"')
         for index in range(CHAT_LINES_PER_MINUTE + 1):

@@ -7,11 +7,12 @@ is written to the log, and the next action still runs.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import threading
 import time
 import uuid
-from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -33,6 +34,8 @@ DONATION_MAX_AGE_SECONDS = 120
 REPEAT_SECONDS = 120
 # BLUE chat lines per chat in any 60 seconds. More are dropped and logged.
 CHAT_LINES_PER_MINUTE = 6
+# Thank-you keys kept per ledger. The ones closest to expiring go first.
+_MAX_THANKED = 200
 # {TOTALLINE} and {TOPLINE} in a notice. Chat uses the platform's limit.
 _NOTICE_LIMIT = 500
 # Sources that always store into the open ledger, whatever it watches.
@@ -59,10 +62,13 @@ class BlueHost:
         self._pending: list[dict] = []
         self._seen: set[tuple] = set()
         self._missing: set[tuple] = set()
-        self._clock = time.monotonic
+        # Wall-clock seconds. The guards below are saved on the ledger with these
+        # times, so they must mean the same thing after a restart.
+        self._clock = time.time
         self._quiet: set[tuple] = set()
-        self._thanked: dict[tuple, float] = {}
-        self._sent: dict[tuple[str, str], deque] = {}
+        # Per ledger: {"thanked": {key: until}, "sent": {target: [times]}}. Loaded
+        # from blue_chat_guard on first use and written back when it changes.
+        self._guards: dict[str, dict] = {}
 
     def on_donations(self, stream_id: str, donations) -> None:
         """Fresh ledger rows only. A duplicate insert does not call this."""
@@ -523,17 +529,16 @@ class BlueHost:
         if action.kind == "chat":
             if event is not None and event.name == "donation":
                 repeat = self._repeat_key(tab, script, action, event)
-                if repeat is not None and self._thanked.get(repeat, 0.0) > self._clock():
-                    self._fail(script, action.line, action.target, "That gift was already thanked in the last 2 minutes.")
-                    return
-            if not self._room(tab["id"], action.target):
+            problem = self._take_chat_slot(tab, action.target, repeat)
+            if problem == "repeat":
+                self._fail(script, action.line, action.target, "That gift was already thanked in the last 2 minutes.")
+                return
+            if problem == "full":
                 self._fail(
                     script, action.line, action.target,
                     f"BLUE already queued {CHAT_LINES_PER_MINUTE} chat lines for that chat in the last minute.",
                 )
                 return
-        if repeat is not None:
-            self._thanked[repeat] = self._clock() + REPEAT_SECONDS
         self._enqueue({
             "id": uuid.uuid4().hex,
             "script": script["name"],
@@ -567,19 +572,46 @@ class BlueHost:
         )
         return (tab["id"], script["id"], action.line, action.target, donor, platform) + money
 
-    def _room(self, stream_id: str, target: str) -> bool:
-        """Count one BLUE chat line for this chat. False when the minute is full."""
+    def _take_chat_slot(self, tab: dict, target: str, repeat: tuple | None) -> str:
+        """Count one BLUE chat line for this chat, and remember the thank-you.
+
+        "repeat" when that gift was thanked on this line and chat in the last
+        2 minutes, "full" when the chat already had 6 BLUE lines in the last
+        minute, and "" when the line may go. Both are saved on the ledger, so a
+        restart of SuperBerry keeps them until they expire.
+        """
         now = self._clock()
         with self._lock:
-            for key in [key for key, until in self._thanked.items() if until <= now]:
-                del self._thanked[key]
-            times = self._sent.setdefault((stream_id, target), deque())
-            while times and now - times[0] >= 60:
-                times.popleft()
-            if len(times) >= CHAT_LINES_PER_MINUTE:
-                return False
-            times.append(now)
-            return True
+            guard, pulled = self._guard(tab, now)
+            thanked = guard["thanked"]
+            key = _guard_key(repeat) if repeat is not None else ""
+            times = guard["sent"].setdefault(target, [])
+            if key and key in thanked and thanked[key] > now:
+                result = "repeat"
+            elif len(times) >= CHAT_LINES_PER_MINUTE:
+                result = "full"
+            else:
+                result = ""
+                times.append(round(now, 3))
+                if key:
+                    thanked[key] = round(now + REPEAT_SECONDS, 3)
+                    _prune_guard(guard, now)
+            if not times:
+                del guard["sent"][target]
+            text = json.dumps(guard, separators=(",", ":"), sort_keys=True) if (pulled or not result) else ""
+        if text:
+            # One write per line sent, or after a clock that went back was pulled in.
+            self.service.store.set_stream_values(tab["id"], {"blue_chat_guard": text})
+        return result
+
+    def _guard(self, tab: dict, now: float) -> tuple[dict, bool]:
+        """This ledger's guard times, pruned to the ones that still count. Holds _lock."""
+        guard = self._guards.get(tab["id"])
+        if guard is None:
+            fresh = self._tab(tab["id"]) or tab
+            guard = _load_guard(str(fresh.get("blue_chat_guard") or ""))
+            self._guards[tab["id"]] = guard
+        return guard, _prune_guard(guard, now)
 
     def _platform_problem(self, tab: dict, platform: str, origin) -> tuple[str, str] | None:
         """Why PLATFORM cannot answer in this chat, or None."""
@@ -813,6 +845,60 @@ class BlueHost:
             self.service.store.log("blue", "info", message)
         except Exception:
             return
+
+
+def _guard_key(repeat: tuple) -> str:
+    """A short, stable name for one thank-you. The donor's name is not stored."""
+    text = json.dumps(list(repeat), separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+
+
+def _load_guard(text: str) -> dict:
+    guard: dict = {"thanked": {}, "sent": {}}
+    try:
+        data = json.loads(text) if text else {}
+    except ValueError:
+        return guard
+    if not isinstance(data, dict):
+        return guard
+    thanked = data.get("thanked")
+    if isinstance(thanked, dict):
+        for key, until in thanked.items():
+            if isinstance(key, str) and len(key) <= 64 and isinstance(until, (int, float)):
+                guard["thanked"][key] = float(until)
+    sent = data.get("sent")
+    if isinstance(sent, dict):
+        for target, times in sent.items():
+            if target in _TARGET_LABELS and isinstance(times, list):
+                guard["sent"][target] = [float(item) for item in times if isinstance(item, (int, float))]
+    return guard
+
+
+def _prune_guard(guard: dict, now: float) -> bool:
+    """Drop what has expired. A time from the future (the clock went back) is
+    pulled back to now, so nothing is held longer than its own window from now.
+    True when a time was pulled back, so the caller saves it.
+    """
+    pulled = False
+    thanked = guard["thanked"]
+    for key, until in list(thanked.items()):
+        if until <= now:
+            del thanked[key]
+        elif until > now + REPEAT_SECONDS:
+            thanked[key] = now + REPEAT_SECONDS
+            pulled = True
+    if len(thanked) > _MAX_THANKED:
+        for old in sorted(thanked, key=thanked.get)[: len(thanked) - _MAX_THANKED]:
+            del thanked[old]
+    for target, times in list(guard["sent"].items()):
+        pulled = pulled or any(item > now for item in times)
+        kept = sorted(min(item, now) for item in times if now - item < 60)
+        kept = kept[-CHAT_LINES_PER_MINUTE:]
+        if kept:
+            guard["sent"][target] = kept
+        else:
+            del guard["sent"][target]
+    return pulled
 
 
 def _rumble_slug(saved: str) -> str:
