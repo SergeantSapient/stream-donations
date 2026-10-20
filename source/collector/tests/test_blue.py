@@ -5,6 +5,14 @@ from datetime import datetime, time, timezone
 from streamdonations.blue import BlueEvent, evaluate
 
 
+def _when(seconds=0):
+    """A platform time just after now. ON DONATION skips gifts over 2 minutes old."""
+    from datetime import timedelta
+
+    moment = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _goal(tier, donor="", name="", minutes=0, platform="", amount=None, amount_text=""):
     values = {"donor": donor, "name": name, "platform": platform}
     numbers = {"tier": tier, "minutes": minutes}
@@ -311,7 +319,7 @@ class BlueHostTests(unittest.TestCase):
                 "channelId": "UCb",
                 "supporterDetails": {"displayName": "@McLovin", "channelId": "UCf"},
                 "commentText": "hello",
-                "createdAt": "2024-06-01T12:00:00Z",
+                "createdAt": _when(0),
                 "amountMicros": "1000000",
                 "currency": "USD",
             },
@@ -333,7 +341,7 @@ class BlueHostTests(unittest.TestCase):
                 "channelId": "UCb",
                 "supporterDetails": {"displayName": "Ada", "channelId": "UCf"},
                 "commentText": "more",
-                "createdAt": "2024-06-01T12:05:00Z",
+                "createdAt": _when(5),
                 "amountMicros": "2000000",
                 "currency": "USD",
             },
@@ -421,18 +429,18 @@ class BlueHostTests(unittest.TestCase):
         tabs = {item["id"]: item for item in store.ledger_snapshots()}
         self.assertIn("Bronze", tabs[first]["goal_tiers"])
         self.assertEqual(tabs[second]["tiers_enabled"], "0")
-        self.assertEqual(store.add_many([gift("jump", "@McLovin", "30000000", "2024-06-01T12:00:00Z")], first), 1)
+        self.assertEqual(store.add_many([gift("jump", "@McLovin", "30000000", _when(0))], first), 1)
         self.assertEqual(texts(), [
             "gift",
             "tier 1 [McLovin] [Bronze] [YouTube] [$30.00]",
             "tier 2 [McLovin] [Silver] [YouTube] [$30.00]",
         ])
-        self.assertEqual(store.add_many([gift("small", "Ada", "1000000", "2024-06-01T12:05:00Z")], first), 1)
+        self.assertEqual(store.add_many([gift("small", "Ada", "1000000", _when(5))], first), 1)
         self.assertEqual(texts(), ["gift"])
 
         store.set_stream_paused(first, True)
         host.on_connection(first, True)
-        self.assertEqual(store.add_many([gift("paused", "Cam", "50000000", "2024-06-01T12:10:00Z")], first), 1)
+        self.assertEqual(store.add_many([gift("paused", "Cam", "50000000", _when(10))], first), 1)
         self.assertEqual(host.claim(), [])
 
         store.set_stream_paused(first, False)
@@ -440,7 +448,7 @@ class BlueHostTests(unittest.TestCase):
         self.assertEqual(texts(), ["tier 2 [McLovin] [Silver] [YouTube] [$30.00]"])
 
         store.set_stream_values(first, {"blue_goal_tier": ""})
-        self.assertEqual(store.add_many([gift("upgrade", "Bea", "1000000", "2024-06-01T12:15:00Z")], first), 1)
+        self.assertEqual(store.add_many([gift("upgrade", "Bea", "1000000", _when(15))], first), 1)
         self.assertEqual(texts(), ["gift"])
         self.assertEqual(stored_tier(first), "2")
 
@@ -450,7 +458,7 @@ class BlueHostTests(unittest.TestCase):
         store.set_stream_paused(second, False)
         host.on_connection(second, False)
         self.assertEqual(texts(), ["tier 0 [] [] [] []"])
-        self.assertEqual(store.add_many([gift("cent", "Ada", "9990000", "2024-06-01T12:20:00Z")], second), 1)
+        self.assertEqual(store.add_many([gift("cent", "Ada", "9990000", _when(20))], second), 1)
         self.assertEqual(texts(), ["gift", "tier 1 [Ada] [Tip] [YouTube] [$9.99]"])
         self.assertEqual(stored_tier(first), "2")
 
@@ -514,8 +522,8 @@ class BlueHostTests(unittest.TestCase):
         self.assertEqual(texts(), ["start 0 $0.00"])
 
         self.assertEqual(store.add_many([
-            gift("ten", "Ada", "10000000", "2024-06-01T12:00:00Z"),
-            gift("twenty", "Bea", "20000000", "2024-06-01T12:01:00Z"),
+            gift("ten", "Ada", "10000000", _when(0)),
+            gift("twenty", "Bea", "20000000", _when(1)),
         ], first), 2)
         self.assertEqual(texts(), [
             "gift 1 $10.00 [{NAME}]",
@@ -535,6 +543,6 @@ class BlueHostTests(unittest.TestCase):
         host.on_connection(second, False)
         self.assertEqual(texts(), ["start 0 $0.00"])
         self.assertEqual(store.add_many([
-            gift("five", "Cam", "5000000", "2024-06-01T13:00:00Z"),
+            gift("five", "Cam", "5000000", _when(60)),
         ], second), 1)
         self.assertEqual(texts(), ["gift 0 $5.00 [{NAME}]"])

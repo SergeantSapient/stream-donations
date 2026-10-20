@@ -380,6 +380,66 @@ def _plain_text(node: object) -> str:
     return ""
 
 
+# ISO 4217 minor units (Table A.1, active codes as of 2026-01-01). Codes not
+# listed use 2. Kicks are whole coins.
+ZERO_DECIMAL_CURRENCIES = frozenset({
+    "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
+    "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF", "KICKS",
+})
+THREE_DECIMAL_CURRENCIES = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
+FOUR_DECIMAL_CURRENCIES = frozenset({"CLF", "UYW"})
+
+
+def currency_decimals(currency: object) -> int:
+    """Digits after the point for this currency. Unknown or missing is 2."""
+    code = str(currency or "").strip().upper()
+    if code in ZERO_DECIMAL_CURRENCIES:
+        return 0
+    if code in THREE_DECIMAL_CURRENCIES:
+        return 3
+    if code in FOUR_DECIMAL_CURRENCIES:
+        return 4
+    return 2
+
+
+def raw_amount(row: dict) -> tuple[float | None, str | None]:
+    """The amount as it was sent, in its own currency, and that currency.
+
+    Kicks stay a coin count with currency KICKS. Nothing is converted and no
+    membership price is assumed: a row without a paid amount has none.
+    """
+    kind = str(row.get("kind") or "")
+    if kind == "gift_membership_received":
+        return None, None
+    amount = _number(row.get("amount_value"))
+    currency = str(row.get("currency") or "").strip().upper() or None
+    if kind == "kicks" or currency == "KICKS":
+        return amount, ("KICKS" if amount is not None else None)
+    if is_member_anniversary(row):
+        if str(row.get("platform") or "") == "kick":
+            return 0.0, "USD"
+        return None, None
+    if currency is None and str(row.get("platform") or "") == "youtube":
+        recovered_amount, recovered_currency = youtube_paid_amount(
+            row.get("raw") if isinstance(row.get("raw"), dict) else {}
+        )
+        if recovered_currency:
+            currency = str(recovered_currency).upper()
+            if recovered_amount is not None:
+                amount = recovered_amount
+    if amount is None:
+        return None, None
+    return amount, currency
+
+
+def format_raw_amount(amount: object, currency: object) -> str:
+    """Just the number: no symbol, no code, no thousands separator."""
+    number = _number(amount)
+    if number is None:
+        return ""
+    return f"{number:.{currency_decimals(currency)}f}"
+
+
 def _kick_dollars(amount_value: object) -> float | None:
     coins = _number(amount_value)
     if coins is None:
