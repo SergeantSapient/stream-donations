@@ -54,12 +54,13 @@ _STREAM_FIELDS = (
     "blue_script_id",
     "blue_started_at",
     "blue_timer_minute",
+    "blue_clock_minute",
     "blue_goal_tier",
     "youtube_chat_commands",
     "rumble_chat_commands",
     "kick_chat_commands",
 )
-_BLUE_FIELDS = ("blue_script_id", "blue_started_at", "blue_timer_minute", "blue_goal_tier")
+_BLUE_FIELDS = ("blue_script_id", "blue_started_at", "blue_timer_minute", "blue_clock_minute", "blue_goal_tier")
 # A new ledger copies presentation only. Title, donations, addresses, follow-live,
 # goal tiers, and the pause are not copied. A new ledger starts paused, with tiers off.
 _COPIED_ON_NEW_LEDGER = (
@@ -760,6 +761,9 @@ class Store:
         tab["blue_started_at"] = tab["blue_started_at"].strip()[:40]
         minute = tab["blue_timer_minute"].strip()
         tab["blue_timer_minute"] = minute if minute.isdigit() and len(minute) <= 8 else ""
+        # Minutes since 1970 (UTC) of the last clock minute TIME lines ran in.
+        clock_minute = tab["blue_clock_minute"].strip()
+        tab["blue_clock_minute"] = clock_minute if clock_minute.isdigit() and len(clock_minute) <= 12 else ""
         goal_tier = tab["blue_goal_tier"].strip()
         tab["blue_goal_tier"] = goal_tier if goal_tier in {"0", "1", "2", "3", "4", "5"} else ""
         return tab

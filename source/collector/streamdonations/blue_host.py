@@ -16,7 +16,7 @@ from .fx import cached_usd_rates
 from .goals import format_usd, load_tiers, reached_tier, round2, tier_breach, tier_name
 from .kinds import PLATFORM_LABELS
 from .money import parse_membership_price, quote
-from .util import display_donor, parse_datetime, utc_now_iso
+from .util import display_donor, format_utc, parse_datetime, utc_now
 
 _MAX_PENDING = 40
 _GOAL_TIERS = frozenset({"0", "1", "2", "3", "4", "5"})
@@ -170,11 +170,36 @@ class BlueHost:
             elapsed = int((now - started).total_seconds() // 60)
             raw_minute = str(fresh.get("blue_timer_minute") or "")
             last = int(raw_minute) if raw_minute.isdigit() else 0
-            if elapsed <= last or elapsed <= 0:
+            new_elapsed = elapsed > last and elapsed > 0
+            new_clock = self._new_clock_minute(fresh, now)
+            if not new_elapsed and not new_clock:
                 return
             tier, total = self._ledger_facts(fresh)
-            self.service.store.set_stream_values(fresh["id"], {"blue_timer_minute": str(elapsed)})
-            self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total))
+            if new_elapsed:
+                self.service.store.set_stream_values(fresh["id"], {"blue_timer_minute": str(elapsed)})
+                self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total), "elapsed")
+            if new_clock:
+                self._dispatch(fresh, script, self._timer_event(max(0, elapsed), now, tier, total), "clock")
+
+    def _new_clock_minute(self, tab: dict, now: datetime) -> bool:
+        """True once for each clock minute after the script started. TIME lines use it.
+
+        The minute-since-start tick can sit on either side of a clock minute, so
+        TIME lines are checked when the clock minute changes instead. The last
+        clock minute is stored on the ledger, like the elapsed minute, so a
+        restart of SuperBerry does not run that minute again. The minute the
+        script started in does not run.
+        """
+        minute = int(now.timestamp() // 60)
+        raw = str(tab.get("blue_clock_minute") or "")
+        if not raw.isdigit():
+            # A script started before this was stored: begin with this minute.
+            self.service.store.set_stream_values(tab["id"], {"blue_clock_minute": str(minute)})
+            return False
+        if minute <= int(raw):
+            return False
+        self.service.store.set_stream_values(tab["id"], {"blue_clock_minute": str(minute)})
+        return True
 
     def _start(self, stream_id: str) -> None:
         with self._busy:
@@ -203,9 +228,11 @@ class BlueHost:
                     donor = ""
                     platform = ""
                     amount = None
+        started = utc_now()
         self.service.store.set_stream_values(stream_id, {
-            "blue_started_at": utc_now_iso(),
+            "blue_started_at": format_utc(started),
             "blue_timer_minute": "0",
+            "blue_clock_minute": str(int(started.timestamp() // 60)),
             "blue_goal_tier": str(tier),
         })
         if script is None or tab is None:
@@ -235,6 +262,7 @@ class BlueHost:
         self.service.store.set_stream_values(stream_id, {
             "blue_started_at": "",
             "blue_timer_minute": "",
+            "blue_clock_minute": "",
             "blue_goal_tier": "",
         })
         self._drop(stream_id, "The ledger was disconnected.")
@@ -394,9 +422,9 @@ class BlueHost:
             rates,
         )
 
-    def _dispatch(self, tab: dict, script: dict, event: BlueEvent) -> None:
+    def _dispatch(self, tab: dict, script: dict, event: BlueEvent, timer: str = "") -> None:
         self._report(tab["id"], script)
-        run = evaluate(script["source"], event)
+        run = evaluate(script["source"], event, timer)
         for action in run.actions:
             try:
                 self._perform(tab, script, action)
