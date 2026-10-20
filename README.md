@@ -183,6 +183,8 @@ ON GOAL IF TIER ABOVE 0 THEN SEND CHAT TO PLATFORM AND NOT RUMBLE "{NAME} reache
 
 ### Editor colors and the test box
 
+**Help**, beside the Script label, opens the BLUE reference under the editor in short sections: events, conditions and fields, MODULO and TIME, targets, placeholders, limits and guards, editor colors, and the test box. It starts closed, and whether you left it open is remembered on this computer.
+
 The editor colors each word the way BLUE reads it: `ON`, `IF`, `THEN`, `AND`, `OR`, and `NOT`; the event; fields such as `AMOUNT` and `TIME`; `EQUALS`, `ABOVE`, `BELOW`, `IS`, and `MODULO` (`MOD`, and `%` when it is MODULO); numbers, clock times, and minus signs; chat targets in their platform colors; notice targets; the message; and placeholders. A placeholder BLUE does not fill in is red. The words come from BLUE itself (`GET /api/blue/grammar`), so the colors match what runs. The editor uses a fixed-width font, numbers its lines, and does not wrap long lines; it scrolls sideways instead. Typing, undo, paste, input methods, import, and export work as before, since the box you type in is still a plain text box with the colors drawn under it.
 
 While you type, about a third of a second after you stop, the script is checked. A line that will be skipped gets a red mark beside its number, with the reason when you hover the mark, and a red underline, and the reasons are listed under the editor as before. Saving still keeps those lines.

@@ -1862,6 +1862,58 @@ button.archive-day-toggle:hover {
 #preset-error,
 #blue-problems { color: var(--bad); }
 
+.blue-script-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.blue-script-head label { margin: 0; }
+
+.blue-help-button {
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.blue-help-button .icon { width: 1rem; height: 1rem; }
+.blue-help-button:hover, .blue-help-button:focus-visible { color: var(--ink); border-color: var(--line-strong); }
+.blue-help-button[aria-expanded="true"] { color: var(--ink); border-color: var(--line-strong); background: var(--raise-2); }
+
+.blue-help {
+  margin: 0 0 0.7rem;
+  padding: 0.3rem 0.9rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raise);
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.blue-help h3 {
+  margin: 0.6rem 0 0.25rem;
+  color: var(--ink);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.blue-help ul { margin: 0; padding-left: 1.1rem; }
+.blue-help li { margin: 0.15rem 0; }
+
+.blue-help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: var(--brand-gold);
+}
+
 /* BLUE editor: the textarea's text is clear, and the <pre> under it shows the colors.
    Both use the same font, size, line height, and padding, and do not wrap. */
 .blue-editor {

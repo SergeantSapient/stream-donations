@@ -336,6 +336,16 @@ class EndpointTests(unittest.TestCase):
                        'id="blue-test-form"', "Dry run - nothing is sent", '<script src="/blue_highlight.js"></script>'):
             self.assertIn(needle, page)
         self.assertNotIn("style=", page)
+        # The explanation is behind Help, closed by default, in short sections.
+        self.assertIn('id="blue-help-button" class="blue-help-button" aria-expanded="false" aria-controls="blue-help"', page)
+        self.assertIn('<div id="blue-help" class="blue-help" role="region" aria-labelledby="blue-help-button" hidden>', page)
+        panel = page[page.index('<div id="blue-help"'):page.index('<p id="blue-problems"')]
+        for heading in ("Events", "Conditions and fields", "MODULO and TIME", "Targets", "Placeholders",
+                        "Limits and guards", "Editor colors", "Test box"):
+            self.assertIn(f"<h3>{heading}</h3>", panel)
+        for placeholder in blue.PLACEHOLDERS:
+            self.assertIn("{" + placeholder.upper() + "}", panel)
+        self.assertNotIn('<p class="hint">A line starts with', page)
         self.assertNotIn("innerHTML", (WEB / "blue_highlight.js").read_text(encoding="utf-8"))
         # The test box has no way to send for real.
         script = (WEB / "app.js").read_text(encoding="utf-8")

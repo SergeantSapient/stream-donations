@@ -2650,7 +2650,40 @@ function renderBlueTestLine(line, numbered) {
   return card;
 }
 
+const BLUE_HELP_KEY = "stream-donations-blue-help";
+
+// BLUE help starts closed. Opening it is remembered on this computer.
+function setBlueHelp(open, remember) {
+  const button = $("blue-help-button");
+  const panel = $("blue-help");
+  if (!button || !panel) return;
+  panel.hidden = !open;
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+  button.title = open ? "Hide BLUE help" : "Show BLUE help";
+  if (!remember) return;
+  try {
+    if (open) localStorage.setItem(BLUE_HELP_KEY, "1");
+    else localStorage.removeItem(BLUE_HELP_KEY);
+  } catch (_error) {
+    // Storage can be off. The panel still opens and closes.
+  }
+}
+
+function setupBlueHelp() {
+  const button = $("blue-help-button");
+  if (!button) return;
+  let open = false;
+  try {
+    open = localStorage.getItem(BLUE_HELP_KEY) === "1";
+  } catch (_error) {
+    open = false;
+  }
+  setBlueHelp(open, false);
+  button.addEventListener("click", () => setBlueHelp(button.getAttribute("aria-expanded") !== "true", true));
+}
+
 function setupBlueEditor() {
+  setupBlueHelp();
   const source = $("blue-source");
   if (source) {
     source.addEventListener("input", () => {
