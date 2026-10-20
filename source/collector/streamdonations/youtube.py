@@ -585,6 +585,8 @@ class YouTubeClient:
                     "id": live_chat_id,
                     "channel": str(snippet.get("channelId") or ""),
                     "title": str(snippet.get("title") or ""),
+                    # The broadcast id is its video id. BLUE's PLATFORM checks it.
+                    "video": str(item.get("id") or ""),
                 }
             )
         self._live_disabled = False

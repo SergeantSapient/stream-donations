@@ -7,18 +7,42 @@ is written to the log, and the next action still runs.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import threading
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from .blue import BlueEvent, evaluate
+from .commands import LIMITS, blurb, ledger_rows, mention, trim_reply
 from .fx import cached_usd_rates
 from .goals import format_usd, load_tiers, reached_tier, round2, tier_breach, tier_name
+from .kick_public import kick_slug
 from .kinds import PLATFORM_LABELS
-from .money import parse_membership_price, quote
+from .money import format_raw_amount, parse_membership_price, quote, raw_amount
+from .rumble import rumble_channel_page_url
 from .util import display_donor, format_utc, parse_datetime, utc_now
+from .youtube_public import video_id_from_target
 
 _MAX_PENDING = 40
+# ON DONATION skips a gift from before the script started or older than this.
+DONATION_MAX_AGE_SECONDS = 120
+# The same donor, platform, and amount on one line and chat is thanked once.
+REPEAT_SECONDS = 120
+# BLUE chat lines per chat in any 60 seconds. More are dropped and logged.
+CHAT_LINES_PER_MINUTE = 6
+# Thank-you keys kept per ledger. The ones closest to expiring go first.
+_MAX_THANKED = 200
+# {TOTALLINE} and {TOPLINE} in a notice. Chat uses the platform's limit.
+_NOTICE_LIMIT = 500
+# Sources that always store into the open ledger, whatever it watches.
+# PLATFORM answers them only when the gift's channel is this ledger's chat.
+_OWNER_PREFIXES = ("youtube:superChatEvent:", "youtube:liveChat:", "kick:", "rumble:")
+_READER_PREFIXES = ("kick:public:", "rumble:chat:")
+_YOUTUBE_CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}")
 _GOAL_TIERS = frozenset({"0", "1", "2", "3", "4", "5"})
 _TARGET_LABELS = {
     "youtube": "YouTube chat",
@@ -38,6 +62,13 @@ class BlueHost:
         self._pending: list[dict] = []
         self._seen: set[tuple] = set()
         self._missing: set[tuple] = set()
+        # Wall-clock seconds. The guards below are saved on the ledger with these
+        # times, so they must mean the same thing after a restart.
+        self._clock = time.time
+        self._quiet: set[tuple] = set()
+        # Per ledger: {"thanked": {key: until}, "sent": {target: [times]}}. Loaded
+        # from blue_chat_guard on first use and written back when it changes.
+        self._guards: dict[str, dict] = {}
 
     def on_donations(self, stream_id: str, donations) -> None:
         """Fresh ledger rows only. A duplicate insert does not call this."""
@@ -50,6 +81,7 @@ class BlueHost:
                 if script is None:
                     return
                 now = datetime.now(timezone.utc)
+                started = parse_datetime(tab.get("blue_started_at"))
                 try:
                     steps, facts, stored, dirty = self._goal_plan(tab, donations)
                 except Exception:
@@ -61,7 +93,16 @@ class BlueHost:
                     self.service.store.set_stream_values(tab["id"], {"blue_goal_tier": str(stored)})
                 for donation, tiers, (tier_now, total) in zip(donations, steps, facts):
                     try:
-                        self._dispatch(tab, script, self._donation_event(donation, tab, now, tier_now, total))
+                        if self._is_current(donation, started, now):
+                            self._dispatch(
+                                tab, script, self._donation_event(donation, tab, now, tier_now, total), donation
+                            )
+                        else:
+                            self._quiet_log(
+                                tab, script, "old",
+                                "ON DONATION skipped gifts from before the script started "
+                                "or older than 2 minutes.",
+                            )
                         priced = self._quote_donation(donation, tab)
                         for tier in tiers:
                             self._dispatch(tab, script, self._goal_event(
@@ -72,7 +113,7 @@ class BlueHost:
                                 platform=str(getattr(donation, "platform", "") or ""),
                                 amount=priced.usd,
                                 total=total,
-                            ))
+                            ), donation)
                     except Exception:
                         self._log("BLUE could not read a new donation.")
         except Exception:
@@ -177,9 +218,9 @@ class BlueHost:
             tier, total = self._ledger_facts(fresh)
             if new_elapsed:
                 self.service.store.set_stream_values(fresh["id"], {"blue_timer_minute": str(elapsed)})
-                self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total), "elapsed")
+                self._dispatch(fresh, script, self._timer_event(elapsed, now, tier, total, fresh), timer="elapsed")
             if new_clock:
-                self._dispatch(fresh, script, self._timer_event(max(0, elapsed), now, tier, total), "clock")
+                self._dispatch(fresh, script, self._timer_event(max(0, elapsed), now, tier, total, fresh), timer="clock")
 
     def _new_clock_minute(self, tab: dict, now: datetime) -> bool:
         """True once for each clock minute after the script started. TIME lines use it.
@@ -213,6 +254,7 @@ class BlueHost:
         platform = ""
         amount = None
         total = None
+        origin = None
         if tab is not None:
             tier, total = self._ledger_facts(tab)
             if tier > 0:
@@ -222,6 +264,11 @@ class BlueHost:
                         donor = breach["donor"]
                         platform = breach["platform"]
                         amount = breach["amount_usd"]
+                        origin = {
+                            "dedupe_key": breach.get("key") or "",
+                            "channel": breach.get("channel") or "",
+                            "raw": {"manual": True} if breach.get("manual") else {},
+                        }
                 except Exception:
                     self._log("BLUE could not read the goal tier.")
                     tier = 0
@@ -248,7 +295,7 @@ class BlueHost:
             amount=amount,
             minutes=0,
             total=total,
-        ))
+        ), origin)
 
     def _stop(self, stream_id: str, name: str = "") -> None:
         with self._busy:
@@ -351,15 +398,23 @@ class BlueHost:
             return None
         rates = cached_usd_rates(self.service.store)
         rows = [
-            {"amount_usd": usd, "donor": donor, "platform": platform}
-            for _key, usd, donor, platform in self.service.store.stream_goal_amounts(tab["id"], rates)
+            {"amount_usd": usd, "donor": donor, "platform": platform, "key": key}
+            for key, usd, donor, platform in self.service.store.stream_goal_amounts(tab["id"], rates)
         ]
-        return tier_breach(
+        breach = tier_breach(
             rows,
             str(tab.get("tiers_enabled") or "") == "1",
             load_tiers(tab.get("goal_tiers")),
             tier,
         )
+        if breach is not None and breach.get("key"):
+            # PLATFORM checks the chat that gift came from, so bring its channel along.
+            for row in self.service.store.command_rows(tab["id"], rates):
+                if str(row.get("dedupe_key") or "") == breach["key"]:
+                    breach["channel"] = str(row.get("channel") or "")
+                    breach["manual"] = bool(row.get("manual"))
+                    break
+        return breach
 
     def _tier_name(self, tab: dict, tier: int) -> str:
         """The name saved on this tier. Tier 0 and a blank name are empty."""
@@ -401,9 +456,12 @@ class BlueHost:
             "amount": shown_amount,
             "platform": "" if tier <= 0 else PLATFORM_LABELS.get(raw_platform, raw_platform),
             "type": "",
+            "mention": "" if tier <= 0 else mention(who),
+            "rawamount": "",
+            "currency": "",
         }
         self._remember_total(numbers, placeholders, total)
-        return BlueEvent("goal", values, numbers, clock, placeholders)
+        return BlueEvent("goal", values, numbers, clock, placeholders, self._lookup(tab))
 
     def _quote_donation(self, donation, tab: dict):
         rates = cached_usd_rates(self.service.store)
@@ -422,16 +480,16 @@ class BlueHost:
             rates,
         )
 
-    def _dispatch(self, tab: dict, script: dict, event: BlueEvent, timer: str = "") -> None:
+    def _dispatch(self, tab: dict, script: dict, event: BlueEvent, origin=None, timer: str = "") -> None:
         self._report(tab["id"], script)
         run = evaluate(script["source"], event, timer)
         for action in run.actions:
             try:
-                self._perform(tab, script, action)
+                self._perform(tab, script, action, event, origin)
             except Exception:
                 self._fail(script, action.line, action.target, "That action could not be completed.")
 
-    def _perform(self, tab: dict, script: dict, action) -> None:
+    def _perform(self, tab: dict, script: dict, action, event: BlueEvent | None = None, origin=None) -> None:
         text = " ".join(str(action.text or "").split())
         if action.kind == "notice" and action.target == "log":
             if not text:
@@ -442,12 +500,45 @@ class BlueHost:
         if action.kind == "notice" and action.target == "system":
             self._system(script, action.line, text)
             return
-        if action.kind == "chat" and len(text) > 2000:
-            self._fail(script, action.line, action.target, "That message is too long.")
-            return
+        if action.kind == "chat":
+            if getattr(action, "via_platform", False):
+                if not action.target:
+                    # Other-platform rows and tier 0 have no chat to answer in.
+                    # Tier 0 has no gift, so it stays quiet. An Other row is logged once.
+                    source = str((event.values.get("platform") if event is not None else "") or "").strip()
+                    if source:
+                        key = _origin_value(origin, "dedupe_key")
+                        raw = _origin_value(origin, "raw")
+                        if key.startswith("manual:") or (isinstance(raw, dict) and raw.get("manual")):
+                            self._quiet_log(tab, script, "manual", "PLATFORM does not answer manual or pasted entries.")
+                        else:
+                            self._quiet_log(
+                                tab, script, "other",
+                                "PLATFORM does not answer Other-platform entries, since they have no chat.",
+                            )
+                    return
+                problem = self._platform_problem(tab, action.target, origin)
+                if problem is not None:
+                    self._quiet_log(tab, script, problem[0] + ":" + action.target, problem[1])
+                    return
+            text = trim_reply(text, LIMITS.get(action.target, 200))
         if not text:
             self._fail(script, action.line, action.target, "There was no message.")
             return
+        repeat = None
+        if action.kind == "chat":
+            if event is not None and event.name == "donation":
+                repeat = self._repeat_key(tab, script, action, event)
+            problem = self._take_chat_slot(tab, action.target, repeat)
+            if problem == "repeat":
+                self._fail(script, action.line, action.target, "That gift was already thanked in the last 2 minutes.")
+                return
+            if problem == "full":
+                self._fail(
+                    script, action.line, action.target,
+                    f"BLUE already queued {CHAT_LINES_PER_MINUTE} chat lines for that chat in the last minute.",
+                )
+                return
         self._enqueue({
             "id": uuid.uuid4().hex,
             "script": script["name"],
@@ -457,6 +548,147 @@ class BlueHost:
             "text": text,
             "stream_id": tab["id"],
         })
+
+    # Guards ---------------------------------------------------------------
+
+    def _is_current(self, donation, started: datetime | None, now: datetime) -> bool:
+        """A gift from before the script started, or over 2 minutes old, is history."""
+        created = parse_datetime(getattr(donation, "created_at", "") or "")
+        if created is None:
+            return True
+        if created < now - timedelta(seconds=DONATION_MAX_AGE_SECONDS):
+            return False
+        if started is not None and created < started:
+            return False
+        return True
+
+    def _repeat_key(self, tab: dict, script: dict, action, event: BlueEvent) -> tuple:
+        donor = display_donor(event.values.get("donor", "")).casefold()
+        platform = str(event.values.get("platform", "") or "")
+        amount = event.numbers.get("rawamount")
+        money = (round(float(amount), 6), str(event.values.get("currency", "") or "")) if amount is not None else (
+            None if event.numbers.get("amount") is None else round(float(event.numbers["amount"]), 2),
+            "USD",
+        )
+        return (tab["id"], script["id"], action.line, action.target, donor, platform) + money
+
+    def _take_chat_slot(self, tab: dict, target: str, repeat: tuple | None) -> str:
+        """Count one BLUE chat line for this chat, and remember the thank-you.
+
+        "repeat" when that gift was thanked on this line and chat in the last
+        2 minutes, "full" when the chat already had 6 BLUE lines in the last
+        minute, and "" when the line may go. Both are saved on the ledger, so a
+        restart of SuperBerry keeps them until they expire.
+        """
+        now = self._clock()
+        with self._lock:
+            guard, pulled = self._guard(tab, now)
+            thanked = guard["thanked"]
+            key = _guard_key(repeat) if repeat is not None else ""
+            times = guard["sent"].setdefault(target, [])
+            if key and key in thanked and thanked[key] > now:
+                result = "repeat"
+            elif len(times) >= CHAT_LINES_PER_MINUTE:
+                result = "full"
+            else:
+                result = ""
+                times.append(round(now, 3))
+                if key:
+                    thanked[key] = round(now + REPEAT_SECONDS, 3)
+                    _prune_guard(guard, now)
+            if not times:
+                del guard["sent"][target]
+            text = json.dumps(guard, separators=(",", ":"), sort_keys=True) if (pulled or not result) else ""
+        if text:
+            # One write per line sent, or after a clock that went back was pulled in.
+            self.service.store.set_stream_values(tab["id"], {"blue_chat_guard": text})
+        return result
+
+    def _guard(self, tab: dict, now: float) -> tuple[dict, bool]:
+        """This ledger's guard times, pruned to the ones that still count. Holds _lock."""
+        guard = self._guards.get(tab["id"])
+        if guard is None:
+            fresh = self._tab(tab["id"]) or tab
+            guard = _load_guard(str(fresh.get("blue_chat_guard") or ""))
+            self._guards[tab["id"]] = guard
+        return guard, _prune_guard(guard, now)
+
+    def _platform_problem(self, tab: dict, platform: str, origin) -> tuple[str, str] | None:
+        """Why PLATFORM cannot answer in this chat, or None."""
+        label = PLATFORM_LABELS.get(platform, platform)
+        key = _origin_value(origin, "dedupe_key")
+        raw = _origin_value(origin, "raw")
+        if key.startswith("manual:") or (isinstance(raw, dict) and raw.get("manual")):
+            return "manual", "PLATFORM does not answer manual or pasted entries."
+        if key.startswith(_OWNER_PREFIXES) and not key.startswith(_READER_PREFIXES):
+            if not self._same_chat(tab, platform, _origin_value(origin, "channel")):
+                return "channel", (
+                    f"PLATFORM could not confirm that a {label} gift came from this ledger's chat, "
+                    "so it was not answered."
+                )
+        commands = getattr(self.service, "commands", None)
+        can_send = getattr(commands, "can_send", None)
+        if can_send is None or not can_send(platform):
+            return "send", f"{label} chat cannot be sent from here right now, so PLATFORM skipped it."
+        return None
+
+    def _same_chat(self, tab: dict, platform: str, channel: str) -> bool:
+        """A gift from the signed-in API or a webhook belongs to this ledger's chat."""
+        channel = str(channel or "").strip()
+        if not channel:
+            return False
+        if platform == "kick":
+            try:
+                slug = kick_slug(str(tab.get("kick_watch") or ""))
+            except ValueError:
+                return False
+            return bool(slug) and slug.casefold() == channel.casefold()
+        if platform == "youtube":
+            known = set()
+            for field_name in ("youtube_channel", "youtube_watch"):
+                known.update(_YOUTUBE_CHANNEL_ID.findall(str(tab.get(field_name) or "")))
+            if channel in known:
+                return True
+            if str(tab.get("youtube_follow_live") or "") == "1":
+                return False
+            video = video_id_from_target(str(tab.get("youtube_watch") or ""))
+            chats = getattr(getattr(self.service, "youtube", None), "_chats", None) or []
+            return bool(video) and any(
+                isinstance(chat, dict) and chat.get("video") == video and chat.get("channel") == channel
+                for chat in chats
+            )
+        if platform == "rumble":
+            name = _rumble_slug(str(tab.get("rumble_channel") or ""))
+            return bool(name) and name.casefold() == channel.casefold()
+        return False
+
+    def _quiet_log(self, tab: dict, script: dict, reason: str, message: str) -> None:
+        """One log line per reason each time the script starts."""
+        token = (tab["id"], script["id"], str(tab.get("blue_started_at") or ""), reason)
+        with self._lock:
+            if token in self._quiet:
+                return
+            self._quiet.add(token)
+        self._log(f"BLUE {script['name']}: {message}")
+
+    def _lookup(self, tab: dict) -> dict:
+        """{TOTALLINE} and {TOPLINE}, fitted to the target's chat limit."""
+        cache: dict = {}
+
+        def rows() -> list[dict]:
+            if "rows" not in cache:
+                cache["rows"] = ledger_rows(self.service.store, tab)
+            return cache["rows"]
+
+        def make(command: str):
+            def fill(target: str, others: int, count: int) -> str:
+                limit = LIMITS.get(target, _NOTICE_LIMIT)
+                room = max(20, (limit - others - count) // max(1, count))
+                fresh = self._tab(tab["id"]) or tab
+                return blurb(command, fresh, rows(), room)
+            return fill
+
+        return {"totalline": make("total"), "topline": make("top")}
 
     def _system(self, script: dict, line: int, text: str) -> None:
         if not text:
@@ -525,13 +757,27 @@ class BlueHost:
         donor = display_donor(donation.author_name)
         platform = str(donation.platform or "")
         amount = format_usd(priced.usd) if priced.usd is not None else ""
+        raw = donation.raw if isinstance(getattr(donation, "raw", None), dict) else {}
+        sent, currency = raw_amount({
+            "kind": donation.kind,
+            "amount_value": donation.amount_value,
+            "currency": donation.currency,
+            "platform": donation.platform,
+            "message": donation.message,
+            "raw": raw,
+        })
         local = now.astimezone()
         clock = local.timetz().replace(tzinfo=None, microsecond=0)
         minutes = self._minutes(tab, now)
         numbers = {"amount": priced.usd, "minutes": minutes} if priced.usd is not None else {"minutes": minutes}
         numbers["tier"] = tier
+        if sent is not None:
+            numbers["rawamount"] = sent
         placeholders = {
             "donor": donor,
+            "mention": mention(donor),
+            "rawamount": format_raw_amount(sent, currency) if sent is not None else "",
+            "currency": currency or "",
             "amount": amount,
             "platform": PLATFORM_LABELS.get(platform, platform),
             "type": priced.label,
@@ -542,13 +788,14 @@ class BlueHost:
         self._remember_total(numbers, placeholders, total)
         return BlueEvent(
             "donation",
-            {"platform": platform, "donor": donor, "type": priced.label, "amount": amount},
+            {"platform": platform, "donor": donor, "type": priced.label, "amount": amount, "currency": currency or ""},
             numbers,
             clock,
             placeholders,
+            self._lookup(tab),
         )
 
-    def _timer_event(self, minutes: int, now: datetime, tier: int, total: float | None) -> BlueEvent:
+    def _timer_event(self, minutes: int, now: datetime, tier: int, total: float | None, tab: dict | None = None) -> BlueEvent:
         local = now.astimezone()
         clock = local.timetz().replace(tzinfo=None, microsecond=0)
         numbers = {"minutes": minutes, "tier": tier}
@@ -560,9 +807,12 @@ class BlueHost:
             "platform": "",
             "type": "",
             "tier": str(tier),
+            "mention": "",
+            "rawamount": "",
+            "currency": "",
         }
         self._remember_total(numbers, placeholders, total)
-        return BlueEvent("timer", {}, numbers, clock, placeholders)
+        return BlueEvent("timer", {}, numbers, clock, placeholders, self._lookup(tab) if tab is not None else None)
 
     def _minutes(self, tab: dict, now: datetime) -> int:
         started = parse_datetime(tab.get("blue_started_at"))
@@ -595,6 +845,82 @@ class BlueHost:
             self.service.store.log("blue", "info", message)
         except Exception:
             return
+
+
+def _guard_key(repeat: tuple) -> str:
+    """A short, stable name for one thank-you. The donor's name is not stored."""
+    text = json.dumps(list(repeat), separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+
+
+def _load_guard(text: str) -> dict:
+    guard: dict = {"thanked": {}, "sent": {}}
+    try:
+        data = json.loads(text) if text else {}
+    except ValueError:
+        return guard
+    if not isinstance(data, dict):
+        return guard
+    thanked = data.get("thanked")
+    if isinstance(thanked, dict):
+        for key, until in thanked.items():
+            if isinstance(key, str) and len(key) <= 64 and isinstance(until, (int, float)):
+                guard["thanked"][key] = float(until)
+    sent = data.get("sent")
+    if isinstance(sent, dict):
+        for target, times in sent.items():
+            if target in _TARGET_LABELS and isinstance(times, list):
+                guard["sent"][target] = [float(item) for item in times if isinstance(item, (int, float))]
+    return guard
+
+
+def _prune_guard(guard: dict, now: float) -> bool:
+    """Drop what has expired. A time from the future (the clock went back) is
+    pulled back to now, so nothing is held longer than its own window from now.
+    True when a time was pulled back, so the caller saves it.
+    """
+    pulled = False
+    thanked = guard["thanked"]
+    for key, until in list(thanked.items()):
+        if until <= now:
+            del thanked[key]
+        elif until > now + REPEAT_SECONDS:
+            thanked[key] = now + REPEAT_SECONDS
+            pulled = True
+    if len(thanked) > _MAX_THANKED:
+        for old in sorted(thanked, key=thanked.get)[: len(thanked) - _MAX_THANKED]:
+            del thanked[old]
+    for target, times in list(guard["sent"].items()):
+        pulled = pulled or any(item > now for item in times)
+        kept = sorted(min(item, now) for item in times if now - item < 60)
+        kept = kept[-CHAT_LINES_PER_MINUTE:]
+        if kept:
+            guard["sent"][target] = kept
+        else:
+            del guard["sent"][target]
+    return pulled
+
+
+def _rumble_slug(saved: str) -> str:
+    """The channel name in a saved Rumble address, without a tab such as /livestreams or a query."""
+    try:
+        page = rumble_channel_page_url(saved.strip())
+    except ValueError:
+        return ""
+    parts = [part for part in urlparse(page).path.split("/") if part]
+    return parts[1] if len(parts) >= 2 else ""
+
+
+def _origin_value(origin, name: str):
+    if origin is None:
+        return {} if name == "raw" else ""
+    if isinstance(origin, dict):
+        value = origin.get(name)
+    else:
+        value = getattr(origin, name, None)
+    if name == "raw":
+        return value if isinstance(value, dict) else {}
+    return str(value or "")
 
 
 def _verb(target: str) -> str:

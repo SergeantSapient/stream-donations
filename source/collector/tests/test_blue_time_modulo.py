@@ -139,7 +139,7 @@ class TimeModuloTests(unittest.TestCase):
             "TIME MODULO 20 EQUALS 1.5": "That can never match. TIME MODULO 20 is 0 through 19.",
             "MINUTES MODULO 20 ABOVE 19": "That can never match. MINUTES MODULO 20 is 0 through 19.",
             "MINUTES MODULO 20 BELOW 0": "That can never match. MINUTES MODULO 20 is 0 through 19.",
-            "DONOR MODULO 2 EQUALS 1": "MODULO works on AMOUNT, TOTAL, MINUTES, TIER, and TIME.",
+            "DONOR MODULO 2 EQUALS 1": "MODULO works on AMOUNT, RAW AMOUNT, TOTAL, MINUTES, TIER, and TIME.",
         }
         for condition, message in cases.items():
             self.assertEqual(_problems(_line(condition)), [message], condition)
@@ -205,6 +205,8 @@ class _Host:
         rnd = random.Random(seed)
         moment = start
         fired = []
+        # The per-chat cap counts real seconds. Give it the simulated clock.
+        self.host._clock = lambda: moment.timestamp()
         while moment < start + timedelta(seconds=seconds):
             self.host.tick(moment)
             fired.extend((moment, item["text"]) for item in self.host.claim())

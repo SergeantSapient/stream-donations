@@ -152,6 +152,7 @@ def tier_breach(rows: list[dict], enabled: bool, tiers: list[GoalTier], tier: in
                     "donor": display_donor(row.get("donor") or row.get("author_name")) or "",
                     "platform": str(row.get("platform") or ""),
                     "amount_usd": None if raw is None else float(raw),
+                    "key": str(row.get("key") or ""),
                 }
     return None
 

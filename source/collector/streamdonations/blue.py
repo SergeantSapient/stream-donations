@@ -20,17 +20,24 @@ _KEYWORDS = frozenset({
     "if", "equal", "equals", "above", "below", "modulus", "modulo", "mod",
     "and", "or", "not", "then", "send", "chat", "to",
     "youtube", "rumble", "kick", "all", "notice", "app", "log", "system",
+    "raw", "rawamount", "raw_amount", "raw-amount", "currency",
 })
-_FIELDS = frozenset({"platform", "amount", "total", "donor", "type", "time", "minutes", "tier", "name"})
+_FIELDS = frozenset({
+    "platform", "amount", "total", "donor", "type", "time", "minutes", "tier", "name",
+    "rawamount", "raw_amount", "raw-amount", "currency",
+})
+_FIELD_ALIASES = {"raw_amount": "rawamount", "raw-amount": "rawamount"}
+_NUMBER_FIELDS = frozenset({"amount", "minutes", "tier", "total", "rawamount"})
+# Ends a comparison. "IS" followed by a value and one of these means EQUALS.
+_COMPARISON_END = frozenset({"then", "and", "or"})
 _STRUCTURAL = frozenset({
     "on", "if", "and", "or", "not", "then", "send", "chat", "notice", "to",
     "equal", "equals", "above", "below", "modulus", "modulo", "mod",
 })
-_NUMBER_FIELDS = frozenset({"amount", "minutes", "tier", "total"})
 # Whole numbers only, so MODULO leaves 0 through n - 1.
 _WHOLE_FIELDS = frozenset({"minutes", "tier", "time"})
 _MODULO_FIELDS = _NUMBER_FIELDS | {"time"}
-# "%" is MODULO right after a field. Anywhere else it is punctuation.
+# "%" is MODULO right after a field when a number follows. Anywhere else it is filler.
 _PERCENT = "%"
 # "-" is the sign of the number after it, even with a space between them.
 _MINUS = "-"
@@ -39,7 +46,12 @@ _CHAT_ORDER = ("youtube", "rumble", "kick")
 _NOTICE_TARGETS = frozenset({"app", "log", "system"})
 _TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?")
 _NUMBER = re.compile(r"\$?\d+(?:\.\d+)?")
-_PLACEHOLDER = re.compile(r"\{([A-Za-z]+)\}")
+_PLACEHOLDER = re.compile(r"\{([A-Za-z][A-Za-z_]*)\}")
+# Underscores do not matter: {RAW_AMOUNT} is {RAWAMOUNT}.
+_PLACEHOLDER_ALIASES = {"totalblurb": "totalline", "topblurb": "topline"}
+# The source platform of the event. Only a chat target. Not on a timer.
+PLATFORM_TARGET = "platform"
+_CURRENCY_ALIASES = {"kick": "kicks", "kicks": "kicks"}
 _TYPE_ALIASES = {
     "super chat": "super chat",
     "superchat": "super chat",
@@ -115,6 +127,9 @@ class BlueEvent:
     numbers: dict
     clock: clock_time | None
     placeholders: dict
+    # Placeholders that depend on the target, such as {TOTALLINE}: name ->
+    # fill(target, other_characters, placeholder_count). Filled after the rest.
+    lookup: object = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +138,8 @@ class BlueAction:
     kind: str
     target: str
     text: str
+    # The target came only from PLATFORM, the platform of the gift.
+    via_platform: bool = False
 
 
 @dataclass
@@ -173,10 +190,41 @@ def evaluate(source: object, event: BlueEvent, timer: str = "") -> BlueRun:
             continue
         if not _matches(command.groups, event):
             continue
-        text = _fill(command.payload, event)
-        for kind, target in command.actions:
-            actions.append(BlueAction(command.line, kind, target, text))
+        for kind, target, via_platform in _resolve(command.actions, event):
+            actions.append(BlueAction(command.line, kind, target, _fill(command.payload, event, target), via_platform))
     return BlueRun(actions, program.problems)
+
+
+def _resolve(actions: tuple, event: BlueEvent) -> list[tuple[str, str, bool]]:
+    """Concrete targets for one line. PLATFORM becomes the gift's platform.
+
+    A platform named on the line and also reached through PLATFORM is sent once,
+    as the named target. PLATFORM with no chat platform (other, a manual row's
+    "other", or a goal at tier 0) resolves to an empty target.
+    """
+    source = _platform_key(event.values.get("platform", ""))
+    chosen: list[tuple[str, str, bool]] = []
+    seen: dict[tuple[str, str], int] = {}
+    for kind, target, excluded in actions:
+        via = target == PLATFORM_TARGET
+        if via:
+            if source in excluded:
+                continue
+            resolved = source if source in _CHAT_ORDER else ""
+        else:
+            if PLATFORM_TARGET in excluded and target == source:
+                continue
+            resolved = target
+        key = (kind, resolved)
+        if resolved and key in seen:
+            index = seen[key]
+            if not via and chosen[index][2]:
+                chosen[index] = (kind, resolved, False)
+            continue
+        if resolved:
+            seen[key] = len(chosen)
+        chosen.append((kind, resolved, via))
+    return chosen
 
 
 def _parse_line(line: str, number: int) -> _Command | None:
@@ -253,6 +301,11 @@ class _Parser:
         self.index = 0
 
     def command(self, number: int) -> _Command:
+        for index, token in enumerate(self.tokens):
+            if token.kind == "keyword" and token.text.casefold() == "raw":
+                after = self.tokens[index + 1] if index + 1 < len(self.tokens) else None
+                if after is None or after.kind != "keyword" or after.text.casefold() != "amount":
+                    raise BlueSyntax("RAW only goes before AMOUNT.")
         while self._has() and not self._is("on"):
             if self._peek().kind == "payload":
                 raise BlueSyntax("A BLUE line starts with ON.")
@@ -271,6 +324,7 @@ class _Parser:
         else:
             raise BlueSyntax("BLUE does not know that event.")
         self._advance()
+        self._event = event
         groups = self._conditions()
         actions = self._actions()
         return _Command(number, event, tuple(groups), tuple(actions), self._payload())
@@ -301,29 +355,31 @@ class _Parser:
             negate = not negate
             self._advance()
             self._skip_words()
-        if not self._is_field():
-            raise BlueSyntax("That comparison needs a field.")
-        field_name = self._advance().text.casefold()
-        self._skip_words(stop_at_percent=True)
-        while self._is("not"):
-            negate = not negate
-            self._advance()
-            self._skip_words(stop_at_percent=True)
+        field_name = self._field()
         modulo = None
-        if self._at_modulo():
-            self._advance()
-            modulo = self._modulo()
-            self._skip_words()
-            while self._is("not"):
+        saw_is = False
+        while True:
+            saw_is = self._skip_filler(saw_is)
+            if self._is("not"):
                 negate = not negate
                 self._advance()
-                self._skip_words()
+                continue
+            if modulo is None and self._at_modulo():
+                self._advance()
+                modulo = self._modulo()
+                continue
+            break
         if self._is("equal") or self._is("equals"):
             op = "equal"
         elif self._is("above"):
             op = "above"
         elif self._is("below"):
             op = "below"
+        elif saw_is and self._implicit_value():
+            # "CURRENCY IS JPY": IS with a value and nothing after it means EQUALS.
+            item = _Comparison(negate, field_name, modulo, "equal", self._value())
+            _check_comparison(item)
+            return item
         else:
             raise BlueSyntax("That comparison needs equal, above, or below.")
         self._advance()
@@ -354,6 +410,44 @@ class _Parser:
                 negative = True
         return negative
 
+    def _field(self) -> str:
+        if self._is("raw"):
+            self._advance()
+            if not self._is("amount"):
+                raise BlueSyntax("RAW only goes before AMOUNT.")
+            self._advance()
+            return "rawamount"
+        if not self._is_field():
+            raise BlueSyntax("That comparison needs a field.")
+        name = self._advance().text.casefold()
+        return _FIELD_ALIASES.get(name, name)
+
+    def _skip_filler(self, saw_is: bool) -> bool:
+        """Skip filler words. Stops at the value of an "IS value" comparison."""
+        while self._has() and self._peek().kind == "word":
+            if self._percent_modulo():
+                return saw_is
+            if saw_is and self._implicit_value():
+                return saw_is
+            if self._peek().text.casefold() == "is":
+                saw_is = True
+            self._advance()
+        return saw_is
+
+    def _implicit_value(self) -> bool:
+        # A "-" sign (or a stray "%") before the value belongs to it.
+        index = self.index
+        while index < len(self.tokens) and self.tokens[index].kind == "word" and self.tokens[index].text in _MARKS:
+            index += 1
+        token = self.tokens[index] if index < len(self.tokens) else None
+        if token is None or token.kind == "payload":
+            return False
+        text = token.text.casefold()
+        if text in _STRUCTURAL or text in _FIELDS or text == "raw":
+            return False
+        after = self.tokens[index + 1] if index + 1 < len(self.tokens) else None
+        return after is None or (after.kind == "keyword" and after.text.casefold() in _COMPARISON_END)
+
     def _actions(self) -> list[tuple[str, str]]:
         actions: list[tuple[str, str]] = []
         payloads: list[str] = []
@@ -366,11 +460,11 @@ class _Parser:
                 continue
             if self._is("chat"):
                 self._advance()
-                actions.extend(("chat", target) for target in self._targets(True))
+                actions.extend(("chat",) + item for item in self._targets(True))
                 continue
             if self._is("notice"):
                 self._advance()
-                actions.extend(("notice", target) for target in self._targets(False))
+                actions.extend(("notice",) + item for item in self._targets(False))
                 continue
             if self._peek().kind == "word":
                 self._advance()
@@ -381,7 +475,8 @@ class _Parser:
         self._payloads = payloads
         return actions
 
-    def _targets(self, chat: bool) -> list[str]:
+    def _targets(self, chat: bool) -> list[tuple[str, frozenset]]:
+        """(target, excluded) pairs. Only PLATFORM needs the excluded names later."""
         found: list[str] = []
         excluded: set[str] = set()
         excluding = False
@@ -406,6 +501,8 @@ class _Parser:
                 break
             self._advance()
             saw = True
+            if name == PLATFORM_TARGET and getattr(self, "_event", "") == "timer":
+                raise BlueSyntax("A timer has no PLATFORM to send to.")
             chosen = list(_CHAT_ORDER) if name == "all" else [name]
             if excluding:
                 excluded.update(chosen)
@@ -416,7 +513,14 @@ class _Parser:
             excluding = False
         if not saw:
             raise BlueSyntax("That action needs a target.")
-        return [item for item in found if item not in excluded]
+        if PLATFORM_TARGET in found and PLATFORM_TARGET in excluded:
+            found.remove(PLATFORM_TARGET)
+        kept = [item for item in found if item not in excluded]
+        if PLATFORM_TARGET in kept:
+            # PLATFORM resolves later. A named exclusion still applies to it.
+            return [(item, frozenset(excluded) if item == PLATFORM_TARGET else frozenset()) for item in kept]
+        marker = frozenset({PLATFORM_TARGET}) if PLATFORM_TARGET in excluded else frozenset()
+        return [(item, marker) for item in kept]
 
     def _target_name(self, chat: bool) -> str | None:
         token = self._peek()
@@ -425,6 +529,8 @@ class _Parser:
         text = token.text.casefold()
         if chat and text == "all":
             return "all"
+        if chat and text == PLATFORM_TARGET and token.kind == "keyword":
+            return PLATFORM_TARGET
         allowed = set(_CHAT_ORDER) if chat else _NOTICE_TARGETS
         if text in allowed:
             return text
@@ -514,7 +620,7 @@ def _compare(item: _Comparison, event: BlueEvent) -> bool:
         if left is None or right is None:
             return False
         return _clock_cmp(left, right, item.op, item.value)
-    if item.modulo is not None or item.field_name in {"amount", "minutes", "tier", "total"}:
+    if item.modulo is not None or item.field_name in _NUMBER_FIELDS:
         number = event.numbers.get(item.field_name)
         if item.modulo is not None:
             if number is None:
@@ -532,6 +638,11 @@ def _compare(item: _Comparison, event: BlueEvent) -> bool:
     elif item.field_name == "type":
         left = _type_key(left)
         right = _type_key(right)
+    elif item.field_name == "currency":
+        if not left.strip():
+            return False
+        left = _currency_key(left)
+        right = _currency_key(right)
     else:
         left = left.casefold()
         right = right.casefold()
@@ -540,14 +651,17 @@ def _compare(item: _Comparison, event: BlueEvent) -> bool:
     return left == right
 
 
-_LABELS = {"time": "TIME", "amount": "AMOUNT", "minutes": "MINUTES", "tier": "TIER", "total": "TOTAL"}
+_LABELS = {
+    "time": "TIME", "amount": "AMOUNT", "rawamount": "RAW AMOUNT", "minutes": "MINUTES", "tier": "TIER",
+    "total": "TOTAL", "currency": "CURRENCY",
+}
 
 
 def _check_comparison(item: _Comparison) -> None:
     """Refuse a comparison that can never be read or never match."""
     label = _LABELS.get(item.field_name, item.field_name.upper())
     if item.modulo is not None and item.field_name not in _MODULO_FIELDS:
-        raise BlueSyntax("MODULO works on AMOUNT, TOTAL, MINUTES, TIER, and TIME.")
+        raise BlueSyntax("MODULO works on AMOUNT, RAW AMOUNT, TOTAL, MINUTES, TIER, and TIME.")
     if item.field_name == "time" and item.modulo is None:
         if _parse_clock(item.value) is None:
             raise BlueSyntax(
@@ -613,14 +727,34 @@ def _clock_cmp(left: clock_time, right: clock_time, op: str, raw: str) -> bool:
     return False
 
 
-def _fill(payload: str, event: BlueEvent) -> str:
+def placeholder_key(name: str) -> str:
+    key = name.casefold().replace("_", "")
+    return _PLACEHOLDER_ALIASES.get(key, key)
+
+
+def _fill(payload: str, event: BlueEvent, target: str = "") -> str:
+    """Fill placeholders. Target placeholders are filled last, knowing the rest."""
+    lookup = event.lookup if isinstance(event.lookup, dict) else {}
+    deferred: list[str] = []
+
     def replace(match: re.Match) -> str:
-        name = match.group(1).casefold()
+        name = placeholder_key(match.group(1))
         if name in event.placeholders:
-            return str(event.placeholders[name])
+            return str(event.placeholders[name]).replace("\x00", "")
+        if name in lookup:
+            deferred.append(name)
+            return f"\x00{len(deferred) - 1}\x00"
         return match.group(0)
 
-    return _PLACEHOLDER.sub(replace, payload)
+    text = _PLACEHOLDER.sub(replace, payload.replace("\x00", ""))
+    if not deferred:
+        return text
+    others = len(" ".join(_DEFERRED.sub("", text).split()))
+    values = [str(lookup[name](target, others, len(deferred)) or "") for name in deferred]
+    return _DEFERRED.sub(lambda match: values[int(match.group(1))], text)
+
+
+_DEFERRED = re.compile("\x00(\\d+)\x00")
 
 
 def _parse_number(value: object) -> float | None:
@@ -662,6 +796,11 @@ def _parse_clock(value: object) -> clock_time | None:
 def _platform_key(value: object) -> str:
     text = " ".join(str(value or "").split()).casefold()
     return _PLATFORM_ALIASES.get(text, text)
+
+
+def _currency_key(value: object) -> str:
+    text = " ".join(str(value or "").split()).casefold()
+    return _CURRENCY_ALIASES.get(text, text)
 
 
 def _type_key(value: object) -> str:

@@ -55,12 +55,17 @@ _STREAM_FIELDS = (
     "blue_started_at",
     "blue_timer_minute",
     "blue_clock_minute",
+    "blue_chat_guard",
     "blue_goal_tier",
     "youtube_chat_commands",
     "rumble_chat_commands",
     "kick_chat_commands",
 )
-_BLUE_FIELDS = ("blue_script_id", "blue_started_at", "blue_timer_minute", "blue_clock_minute", "blue_goal_tier")
+_BLUE_FIELDS = (
+    "blue_script_id", "blue_started_at", "blue_timer_minute", "blue_clock_minute", "blue_chat_guard", "blue_goal_tier",
+)
+# BLUE's thank-you and chat-cap times, JSON, pruned by BlueHost. Longer is dropped.
+BLUE_CHAT_GUARD_MAX = 16000
 # A new ledger copies presentation only. Title, donations, addresses, follow-live,
 # goal tiers, and the pause are not copied. A new ledger starts paused, with tiers off.
 _COPIED_ON_NEW_LEDGER = (
@@ -764,6 +769,8 @@ class Store:
         # Minutes since 1970 (UTC) of the last clock minute TIME lines ran in.
         clock_minute = tab["blue_clock_minute"].strip()
         tab["blue_clock_minute"] = clock_minute if clock_minute.isdigit() and len(clock_minute) <= 12 else ""
+        guard = tab["blue_chat_guard"].strip()
+        tab["blue_chat_guard"] = guard if guard.startswith("{") and len(guard) <= BLUE_CHAT_GUARD_MAX else ""
         goal_tier = tab["blue_goal_tier"].strip()
         tab["blue_goal_tier"] = goal_tier if goal_tier in {"0", "1", "2", "3", "4", "5"} else ""
         return tab

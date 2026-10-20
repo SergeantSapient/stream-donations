@@ -84,6 +84,12 @@ def _named(value: object) -> str:
     return "" if name.casefold() in _UNNAMED else name
 
 
+def mention(value: object) -> str:
+    """@name for a real name. Empty for anonymous or unnamed donors."""
+    name = _named(value).lstrip("@").strip()
+    return "@" + name if name else ""
+
+
 def _short(name: str, cap: int) -> str:
     return name if len(name) <= cap else name[: cap - 1].rstrip() + "…"
 
@@ -116,6 +122,28 @@ def top_reply(rows: list[dict], limit: int) -> str:
             break
         line = donor_bar_line([dict(row, donor=_short(row["donor"], cap)) for row in named], mentions=False)
     return trim_reply(line, limit)
+
+
+def top_donors_hidden(tab: dict) -> bool:
+    return str(tab.get("show_top_donors", "1") or "1") == "0"
+
+
+def ledger_rows(store, tab: dict) -> list[dict]:
+    """The rows a !total or !top reply counts, as the banner counts them."""
+    return store.command_rows(tab["id"], cached_usd_rates(store))
+
+
+def blurb(command: str, tab: dict, rows: list[dict], limit: int) -> str:
+    """The !total or !top line for one ledger, fitted to limit characters.
+
+    BLUE's {TOTALLINE} and {TOPLINE} use this too. The top line is empty when
+    the ledger hides its top donors.
+    """
+    if command == "top":
+        if top_donors_hidden(tab):
+            return ""
+        return top_reply(rows, limit)
+    return total_reply(tab, rows, limit)
 
 
 class ChatCommands:
@@ -171,7 +199,7 @@ class ChatCommands:
                 continue
             if not self._is_current(row.get("time"), fresh):
                 continue
-            if command == "top" and str(tab.get("show_top_donors", "1") or "1") == "0":
+            if command == "top" and top_donors_hidden(tab):
                 continue
             if not self._can_send(platform):
                 continue
@@ -221,6 +249,13 @@ class ChatCommands:
         name = " ".join(str(store.get_setting(setting) or "").split()).lstrip("@").casefold()
         return {name} if name else set()
 
+    def can_send(self, platform: str) -> bool:
+        """Whether this process can post into that platform's chat right now."""
+        try:
+            return self._can_send(platform)
+        except Exception:
+            return False
+
     def _can_send(self, platform: str) -> bool:
         if platform == "youtube":
             youtube = self.service.youtube
@@ -245,7 +280,7 @@ class ChatCommands:
         threading.Thread(target=job, name="chat-command", daemon=True).start()
 
     def reply_text(self, command: str, platform: str, tab: dict) -> str:
-        rows = self.service.store.command_rows(tab["id"], cached_usd_rates(self.service.store))
+        rows = ledger_rows(self.service.store, tab)
         limit = LIMITS[platform]
         if command == "top":
             return top_reply(rows, limit)
