@@ -34,6 +34,7 @@
     const set = (list) => new Set((list || []).map((word) => String(word).toLowerCase()));
     return {
       events: set(g.events),
+      keywords: set(g.keywords),
       fields: set(g.fields),
       operators: set(g.operators),
       isWord: String(g.is_word || "is").toLowerCase(),
@@ -125,6 +126,25 @@
     return parts;
   }
 
+  // blue.py skips a word that is not a keyword, and any "-" or "%" that is not MODULO.
+  function isFiller(piece, c) {
+    if (piece.shape === "mark" || piece.shape === "other") return true;
+    return piece.shape === "word" && !c.keywords.has(piece.text.toLowerCase());
+  }
+
+  // "%" is MODULO, as blue.py's _percent_modulo reads it: walking back over filler
+  // and NOT reaches the comparison's field, and walking forward over "-" reaches a number.
+  function percentIsModulo(solid, index, c, afterThen) {
+    if (afterThen) return false;
+    let ahead = index + 1;
+    while (ahead < solid.length && solid[ahead].shape === "mark" && solid[ahead].text === "-") ahead += 1;
+    const value = solid[ahead];
+    if (!value || !["number", "time", "value"].includes(value.shape)) return false;
+    let back = index - 1;
+    while (back >= 0 && (isFiller(solid[back], c) || solid[back].text.toLowerCase() === "not")) back -= 1;
+    return back >= 0 && solid[back].shape === "word" && c.fields.has(solid[back].text.toLowerCase());
+  }
+
   // Tokens covering the whole line: [{type, text}]. Joining the texts gives the line back.
   function tokenize(line, grammar) {
     const c = grammar && grammar.events instanceof Set ? grammar : compile(grammar);
@@ -154,9 +174,7 @@
         else type = "word";
       } else if (piece.shape === "mark") {
         if (piece.text === "%") {
-          const field = previous && previous.shape === "word" && c.fields.has(previous.text.toLowerCase());
-          const numeric = next && next.shape === "number";
-          type = field && numeric ? "modulo" : "filler";
+          type = percentIsModulo(solid, solidIndex - 1, c, afterThen) ? "modulo" : "filler";
         } else {
           type = next && next.shape === "number" ? "value" : "filler";
         }
@@ -181,9 +199,9 @@
   function render(doc, pre, source, grammar, problems) {
     const c = grammar && grammar.events instanceof Set ? grammar : compile(grammar);
     const bad = problems || new Map();
-    const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
+    const rows = lines(source);
     const fragment = doc.createDocumentFragment();
-    lines.forEach((line, index) => {
+    rows.forEach((line, index) => {
       const row = doc.createElement("span");
       row.className = bad.has(index + 1) ? "blue-line blue-line-bad" : "blue-line";
       for (const token of tokenize(line, c)) {
@@ -195,10 +213,10 @@
       }
       fragment.appendChild(row);
       // A trailing newline still needs a line box, like the textarea gives it.
-      fragment.appendChild(doc.createTextNode(index < lines.length - 1 ? "\n" : " "));
+      fragment.appendChild(doc.createTextNode(index < rows.length - 1 ? "\n" : " "));
     });
     pre.replaceChildren(fragment);
-    return lines.length;
+    return rows.length;
   }
 
   // The raw pieces without spaces, for the test that compares them with blue.py.
@@ -209,5 +227,21 @@
       .map((piece) => ({ shape: piece.shape, text: piece.text }));
   }
 
-  return { compile, tokenize, render, shapes, FALLBACK };
+  function lines(text) {
+    return String(text).replace(/\r\n?/g, "\n").split("\n");
+  }
+
+  // The problems that still belong to their line: that line reads as it did when
+  // it was checked. problems is a Map of line number to message.
+  function currentProblems(problems, checked, text) {
+    const now = lines(text);
+    const marks = new Map();
+    (problems || new Map()).forEach((message, number) => {
+      const line = now[number - 1];
+      if (line !== undefined && checked && line === checked[number - 1]) marks.set(number, message);
+    });
+    return marks;
+  }
+
+  return { compile, tokenize, render, shapes, lines, currentProblems, FALLBACK };
 });

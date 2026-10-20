@@ -128,6 +128,19 @@ class ExplainTests(unittest.TestCase):
         self.assertFalse(third["applies"])
         self.assertEqual(third["actions"], [])
 
+    def test_percent_lines_the_editor_paints_as_modulo(self):
+        # The same lines tests/js/blue_highlight.test.js expects to be MODULO.
+        for condition in ("AMOUNT IS % 5 EQUALS 0", "AMOUNT NOT % 5 EQUALS 0", "TIME IS % 15 EQUALS 0",
+                          "AMOUNT the remainder % 10 EQUALS 0", "NOT AMOUNT % 4 EQUALS 0", "RAW AMOUNT % 100 EQUALS 0"):
+            source = f'ON DONATION IF {condition} THEN SEND NOTICE TO APP "x"'
+            report = explain(source, _event())
+            self.assertEqual(report["problems"], [], condition)
+            self.assertIn("MODULO", report["lines"][0]["groups"][0][0]["text"], condition)
+        self.assertEqual(
+            blue.inspect_script('ON DONATION IF AMOUNT % -5 EQUALS 0 THEN SEND NOTICE TO APP "x"')[0]["line"], 1)
+        report = explain('ON DONATION IF AMOUNT IS ABOVE % 5 THEN SEND NOTICE TO APP "x"', _event())
+        self.assertEqual(report["lines"][0]["groups"][0][0]["text"], "AMOUNT ABOVE 5")
+
     def test_problems_and_platform(self):
         report = explain('ON DONATION IF AMOUNT IS ABOVE lots THEN SEND NOTICE TO APP "x"\nON DONATION THEN SEND CHAT TO PLATFORM "t"',
                          _event(platform="other"))
@@ -236,6 +249,64 @@ class DryRunTests(unittest.TestCase):
         self.assertTrue(any("no real origin" in note or "has none" in note for note in rumble["notes"]))
         other = dry_run(self.host, {"source": 'ON DONATION THEN SEND CHAT TO PLATFORM "x"', "platform": "other"})
         self.assertIn("Other-platform", other["lines"][0]["actions"][0]["why"])
+
+    def test_one_run_counts_its_own_sends(self):
+        # One slot used by the real thank-you in setUp; four more, so one is left.
+        self.host._guards[self.stream]["sent"]["youtube"] += [self.now] * 4
+        source = "\n".join(f'ON DONATION THEN SEND CHAT TO YOUTUBE "line {n}"' for n in range(3))
+        before = self.snapshot()
+        result = dry_run(self.host, {"source": source, "donor": "Cy", "amount": "3"})
+        self.assertEqual([line["actions"][0]["would"] for line in result["lines"]], ["chat", "skip", "skip"])
+        self.assertIn("6 chat lines", result["lines"][1]["actions"][0]["why"])
+        self.assertIn("counting 1 this test would send first", result["lines"][1]["actions"][0]["checks"][-1]["message"])
+        # Two chats to one target on one line are already one action, as in a real run.
+        twice = dry_run(self.host, {"source": 'ON DONATION THEN SEND CHAT TO KICK "a" AND SEND CHAT TO KICK "b"',
+                                    "donor": "Cy", "amount": "3", "platform": "kick"})
+        self.assertEqual([action["would"] for action in twice["lines"][0]["actions"]], ["chat"])
+        # The same line twice in one test: the second copy repeats the first copy's thank-you
+        # only if it is the same saved line, so two unsaved copies are two lines.
+        pair = dry_run(self.host, {"source": 'ON DONATION THEN SEND CHAT TO KICK "a"\nON DONATION THEN SEND CHAT TO KICK "a"',
+                                   "donor": "Cy", "amount": "3", "platform": "kick"})
+        self.assertEqual([entry["actions"][0]["would"] for entry in pair["lines"]], ["chat", "chat"])
+        # ALL uses separate counters, so all three would send.
+        every = dry_run(self.host, {"source": 'ON DONATION THEN SEND CHAT TO ALL "hi"', "donor": "Cy", "amount": "3"})
+        self.assertEqual([a["would"] for a in every["lines"][0]["actions"]], ["chat", "chat", "chat"])
+        # Nothing of that tally is kept.
+        self.assertEqual(self.snapshot(), before)
+        again = dry_run(self.host, {"source": source, "donor": "Cy", "amount": "3"})
+        self.assertEqual(again["lines"][0]["actions"][0]["would"], "chat")
+
+    def test_blank_goal_tier_is_the_ledger_tier(self):
+        result = dry_run(self.host, {"source": 'ON GOAL IF TIER IS ABOVE 0 THEN SEND NOTICE TO APP "x"', "event": "goal"})
+        self.assertEqual((result["ledger"]["tier"], result["ledger"]["tier_from"]), (0, "ledger"))
+        self.assertFalse(result["lines"][0]["matched"])
+        self.assertEqual(result["lines"][0]["groups"][0][0]["saw"], "0")
+        typed = dry_run(self.host, {"source": 'ON GOAL IF TIER IS ABOVE 0 THEN SEND NOTICE TO APP "x"', "tier": "1"})
+        self.assertTrue(typed["lines"][0]["matched"])
+
+    def test_repeat_history_follows_the_copy_of_a_line(self):
+        line = 'ON DONATION THEN SEND CHAT TO YOUTUBE "hi {DONOR}"'
+        saved = self.store.save_blue_script("Copies", line + "\n" + line)
+        self.store.set_stream_values(self.stream, {"blue_script_id": saved["id"]})
+        tab = self.host._tab(self.stream)
+        script = {"id": saved["id"], "name": "Copies"}
+        # Line 1 thanked Ada; line 2 has no history.
+        event = self.host._donation_event(
+            SimpleNamespace(kind="super_chat", amount_value=10.0, amount_micros=10_000_000, currency="USD",
+                            platform="youtube", message="", raw={}, author_name="Ada", dedupe_key="", channel="",
+                            created_at=utc_now_iso(), external_id="", author_id=""),
+            tab, datetime.now(timezone.utc), 0, 10.0,
+        )
+        key = self.host._repeat_key(tab, script, SimpleNamespace(line=1, target="youtube"), event)
+        from streamdonations.blue_host import _guard_key
+        self.host._guards[self.stream]["thanked"][_guard_key(key)] = self.now + 60
+        payload = {"source": line + "\n" + line, "donor": "Ada", "amount": "10"}
+        result = dry_run(self.host, payload)
+        first, second = (entry["actions"][0] for entry in result["lines"])
+        self.assertEqual(first["would"], "skip")
+        self.assertIn("already thanked", first["why"])
+        self.assertEqual(second["would"], "chat")
+        self.assertEqual(second["checks"][0]["message"], "Not thanked on that line and chat in the last 2 minutes.")
 
     def test_ledger_facts_and_overrides(self):
         result = dry_run(self.host, {"source": 'ON TIMER IF TOTAL IS ABOVE 5 THEN SEND NOTICE TO APP "{TOTAL} at {TIME}"',

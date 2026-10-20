@@ -65,7 +65,8 @@ def dry_run(host, payload: dict) -> dict:
         minutes = _minutes(payload.get("minutes"))
         event = host._timer_event(host._minutes(tab, now) if minutes is None else minutes, now, use_tier, use_total, tab)
     else:
-        goal_tier = use_tier if tier is not None else 1
+        # Blank is the ledger's tier, the same one the header shows.
+        goal_tier = use_tier
         priced = host._quote_donation(gift, tab) if goal_tier > 0 else None
         event = host._goal_event(
             tab, goal_tier, now,
@@ -75,11 +76,20 @@ def dry_run(host, payload: dict) -> dict:
     event = _with_overrides(event, payload, event_name)
     report = explain(source, event)
     script, script_lines = _running_script(store, tab)
+    copies = _copy_numbers(source)
+    # What this run would already have used, as a real run takes a slot per line sent.
+    # Kept here only. Nothing is written back to the host or the ledger.
+    tally: dict = {"sent": {}, "thanked": set()}
     for entry in report["lines"]:
         entry["text"] = _source_line(source, entry["line"])
-        running_line = script_lines.get(entry["text"].strip()) if script else None
+        running_line = None
+        if script:
+            # The Nth copy of a line in the test is the Nth copy in the saved script.
+            saved = script_lines.get(entry["text"].strip(), [])
+            copy = copies.get(entry["line"], 0)
+            running_line = saved[copy] if copy < len(saved) else None
         for action in entry["actions"]:
-            action.update(_delivery(host, tab, script, running_line, action, event, gift))
+            action.update(_delivery(host, tab, script, running_line, action, event, gift, entry["line"], tally))
     if event_name == "donation":
         notes.append(
             "The test gift is from now, so the 2-minute age guard lets it through. "
@@ -162,18 +172,30 @@ def _with_overrides(event: BlueEvent, payload: dict, name: str) -> BlueEvent:
     return dataclasses.replace(event, clock=clock, numbers=numbers, placeholders=placeholders)
 
 
-def _running_script(store, tab: dict) -> tuple[dict | None, dict[str, int]]:
-    """The script this ledger runs, and its lines by text. Read only."""
+def _running_script(store, tab: dict) -> tuple[dict | None, dict[str, list[int]]]:
+    """The script this ledger runs, and the line numbers of each line's text. Read only."""
     script_id = str(tab.get("blue_script_id") or "")
     if not script_id:
         return None, {}
     for script in store.blue_scripts():
         if script["id"] == script_id:
-            lines = {}
-            for number, line in enumerate(str(script.get("source") or "").replace("\r\n", "\n").split("\n"), start=1):
-                lines.setdefault(line.strip(), number)
+            lines: dict[str, list[int]] = {}
+            text = str(script.get("source") or "").replace("\r\n", "\n").replace("\r", "\n")
+            for number, line in enumerate(text.split("\n"), start=1):
+                lines.setdefault(line.strip(), []).append(number)
             return script, lines
     return None, {}
+
+
+def _copy_numbers(source: str) -> dict[int, int]:
+    """For each line number, how many earlier lines have the same text."""
+    seen: dict[str, int] = {}
+    copies: dict[int, int] = {}
+    for number, line in enumerate(source.replace("\r\n", "\n").replace("\r", "\n").split("\n"), start=1):
+        key = line.strip()
+        copies[number] = seen.get(key, 0)
+        seen[key] = copies[number] + 1
+    return copies
 
 
 def _source_line(source: str, number: int) -> str:
@@ -181,7 +203,8 @@ def _source_line(source: str, number: int) -> str:
     return lines[number - 1] if 0 < number <= len(lines) else ""
 
 
-def _delivery(host, tab: dict, script: dict | None, running_line: int | None, action: dict, event, gift) -> dict:
+def _delivery(host, tab: dict, script: dict | None, running_line: int | None, action: dict, event, gift,
+              test_line: int, tally: dict) -> dict:
     """What would happen to one action, without doing it."""
     text = " ".join(str(action.get("text") or "").split())
     kind = action["kind"]
@@ -219,28 +242,46 @@ def _delivery(host, tab: dict, script: dict | None, running_line: int | None, ac
     if not final:
         return {"would": "skip", "final": "", "why": "There was no message.", "checks": checks}
     repeat = None
+    run_key = None
     if event.name == "donation":
         if script is not None and running_line is not None:
             stand_in = SimpleNamespace(line=running_line, target=target)
             repeat = host._repeat_key(tab, script, stand_in, event)
+            run_key = repeat
         else:
-            checks.append({
-                "name": "Repeat",
-                "ok": True,
-                "message": "Not checked: this line is not in the script this ledger runs, so it has no thank-you history.",
-            })
+            # No saved history, but two actions of this run on one line and chat still repeat.
+            run_key = host._repeat_key(tab, {"id": ""}, SimpleNamespace(line=-test_line, target=target), event)
     problem, sent = host.peek_chat_slot(tab, target, repeat)
-    if repeat is not None:
+    earlier = tally["sent"].get(target, 0)
+    sent += earlier
+    if run_key is not None and run_key in tally["thanked"]:
+        problem = "repeat"
+    elif not problem and sent >= CHAT_LINES_PER_MINUTE:
+        problem = "full"
+    if run_key is not None and run_key in tally["thanked"]:
+        checks.append({
+            "name": "Repeat",
+            "ok": False,
+            "message": "An earlier action in this test already thanked this gift on that line and chat.",
+        })
+    elif repeat is not None:
         checks.append({
             "name": "Repeat",
             "ok": problem != "repeat",
             "message": "This gift was already thanked on that line and chat in the last 2 minutes."
             if problem == "repeat" else "Not thanked on that line and chat in the last 2 minutes.",
         })
+    elif run_key is not None:
+        checks.append({
+            "name": "Repeat",
+            "ok": True,
+            "message": "Not checked: this line is not in the script this ledger runs, so it has no thank-you history.",
+        })
     checks.append({
         "name": "Chat cap",
         "ok": sent < CHAT_LINES_PER_MINUTE,
-        "message": f"{sent} of {CHAT_LINES_PER_MINUTE} BLUE chat lines went to {label} chat in the last minute.",
+        "message": f"{sent} of {CHAT_LINES_PER_MINUTE} BLUE chat lines went to {label} chat in the last minute"
+        + (f", counting {earlier} this test would send first." if earlier else "."),
     })
     if problem == "repeat":
         why = "That gift was already thanked in the last 2 minutes."
@@ -248,6 +289,9 @@ def _delivery(host, tab: dict, script: dict | None, running_line: int | None, ac
     if problem == "full":
         why = f"BLUE already queued {CHAT_LINES_PER_MINUTE} chat lines for that chat in the last minute."
         return {"would": "skip", "final": final, "why": why, "checks": checks}
+    tally["sent"][target] = earlier + 1
+    if run_key is not None:
+        tally["thanked"].add(run_key)
     return {"would": "chat", "final": final, "why": f"Would send to {label} chat.", "checks": checks}
 
 

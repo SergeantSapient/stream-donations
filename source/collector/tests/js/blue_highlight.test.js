@@ -71,6 +71,31 @@ test("% is MODULO only after a field and before a number, and - is a sign", () =
   assert.deepEqual(types("IS - THEN"), ["operator:IS", "filler:-", "logic:THEN"]);
 });
 
+test("% is MODULO where blue.py reads it so, past filler, NOT, and minus signs", () => {
+  const modulo = (line) => types(line).filter((item) => item.endsWith(":%"));
+  for (const line of [
+    "IF AMOUNT IS % 5 EQUALS 0",
+    "IF AMOUNT NOT % 5 EQUALS 0",
+    "IF TIME IS % 15 EQUALS 0",
+    "IF AMOUNT the remainder % 10 EQUALS 0",
+    "IF AMOUNT % -5 EQUALS 0",
+    "IF AMOUNT % - 5 EQUALS 0",
+    "IF NOT AMOUNT % 4 EQUALS 0",
+    "IF RAW AMOUNT % 100 EQUALS 0",
+  ]) {
+    assert.deepEqual(modulo(line), ["modulo:%"], line);
+  }
+  for (const line of [
+    "IF AMOUNT IS ABOVE % 5",
+    "IF 50 % off",
+    "IF AMOUNT MOD 5 % 3 EQUALS 0",
+    'THEN SEND CHAT TO ALL "x" AMOUNT % 5',
+    "IF AMOUNT % THEN",
+  ]) {
+    assert.deepEqual(modulo(line), ["filler:%"], line);
+  }
+});
+
 test("placeholders the host fills in, and ones it does not", () => {
   const parts = types('THEN SEND CHAT TO ALL "a {MENTION} {raw_amount} {TotalBlurb} {BOGUS}"');
   assert.ok(parts.includes("placeholder:{MENTION}"));
@@ -97,4 +122,18 @@ test("render builds spans with the line marks and no HTML", () => {
   const rows = pre.children.filter((child) => child.tag === "span");
   assert.deepEqual(rows.map((row) => row.className), ["blue-line", "blue-line blue-line-bad"]);
   assert.ok(made.some((item) => item.className === "bt-payload" && item.textContent === '"<b>"'));
+});
+
+test("a problem mark stays only while its line is unchanged", () => {
+  const checked = BlueHighlight.lines("ON DONATION THEN\nON BAD LINE\nON TIMER THEN");
+  const problems = new Map([[2, "That line has no action."]]);
+  assert.deepEqual([...BlueHighlight.currentProblems(problems, checked, checked.join("\n"))], [[2, "That line has no action."]]);
+  // A line inserted above: line 2 is now different text, so no mark points at it.
+  assert.deepEqual([...BlueHighlight.currentProblems(problems, checked, "NEW\nON DONATION THEN\nON BAD LINE")], []);
+  // The line itself was edited.
+  assert.deepEqual([...BlueHighlight.currentProblems(problems, checked, "ON DONATION THEN\nON BAD LINES\n")], []);
+  // Deleted.
+  assert.deepEqual([...BlueHighlight.currentProblems(problems, checked, "ON DONATION THEN")], []);
+  // Nothing checked yet.
+  assert.deepEqual([...BlueHighlight.currentProblems(new Map(), [], "x")], []);
 });

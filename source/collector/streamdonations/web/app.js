@@ -2405,6 +2405,8 @@ function exportBlue() {
 const blueEditor = {
   grammar: window.BlueHighlight ? window.BlueHighlight.compile(null) : null,
   problems: new Map(),
+  // The lines the problems were found in. A mark shows only while its line is unchanged.
+  checked: [],
   timer: 0,
   asked: 0,
   lines: 0,
@@ -2428,11 +2430,12 @@ function paintBlue() {
   const pre = $("blue-highlight");
   const gutter = $("blue-gutter-lines");
   if (!source || !pre || !gutter || !window.BlueHighlight) return;
-  const count = window.BlueHighlight.render(document, pre, source.value, blueEditor.grammar, blueEditor.problems);
+  const marks = currentBlueProblems(source.value);
+  const count = window.BlueHighlight.render(document, pre, source.value, blueEditor.grammar, marks);
   const rows = [];
   for (let number = 1; number <= count; number += 1) {
     const row = el("div", "blue-gutter-line", String(number));
-    const problem = blueEditor.problems.get(number);
+    const problem = marks.get(number);
     if (problem) {
       row.classList.add("bad");
       row.title = "Line " + number + ": " + problem;
@@ -2441,6 +2444,12 @@ function paintBlue() {
   }
   gutter.replaceChildren(...rows);
   syncBlueScroll();
+}
+
+// Problems whose line still reads as it did when it was checked. Inserting or
+// deleting a line above a bad one drops its mark until the next check returns.
+function currentBlueProblems(text) {
+  return window.BlueHighlight.currentProblems(blueEditor.problems, blueEditor.checked, text);
 }
 
 function syncBlueScroll() {
@@ -2452,7 +2461,8 @@ function syncBlueScroll() {
   gutter.style.transform = "translateY(" + -source.scrollTop + "px)";
 }
 
-function setBlueProblems(problems) {
+function setBlueProblems(problems, source) {
+  blueEditor.checked = window.BlueHighlight ? window.BlueHighlight.lines(source || "") : [];
   blueEditor.problems = new Map();
   (problems || []).forEach((item) => {
     const before = blueEditor.problems.get(item.line);
@@ -2478,11 +2488,16 @@ function inspectBlue() {
     .then((payload) => {
       if (asked !== blueEditor.asked) return;
       const problems = (payload && payload.problems) || [];
-      setBlueProblems(problems);
+      setBlueProblems(problems, source);
       showBlueProblems(problems);
       paintBlue();
     })
-    .catch(() => {});
+    .catch(() => {
+      // A failed check leaves no marks rather than old ones.
+      if (asked !== blueEditor.asked) return;
+      setBlueProblems([]);
+      paintBlue();
+    });
 }
 
 // After the textarea's text was set from code: import, edit, or save.
