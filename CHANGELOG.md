@@ -4,6 +4,10 @@ The version is three numbers: major, considerable, and minor. A minor change rai
 
 Wishlist work is considerable unless the request says it is major. Record a change with `python3 scripts/version.py`.
 
+## 1.11.2 — 2026-10-21
+
+- 2026-10-21 — Minor. Licensed under the GNU GPL version 3 or later. LICENSE has the full, unmodified GPLv3 text, and NOTICE has the copyright (C) 2026 Armando Poveda and the additional terms GPLv3 section 7 allows: a modified version must be clearly marked as modified and not presented as the original SuperBerry, notices stay with every copy, and the SuperBerry name and logo are not licensed to represent modified versions (not a trademark claim). README has a License section, and package.json and pyproject.toml declare GPL-3.0-or-later. How the app runs and is packaged is unchanged.
+
 ## 1.11.1 — 2026-10-20
 
 - 2026-10-20 — Minor. Long explanations in the YouTube, Rumble, Kick, Streamers, Giveaway, Settings, and BLUE dialogs are behind Help buttons, closed by default, as short sections and lists. What you need to know to act stays visible as one or two lines: the Google test-user and quota note, the cost and sign-in account of a !total or !top reply, the Rumble terms risk, reconnecting Kick so it can post, saving Settings before changing ledgers, and leaving the membership price blank. The !total and !top explanation is written once and shown in all three platform dialogs. Each Help panel remembers on this computer whether it was left open. No text was dropped.

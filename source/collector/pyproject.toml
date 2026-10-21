@@ -6,6 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "stream-donations"
 version = "1.0.0"
 description = "Collect YouTube, Rumble, and Kick donation events into a local ledger."
+# SPDX GPL-3.0-or-later. The table form works with every setuptools >= 68;
+# the plain-string form needs setuptools >= 77.
+license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.11"
 dependencies = []
 

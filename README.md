@@ -252,3 +252,13 @@ dist/SuperBerry-x86_64.AppImage     Portable Linux AppImage
 ```
 
 Ports default to 47321 for the UI and 47322 for Kick webhooks. Override the UI port with `STREAM_DONATIONS_PORT`. Tokens and the Rumble URL are stored in the database and are not returned to the page after you save them.
+
+## License
+
+SuperBerry is Copyright (C) 2026 Armando Poveda. It is free software under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). The full text is in [LICENSE](LICENSE). It comes with no warranty.
+
+[NOTICE](NOTICE) adds the terms that GPLv3 section 7 allows:
+- A modified version that you share must be clearly marked as modified, for example with a different name or a visible note in its README and in the app.
+- A modified version must not be presented as the original SuperBerry.
+- The copyright notice and NOTICE file stay with every copy.
+- The SuperBerry name and logo identify the original project and are not licensed to represent modified versions. This is not a trademark claim.
