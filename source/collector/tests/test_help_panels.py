@@ -51,6 +51,7 @@ class HelpPanelTests(unittest.TestCase):
         self.assertEqual(sorted(names), sorted([
             "blue", "youtube-signin", "youtube-commands", "rumble-commands", "kick-commands",
             "kick-channel", "streamers", "giveaway", "settings-ledger", "membership-price",
+            "settings-kicks-export", "settings-file", "settings-rates", "browser-mode",
         ]))
         self.assertEqual(len(names), len(set(names)))
         for _dialog, attrs in self.parsed.buttons:
@@ -75,6 +76,8 @@ class HelpPanelTests(unittest.TestCase):
         self.assertEqual(where["giveaway"], "tab-giveaway")
         self.assertEqual(where["settings-ledger"], "tab-settings")
         self.assertEqual(where["membership-price"], "tab-settings")
+        for name in ("settings-kicks-export", "settings-file", "settings-rates", "browser-mode"):
+            self.assertEqual(where[name], "tab-settings")
         self.assertEqual(where["blue"], "tab-blue")
 
     def test_chat_commands_text_is_written_once_and_used_in_three_dialogs(self):
@@ -111,8 +114,42 @@ class HelpPanelTests(unittest.TestCase):
             "Save before changing ledgers, or unsaved edits here are dropped.",
             "Leave it blank and those amounts stay empty.",
             "Rumble’s terms do not allow a script to type or send chat.",
+            "Kick coins convert at 100 coins = $1.",
+            "API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first.",
+            "Sending to Rumble chat and the chats embedded beside the stream need the SuperBerry desktop app.",
+            "Rates By Exchange Rate API",
+            "Exchange rates have not been downloaded yet.",
+            "SuperBerry · Licensed GPL-3.0-or-later",
         ):
             self.assertIn(needle, visible)
+        for hidden in (
+            "The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.",
+            "A newer file still applies the settings this version understands.",
+            "Their open endpoint allows about one request an hour",
+            "Quit, in the menu, stops SuperBerry on this computer.",
+        ):
+            self.assertNotIn(hidden, visible)
+
+    def test_settings_bottom_keeps_status_rates_link_and_version_outside_help(self):
+        settings = self.page[self.page.index('<dialog id="tab-settings"'):]
+        settings = settings[:settings.index("</dialog>")]
+        order = [settings.index(marker) for marker in (
+            'id="help-settings-kicks-export"',
+            '<button type="submit" class="primary">Save</button>',
+            'id="help-settings-file"',
+            'id="fx-status"',
+            'id="fx-refresh"',
+            'data-help="settings-rates"',
+            '<section id="browser-mode" hidden>',
+            'id="about-line"',
+        )]
+        self.assertEqual(order, sorted(order))
+        rates_lead = settings[settings.rindex('<div class="help-lead">', 0, settings.index('data-help="settings-rates"')):]
+        self.assertIn('<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">', rates_lead[:rates_lead.index("</div>")])
+        browser = settings[settings.index('<section id="browser-mode" hidden>'):]
+        browser = browser[:browser.index("</section>\n    <p")]
+        self.assertIn('data-help="browser-mode"', browser)
+        self.assertIn('id="browser-notify-row"', browser)
 
     def test_key_text_is_still_in_the_page(self):
         text = _text(self.page)
@@ -126,6 +163,18 @@ class HelpPanelTests(unittest.TestCase):
             "API keys, exchange rates, and ledger page size stay shared.",
             "so five Rumble subs are $24.99 when this price is $4.99.",
             "Soft disconnect stops it, and connecting that ledger starts it over, including the minute timer.",
+            "Under $5 is a Super Sticker.",
+            "$5 and above is a Super Chat.",
+            "Export times use this computer’s time zone.",
+            "The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.",
+            "This ledger's membership price, extra chat note, and top donors, plus the shared ledger page size.",
+            "A newer file still applies the settings this version understands.",
+            "Settings the file leaves out stay as they are.",
+            "The saved response from open.er-api.com is reused until the last check is more than an hour old.",
+            "Their open endpoint allows about one request an hour, and the table itself changes about once a day.",
+            "Collection, the ledger, and exports work the same.",
+            "Sign-in and chat buttons open the platform in a new browser window.",
+            "Quit, in the menu, stops SuperBerry on this computer.",
         ):
             self.assertIn(sentence, text)
 

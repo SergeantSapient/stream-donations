@@ -760,10 +760,8 @@ class Service:
                     updates[key] = text
                 else:
                     clears.append(key)
-        for key, value in updates.items():
-            self.store.set_setting(key, value)
-        for key in clears:
-            self.store.delete_setting(key)
+        # One transaction: every value is checked above, then all of them are saved together.
+        self.store.set_settings(updates, clears)
         if "blue_script_id" in payload:
             self.blue.note_script(self.store._active_stream_id(), previous_script)
         if webhook_changed and self.on_listen_change is not None:
