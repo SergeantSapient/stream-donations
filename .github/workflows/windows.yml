@@ -54,3 +54,5 @@ jobs:
           name: SuperBerry-windows-x64
           path: dist/SuperBerry-windows-x64.zip
           if-no-files-found: error
+          # Builds of main and tags are kept 14 days; pull requests and other branches 1 day.
+          retention-days: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && 14 || 1 }}
