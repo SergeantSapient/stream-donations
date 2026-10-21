@@ -88,7 +88,10 @@ class SettingsSaveTests(unittest.TestCase):
         self.service.apply_settings(_PAYLOAD)
         batched = self._snapshot(self.store)
 
-        other = Store(Path(self.tmp.name) / "one-by-one.db")
+        # Its own folder, removed after this store closes. Windows cannot delete an open database.
+        other_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(other_tmp.cleanup)
+        other = Store(Path(other_tmp.name) / "one-by-one.db")
         self.addCleanup(other.close)
         other.stream_tabs()
         other.set_setting("rumble_watch", "https://rumble.com/v4abcde-some-show.html")
