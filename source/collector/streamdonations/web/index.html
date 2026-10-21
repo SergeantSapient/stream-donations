@@ -482,9 +482,46 @@
       <label>OAuth client id <input id="youtube-client-id" name="youtube_client_id" autocomplete="off" spellcheck="false"></label>
       <label>OAuth client secret <input id="youtube-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
       <label>Super Chat history poll (seconds) <input id="youtube-poll" name="youtube_poll_seconds" type="number" min="300" max="3600" step="60" value="900"></label>
-      <p class="hint">Google sign-in reads your own channel’s Super Chats from the last 30 days and can post into a live chat as that account. A sign-in from before chat was added can still read. Click Connect again so posting is allowed. YouTube’s default Data API quota is 10,000 units a day. A history or broadcast check costs 1 unit. Posting one message costs 20. The day resets at midnight Pacific Time. The shortest history interval is 5 minutes. If the quota is used up, signed-in calls wait for that reset. Public live chat does not spend this quota. A waiting room can be read here before YouTube will accept a message. While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</p>
+      <div class="help-lead">
+        <p class="hint">Google sign-in reads your own channel’s Super Chats and can post as that account. It spends the daily Data API quota, and while the Google app is in Testing your Gmail address must be listed as a test user, or Google shows “Access blocked”.</p>
+        <button type="button" class="help-toggle" data-help="youtube-signin" aria-expanded="false" aria-controls="help-youtube-signin" aria-label="YouTube sign-in help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-youtube-signin" class="help-block" role="region" aria-label="YouTube sign-in help" hidden>
+        <section class="help-block-section">
+          <h3>Sign-in</h3>
+          <ul>
+            <li>Google sign-in reads your own channel’s Super Chats from the last 30 days and can post into a live chat as that account.</li>
+            <li>A sign-in from before chat was added can still read. Click Connect again so posting is allowed.</li>
+            <li>A waiting room can be read here before YouTube will accept a message.</li>
+            <li>While the Google app is in Testing, the Gmail address you use must be listed under Google Auth Platform → Audience → Test users, or Google shows “Access blocked”.</li>
+          </ul>
+        </section>
+        <section class="help-block-section">
+          <h3>Quota</h3>
+          <ul>
+            <li>YouTube’s default Data API quota is 10,000 units a day. The day resets at midnight Pacific Time.</li>
+            <li>A history or broadcast check costs 1 unit. Posting one message costs 20.</li>
+            <li>The shortest history interval is 5 minutes.</li>
+            <li>If the quota is used up, signed-in calls wait for that reset.</li>
+            <li>Public live chat does not spend this quota.</li>
+          </ul>
+        </section>
+      </div>
       <label class="check"><input id="youtube-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
-      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The reply is posted as the signed-in YouTube account and uses 21 units of the Data API quota. Commands are read from the public video URL or followed channel above, which does not use quota.</p>
+      <div class="help-lead">
+        <p class="hint">Replies post as the signed-in YouTube account and use 21 units of the Data API quota each.</p>
+        <button type="button" class="help-toggle" data-help="youtube-commands" aria-expanded="false" aria-controls="help-youtube-commands" aria-label="YouTube !total and !top help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-youtube-commands" class="help-block" role="region" aria-label="YouTube !total and !top help" hidden>
+        <div class="help-include" data-help-include="chat-commands"></div>
+        <section class="help-block-section">
+          <h3>On YouTube</h3>
+          <ul>
+            <li>The reply is posted as the signed-in YouTube account and uses 21 units of the Data API quota.</li>
+            <li>Commands are read from the public video URL or followed channel above, which does not use quota.</li>
+          </ul>
+        </section>
+      </div>
       <p id="youtube-commands-note" class="hint commands-note" hidden></p>
       <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
       <p class="hint">YouTube sign-in, under the chat, opens YouTube’s own sign-in and keeps that website session on this computer. The password is not stored. Open YouTube chat is YouTube’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
@@ -524,7 +561,20 @@
         <button type="button" id="rumble-chat-continue" aria-describedby="rumble-chat-warning">Continue</button>
       </div>
       <label class="check"><input id="rumble-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
-      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The desktop app types the reply into the signed-in Rumble chat after Continue above, so the same terms risk applies. Browser mode cannot answer on Rumble.</p>
+      <div class="help-lead">
+        <p class="hint">The desktop app types replies into the signed-in Rumble chat after Continue above, with the same terms risk. Browser mode cannot answer on Rumble.</p>
+        <button type="button" class="help-toggle" data-help="rumble-commands" aria-expanded="false" aria-controls="help-rumble-commands" aria-label="Rumble !total and !top help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-rumble-commands" class="help-block" role="region" aria-label="Rumble !total and !top help" hidden>
+        <div class="help-include" data-help-include="chat-commands"></div>
+        <section class="help-block-section">
+          <h3>On Rumble</h3>
+          <ul>
+            <li>The desktop app types the reply into the signed-in Rumble chat after Continue above, so the same terms risk applies.</li>
+            <li>Browser mode cannot answer on Rumble.</li>
+          </ul>
+        </section>
+      </div>
       <p id="rumble-commands-note" class="hint commands-note" hidden></p>
       <div class="row">
         <button type="submit" class="primary">Save</button>
@@ -544,12 +594,38 @@
         <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
       <label>Public channel <input id="kick-watch" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
-      <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. You do not need to own the channel. Renewals still need the owner webhooks below. This address belongs to the open ledger. The client id and secret are shared. Click Connect again after this update so the same account can post into that channel’s chat. The message is sent as that Kick user. The account email is not saved.</p>
+      <div class="help-lead">
+        <p class="hint">Any channel. New subs, gifted subs, and Kicks come from the public chat. Click Connect again after this update so the same account can post into that channel’s chat.</p>
+        <button type="button" class="help-toggle" data-help="kick-channel" aria-expanded="false" aria-controls="help-kick-channel" aria-label="Kick channel help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-kick-channel" class="help-block" role="region" aria-label="Kick channel help" hidden>
+        <section class="help-block-section">
+          <h3>Kick channel</h3>
+          <ul>
+            <li>You do not need to own the channel.</li>
+            <li>Renewals still need the owner webhooks below.</li>
+            <li>This address belongs to the open ledger. The client id and secret are shared.</li>
+            <li>The message is sent as that Kick user. The account email is not saved.</li>
+          </ul>
+        </section>
+      </div>
       <p class="hint">Kick sign-in, under the chat, opens Kick’s own login and keeps that website session on this computer. The password is not stored. Open Kick chat is Kick’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <label class="check"><input id="kick-follow-live" type="checkbox"> Show whether this channel is live</label>
       <p class="hint">Chat is read either way. When this is on, the status also says whether a broadcast is live. That does not change the chat. This belongs to the open ledger.</p>
       <label class="check"><input id="kick-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
-      <p class="hint">A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat. One reply per chat every 2 minutes, and other commands in that time are ignored. Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden. Off unless turned on here. This belongs to the open ledger. The reply is posted as the signed-in Kick account.</p>
+      <div class="help-lead">
+        <p class="hint">Replies post as the signed-in Kick account.</p>
+        <button type="button" class="help-toggle" data-help="kick-commands" aria-expanded="false" aria-controls="help-kick-commands" aria-label="Kick !total and !top help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-kick-commands" class="help-block" role="region" aria-label="Kick !total and !top help" hidden>
+        <div class="help-include" data-help-include="chat-commands"></div>
+        <section class="help-block-section">
+          <h3>On Kick</h3>
+          <ul>
+            <li>The reply is posted as the signed-in Kick account.</li>
+          </ul>
+        </section>
+      </div>
       <p id="kick-commands-note" class="hint commands-note" hidden></p>
       <label>Client id <input id="kick-client-id" autocomplete="off" spellcheck="false"></label>
       <label>Client secret <input id="kick-secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label>
@@ -580,7 +656,30 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script. Choosing that preset and saving the ledger's addresses writes those goals and that script onto that ledger. Saving the preset itself does not change the ledger that is open. Apply to open ledger saves the preset, then writes its channels, goals, and BLUE script onto the open ledger, the same as choosing it in that ledger's addresses. Its donations stay. These are channel addresses, not one video, and they are shared by every ledger. API keys are not stored here. Saving the same name again replaces that preset's channels, goals, and BLUE script. Leaving the script on None clears it.</p>
+    <div class="help-lead">
+      <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script, then choose it in a ledger's addresses or use Apply to open ledger.</p>
+      <button type="button" class="help-toggle" data-help="streamers" aria-expanded="false" aria-controls="help-streamers" aria-label="Streamer presets help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-streamers" class="help-block" role="region" aria-label="Streamer presets help" hidden>
+      <section class="help-block-section">
+        <h3>What a preset holds</h3>
+        <ul>
+          <li>Save a streamer's channels, goal tiers, and an optional BLUE script.</li>
+          <li>These are channel addresses, not one video, and they are shared by every ledger.</li>
+          <li>API keys are not stored here.</li>
+          <li>Saving the same name again replaces that preset's channels, goals, and BLUE script.</li>
+          <li>Leaving the script on None clears it.</li>
+        </ul>
+      </section>
+      <section class="help-block-section">
+        <h3>Using a preset</h3>
+        <ul>
+          <li>Choosing that preset and saving the ledger's addresses writes those goals and that script onto that ledger.</li>
+          <li>Saving the preset itself does not change the ledger that is open.</li>
+          <li>Apply to open ledger saves the preset, then writes its channels, goals, and BLUE script onto the open ledger, the same as choosing it in that ledger's addresses. Its donations stay.</li>
+        </ul>
+      </section>
+    </div>
     <form id="preset-form">
       <label>Name <input id="preset-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="youtube">YouTube</span> channel URL</span> <input id="preset-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"></label>
@@ -612,12 +711,12 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">A script runs while a ledger that uses it is connected. Soft disconnect stops it, and connecting that ledger starts it over, including the minute timer. Each line is its own command. A line that cannot be read is skipped. An action that cannot be sent is written to the log, and the next line still runs. Chat to more than one platform waits a few seconds between those sends. Rumble still needs Continue on the Rumble page.</p>
+    <p class="hint">Each line is its own command, and a script runs while a ledger that uses it is connected. Help, beside Script, explains the rest.</p>
     <form id="blue-form">
       <label>Name <input id="blue-name" autocomplete="off" maxlength="80" spellcheck="false"></label>
       <div class="blue-script-head">
         <label for="blue-source">Script</label>
-        <button type="button" id="blue-help-button" class="blue-help-button" aria-expanded="false" aria-controls="blue-help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+        <button type="button" id="blue-help-button" class="help-toggle" data-help="blue" aria-expanded="false" aria-controls="blue-help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
       </div>
       <div id="blue-editor" class="blue-editor">
         <div class="blue-gutter" aria-hidden="true"><div id="blue-gutter-lines" class="blue-gutter-lines"></div></div>
@@ -626,8 +725,19 @@
           <textarea id="blue-source" rows="12" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="blue-problems" placeholder="ON DONATION IF AMOUNT IS ABOVE 49.89 THEN SEND CHAT TO PLATFORM &quot;Thank you {MENTION}!&quot;"></textarea>
         </div>
       </div>
-      <div id="blue-help" class="blue-help" role="region" aria-labelledby="blue-help-button" hidden>
-        <section class="blue-help-section">
+      <div id="blue-help" class="help-block" role="region" aria-labelledby="blue-help-button" hidden>
+        <section class="help-block-section">
+          <h3>Running a script</h3>
+          <ul>
+            <li>A script runs while a ledger that uses it is connected.</li>
+            <li>Soft disconnect stops it, and connecting that ledger starts it over, including the minute timer.</li>
+            <li>Each line is its own command. A line that cannot be read is skipped.</li>
+            <li>An action that cannot be sent is written to the log, and the next line still runs.</li>
+            <li>Chat to more than one platform waits a few seconds between those sends.</li>
+            <li>Rumble still needs Continue on the Rumble page.</li>
+          </ul>
+        </section>
+        <section class="help-block-section">
           <h3>Events</h3>
           <ul>
             <li>A line starts with <code>ON DONATION</code>, <code>ON TIMER</code>, or <code>ON GOAL</code>.</li>
@@ -636,7 +746,7 @@
             <li><code>ON GOAL</code> runs once when the script starts, then again for each new tier, and on that line <code>TIER</code> is the tier just reached. <code>DONOR</code> is who reached that tier, <code>NAME</code> is the name set on it, and <code>PLATFORM</code> and <code>AMOUNT</code> are that donation. Those are empty at tier 0.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Conditions and fields</h3>
           <ul>
             <li><code>IF</code> can compare <code>PLATFORM</code>, <code>AMOUNT</code>, <code>RAW AMOUNT</code>, <code>CURRENCY</code>, <code>TOTAL</code>, <code>DONOR</code>, <code>TYPE</code>, <code>TIME</code>, <code>MINUTES</code>, <code>TIER</code>, and <code>NAME</code>, with <code>EQUALS</code>, <code>ABOVE</code>, or <code>BELOW</code>, joined by <code>AND</code>, <code>OR</code>, and <code>NOT</code>.</li>
@@ -648,7 +758,7 @@
             <li>A value that cannot work, such as a word for <code>AMOUNT</code> or <code>MODULO 20 EQUALS 20</code>, is reported and that line is skipped.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>MODULO and TIME</h3>
           <ul>
             <li><code>TIME</code> takes a clock time such as <code>14:30</code>.</li>
@@ -656,7 +766,7 @@
             <li>On <code>TIME</code> it counts minutes since midnight, so <code>TIME MODULO 20 EQUALS 1</code> is true at 00:01, 00:21, and so on.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Targets</h3>
           <ul>
             <li><code>THEN SEND CHAT TO</code> <code>YOUTUBE</code>, <code>RUMBLE</code>, <code>KICK</code>, <code>ALL</code>, or <code>PLATFORM</code>.</li>
@@ -665,7 +775,7 @@
             <li>The message stays in double quotes.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Placeholders</h3>
           <ul>
             <li><code>{TOTAL}</code>, <code>{TIER}</code>, <code>{DONOR}</code>, <code>{MENTION}</code>, <code>{AMOUNT}</code>, <code>{RAWAMOUNT}</code>, <code>{CURRENCY}</code>, <code>{PLATFORM}</code>, <code>{TYPE}</code>, <code>{TIME}</code>, <code>{MINUTES}</code>, and <code>{NAME}</code> are filled in. <code>{NAME}</code> is filled in on <code>ON GOAL</code>.</li>
@@ -673,7 +783,7 @@
             <li><code>{TOTALLINE}</code> and <code>{TOPLINE}</code> are the !total and !top lines, fitted to each chat.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Limits and guards</h3>
           <ul>
             <li>Chat lines are cut to 200 characters on YouTube and Rumble and 500 on Kick.</li>
@@ -681,7 +791,7 @@
             <li>At most 6 BLUE chat lines go to one chat in a minute.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Editor colors</h3>
           <ul>
             <li>Colors show how each word is read.</li>
@@ -689,7 +799,7 @@
             <li>A red placeholder is one BLUE does not fill in.</li>
           </ul>
         </section>
-        <section class="blue-help-section">
+        <section class="help-block-section">
           <h3>Test box</h3>
           <ul>
             <li>Test a line is a dry run. Nothing is sent, queued, logged, or saved, and the guards are only looked at.</li>
@@ -758,7 +868,21 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">Nothing is typed into chat. People enter by sending the keyword themselves. The message must be that keyword alone, and case does not matter. The same person counts once on each platform, so the same name on another platform is another entry. Repeats from the same person on the same platform are ignored. Closing this prompt does not stop a drawing that is already running.</p>
+    <div class="help-lead">
+      <p class="hint">Nothing is typed into chat. People enter by sending the keyword themselves.</p>
+      <button type="button" class="help-toggle" data-help="giveaway" aria-expanded="false" aria-controls="help-giveaway" aria-label="Giveaway help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-giveaway" class="help-block" role="region" aria-label="Giveaway help" hidden>
+      <section class="help-block-section">
+        <h3>Entries</h3>
+        <ul>
+          <li>The message must be that keyword alone, and case does not matter.</li>
+          <li>The same person counts once on each platform, so the same name on another platform is another entry.</li>
+          <li>Repeats from the same person on the same platform are ignored.</li>
+          <li>Closing this prompt does not stop a drawing that is already running.</li>
+        </ul>
+      </section>
+    </div>
     <label>Keyword <input id="giveaway-keyword" autocomplete="off" maxlength="80" spellcheck="false" placeholder="#giveaway"></label>
     <label>Timer (minutes) <input id="giveaway-minutes" type="number" min="0" max="1440" step="1" inputmode="numeric" placeholder="No timer"></label>
     <p class="hint">Leave the timer blank to run until Stop. Only chat collected for the open ledger after Start is counted. A paused ledger is not reading chat. A drawn winner leaves the pool. Redraw picks the next person from whoever is left, and every winner stays in the list.</p>
@@ -786,7 +910,26 @@
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
-    <p class="hint">Membership price, the extra chat note, and top donors belong to the open ledger. A new ledger copies those, starts with a blank name, and has no donations. Each ledger has its own YouTube, Rumble, and Kick address. Follow live, when you turn it on, stays with that ledger too. A ledger whose plug is connected keeps collecting while you look at another ledger. The stream panel follows the one that is open. API keys, exchange rates, and ledger page size stay shared. Save before changing ledgers, or unsaved edits here are dropped.</p>
+    <div class="help-lead">
+      <p class="hint">Membership price, the extra chat note, and top donors belong to the open ledger. Save before changing ledgers, or unsaved edits here are dropped.</p>
+      <button type="button" class="help-toggle" data-help="settings-ledger" aria-expanded="false" aria-controls="help-settings-ledger" aria-label="Settings help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-settings-ledger" class="help-block" role="region" aria-label="Settings help" hidden>
+      <section class="help-block-section">
+        <h3>Each ledger</h3>
+        <ul>
+          <li>A new ledger copies those, starts with a blank name, and has no donations.</li>
+          <li>Each ledger has its own YouTube, Rumble, and Kick address. Follow live, when you turn it on, stays with that ledger too.</li>
+          <li>A ledger whose plug is connected keeps collecting while you look at another ledger. The stream panel follows the one that is open.</li>
+        </ul>
+      </section>
+      <section class="help-block-section">
+        <h3>Shared</h3>
+        <ul>
+          <li>API keys, exchange rates, and ledger page size stay shared.</li>
+        </ul>
+      </section>
+    </div>
     <label>Ledger page size
       <select id="ledger-page-size">
         <option value="10">10</option>
@@ -799,7 +942,20 @@
     <label id="ledger-page-custom-label" hidden>Custom page size <input id="ledger-page-custom" type="number" min="1" max="500" step="1" inputmode="numeric"></label>
     <p class="hint">How many donations each page shows. 10, 25, 50, and 100 are the usual sizes. Custom is any whole number from 1 to 500. Every ledger uses this same size.</p>
     <label>Membership price (USD) <input id="membership-price" type="number" min="0" max="100000" step="0.01" inputmode="decimal" placeholder="Not set"></label>
-    <p class="hint">Used when a membership or subscription arrives without a price. YouTube counts “Sent 5 … gift memberships” as five, then multiplies by this price. Kick bundles do the same. A Rumble bundle is this price for the first subscription and $5.00 for each additional one, so five Rumble subs are $24.99 when this price is $4.99. Leave it blank and those amounts stay empty.</p>
+    <div class="help-lead">
+      <p class="hint">Used when a membership or subscription arrives without a price. Leave it blank and those amounts stay empty.</p>
+      <button type="button" class="help-toggle" data-help="membership-price" aria-expanded="false" aria-controls="help-membership-price" aria-label="Membership price help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-membership-price" class="help-block" role="region" aria-label="Membership price help" hidden>
+      <section class="help-block-section">
+        <h3>Bundles</h3>
+        <ul>
+          <li>YouTube counts “Sent 5 … gift memberships” as five, then multiplies by this price.</li>
+          <li>Kick bundles do the same.</li>
+          <li>A Rumble bundle is this price for the first subscription and $5.00 for each additional one, so five Rumble subs are $24.99 when this price is $4.99.</li>
+        </ul>
+      </section>
+    </div>
     <label>Extra on chat line <textarea id="chat-extra" rows="2" maxlength="500" placeholder="Optional note appended to the paste"></textarea></label>
     <label class="check"><input id="show-top-donors" type="checkbox" checked> Show top donors</label>
     <p class="hint">Kick coins convert at 100 coins = $1. Under $5 is a Super Sticker. $5 and above is a Super Chat. Export times use this computer’s time zone. The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</p>
@@ -915,6 +1071,18 @@
 </dialog>
 
 <div id="toast" class="toast" hidden role="status"></div>
+<template id="help-text-chat-commands">
+  <section class="help-block-section">
+    <h3>How !total and !top work</h3>
+    <ul>
+      <li>A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat.</li>
+      <li>One reply per chat every 2 minutes, and other commands in that time are ignored.</li>
+      <li>Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden.</li>
+      <li>Off unless turned on here. This belongs to the open ledger.</li>
+    </ul>
+  </section>
+</template>
+
 <script src="/blue_highlight.js"></script>
 <script src="/app.js"></script>
 </body>

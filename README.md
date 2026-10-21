@@ -89,6 +89,8 @@ Ordinary chat, follows, and bans are not stored. YouTube Super Chats seen in liv
 
 ## Connect a channel
 
+The YouTube, Rumble, Kick, Streamers, Giveaway, Settings, and BLUE dialogs keep a short line visible where you need it to act, and put the longer explanation behind **Help**. Each Help panel starts closed and remembers on this computer whether you left it open. The `!total` and `!top` explanation is the same in all three platform dialogs.
+
 ### YouTube
 
 Paste a watch URL or 11-character video id into **Public video URL or id**. The app reads the public live chat for that broadcast. Super Chats, Super Stickers, new members, and gifted memberships that appear in chat are stored. You do not need to own the channel, and Google’s “Access blocked” screen does not apply to this path. Chat closes when the broadcast ends, so leave the app open while the stream is live.
