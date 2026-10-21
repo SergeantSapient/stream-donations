@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.10.1` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.11.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -29,6 +29,8 @@ The 2026-09-30 resume reminder has fired. Do not put that timer back.
 10. **BLUE PLATFORM, raw amount, and chat lines.** `SEND CHAT TO PLATFORM` answers in the chat the gift came from (on a goal, the gift that reached the tier; a syntax error on a timer). It skips manual and pasted entries, Other rows, a chat that cannot post right now, and a signed-in YouTube, Kick webhook, or Rumble owner-API gift that is not this ledger's chat, each logged once per script start. `RAW AMOUNT` and `{RAWAMOUNT}` are the amount as sent (Kicks as coins, ISO 4217 decimals), `CURRENCY` and `{CURRENCY}` the code (`KICKS` for Kicks), `{MENTION}` is `@name` or empty, and `{TOTALLINE}`/`{TOPLINE}` are the chat-command lines fitted to each chat. `ON DONATION` skips gifts over 2 minutes old or from before the script started. One thank-you per gift per line and chat in 2 minutes, and at most 6 BLUE chat lines per chat per minute. See README, BLUE. Not tried on a real live stream yet; signed-in YouTube Super Chats polled every 15 minutes are mostly past the 2-minute window, so the public reader is what thanks them.
 
 11. **Kick chat reconnects after a network change.** A public Kick chat socket that went silent without closing was read forever while the status said connected; only a soft disconnect fixed it. The socket now has a watchdog: a Pusher ping after Kick's `activity_timeout` with a 30-second answer window, a Centrifugo server-ping check, and a 150-second cap on silence for any provider, then a reconnect with 2-to-60-second backoff. TCP keepalive is on, a frame split by a read timeout stays in step, and the status (including the webhook status) says "Kick chat stopped responding; reconnecting." while it is quiet. Covered by tests with a fake silent server; not yet tried by switching Wi-Fi on Windows.
+
+12. **BLUE editor colors and test box.** The editor colors words from `GET /api/blue/grammar` (built from blue.py), numbers its lines, does not wrap, and marks a line that will be skipped in the margin (reason on hover) about 300 ms after typing stops. **Test a line** is a dry run of one line or the whole editor against a made-up donation, timer minute, or goal on a chosen ledger, with its total and tier unless typed: each condition with the value it saw, every chat after PLATFORM and ALL with the final cut message, and which guard would stop it. It never sends, queues, logs, or saves, and only reads the guards. The repeat check only applies to a line of the script the ledger runs. A test gift has no real source, so PLATFORM's channel and manual checks are described, not applied. The BLUE explanation is behind Help beside the Script label, closed by default, in short sections. See README, BLUE.
 
 ## To do
 

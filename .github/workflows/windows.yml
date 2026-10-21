@@ -26,6 +26,14 @@ jobs:
         env:
           PYTHONPATH: source/collector
         run: python -m unittest discover -s source/collector/tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: BLUE editor tokenizer tests
+        run: |
+          node --check source/collector/streamdonations/web/app.js
+          node --check source/collector/streamdonations/web/blue_highlight.js
+          node --test source/collector/tests/js/blue_highlight.test.js
 
   package:
     needs: test

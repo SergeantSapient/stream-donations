@@ -604,6 +604,26 @@ class BlueHost:
             self.service.store.set_stream_values(tab["id"], {"blue_chat_guard": text})
         return result
 
+    def peek_chat_slot(self, tab: dict, target: str, repeat: tuple | None) -> tuple[str, int]:
+        """What _take_chat_slot would say, and how many lines that chat sent in the
+        last minute. Read only: nothing is recorded, cached, or saved.
+        """
+        now = self._clock()
+        with self._lock:
+            cached = self._guards.get(tab["id"])
+            guard = json.loads(json.dumps(cached)) if cached is not None else None
+        if guard is None:
+            fresh = self._tab(tab["id"]) or tab
+            guard = _load_guard(str(fresh.get("blue_chat_guard") or ""))
+        _prune_guard(guard, now)
+        sent = len(guard["sent"].get(target, []))
+        key = _guard_key(repeat) if repeat is not None else ""
+        if key and key in guard["thanked"] and guard["thanked"][key] > now:
+            return "repeat", sent
+        if sent >= CHAT_LINES_PER_MINUTE:
+            return "full", sent
+        return "", sent
+
     def _guard(self, tab: dict, now: float) -> tuple[dict, bool]:
         """This ledger's guard times, pruned to the ones that still count. Holds _lock."""
         guard = self._guards.get(tab["id"])
