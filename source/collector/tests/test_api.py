@@ -19,6 +19,11 @@ from streamdonations.store import Store
 from streamdonations.transport import Transport
 
 
+# A slow Windows runner can stall a local request for seconds. Wait long enough
+# that only a real hang fails a test.
+REQUEST_TIMEOUT = 30
+
+
 def _openssl(*args, input_bytes=None):
     return subprocess.run(["openssl", *args], input=input_bytes, capture_output=True, check=True)
 
@@ -61,7 +66,7 @@ class ApiTests(unittest.TestCase):
             headers["Host"] = host
         request = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
                 raw = response.read()
                 return response.status, response.headers, raw
         except urllib.error.HTTPError as exc:
@@ -76,7 +81,7 @@ class ApiTests(unittest.TestCase):
 
         import http.client
 
-        connection = http.client.HTTPConnection("127.0.0.1", self.app.ui_port, timeout=5)
+        connection = http.client.HTTPConnection("127.0.0.1", self.app.ui_port, timeout=REQUEST_TIMEOUT)
         connection.request("GET", f"/boot?token={self.token}")
         boot = connection.getresponse()
         self.assertEqual(boot.status, 302)
@@ -113,7 +118,7 @@ class ApiTests(unittest.TestCase):
     def test_foreign_host_is_rejected(self):
         import http.client
 
-        connection = http.client.HTTPConnection("127.0.0.1", self.app.ui_port, timeout=5)
+        connection = http.client.HTTPConnection("127.0.0.1", self.app.ui_port, timeout=REQUEST_TIMEOUT)
         connection.request("GET", "/api/health", headers={"Host": "evil.example"})
         response = connection.getresponse()
         self.assertEqual(response.status, 400)
@@ -1850,6 +1855,31 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("NightGoal", joined)
         self.assertNotIn("Keep", joined)
 
+    def test_settings_shows_the_collector_version_and_license_only_there(self):
+        from streamdonations import __version__
+
+        status, _headers, body = self._request("/api/meta")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["version"], __version__)
+        status, _headers, page = self._request("/")
+        self.assertEqual(status, 200)
+        settings = page.split(b'id="tab-settings"', 1)[1].split(b"</dialog>", 1)[0]
+        self.assertIn(b'id="about-line"', settings)
+        self.assertIn(b'SuperBerry <span id="app-version"></span>', settings)
+        self.assertIn(
+            b'<a href="https://github.com/SergeantSapient/stream-donations/blob/main/LICENSE" '
+            b'target="_blank" rel="noopener noreferrer">Licensed GPL-3.0-or-later</a>',
+            settings,
+        )
+        # Only in Settings: nowhere on the main screen, and the number is not typed into the page.
+        self.assertEqual(page.count(b'id="app-version"'), 1)
+        self.assertNotIn(__version__.encode(), page)
+        status, _headers, script = self._request("/app.js")
+        self.assertEqual(status, 200)
+        boot_fn = script.split(b"async function boot(", 1)[1].split(b"\nfunction ", 1)[0]
+        self.assertIn(b'$("app-version").textContent = state.meta.version', boot_fn)
+        self.assertNotIn(__version__.encode(), script)
+
     def test_apply_to_open_ledger_writes_the_preset_like_the_address_dialog(self):
         status, _headers, page = self._request("/")
         self.assertEqual(status, 200)
@@ -2729,7 +2759,7 @@ class ApiTests(unittest.TestCase):
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
                 return response.status
         except urllib.error.HTTPError as exc:
             try:

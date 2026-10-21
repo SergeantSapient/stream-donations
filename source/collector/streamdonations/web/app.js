@@ -5708,6 +5708,8 @@ async function boot() {
   renderPlatformPills(state.meta.platforms);
   renderCurrencies(state.meta.currencies);
   $("database").textContent = state.meta.database;
+  // The version comes from the collector, so Settings cannot show a stale number.
+  if ($("app-version")) $("app-version").textContent = state.meta.version || "";
   if (state.meta.log_file && $("log-file")) $("log-file").textContent = state.meta.log_file;
   applySettingsToForm(await api("/api/settings"));
   bind();

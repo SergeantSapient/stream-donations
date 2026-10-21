@@ -262,3 +262,5 @@ SuperBerry is Copyright (C) 2026 Armando Poveda. It is free software under the G
 - A modified version must not be presented as the original SuperBerry.
 - The copyright notice and NOTICE file stay with every copy.
 - The SuperBerry name and logo identify the original project and are not licensed to represent modified versions. This is not a trademark claim.
+
+The bottom of **Settings** shows the version you are running, for example `SuperBerry 1.11.2`, with a link to the license.

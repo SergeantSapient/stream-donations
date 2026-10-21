@@ -10,6 +10,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from .goals import (
@@ -227,6 +228,52 @@ class Store:
                 (key, value),
             )
             self._conn.commit()
+        self._tighten()
+
+    def set_settings(self, updates: dict[str, str], clears: Iterable[str] = ()) -> None:
+        """Write and delete several settings, with their copy on the open ledger, in one transaction.
+
+        The same as set_setting for each update and then delete_setting for each
+        clear, in that order, but committed once: a failure part way saves none of them.
+        """
+        updates = dict(updates)
+        clears = [key for key in clears]
+        if not updates and not clears:
+            return
+        mirrored = any(key in _STREAM_FIELDS for key in [*updates, *clears])
+        # Read before taking the lock. _stream_doc takes it itself.
+        doc = self._stream_doc() if mirrored else None
+        tab = None
+        if doc is not None:
+            tab = next((item for item in doc["tabs"] if item["id"] == doc["active_id"]), None)
+        with self._lock:
+            try:
+                for key, value in updates.items():
+                    self._conn.execute(
+                        """
+                        INSERT INTO settings (key, value) VALUES (?, ?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                        """,
+                        (key, value),
+                    )
+                    if tab is not None and key in _STREAM_FIELDS:
+                        tab[key] = value.strip()[:80] if key == "stream_title" else value
+                for key in clears:
+                    self._conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+                    if tab is not None and key in _STREAM_FIELDS:
+                        tab[key] = ""
+                if tab is not None:
+                    self._conn.execute(
+                        """
+                        INSERT INTO settings (key, value) VALUES (?, ?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                        """,
+                        (_STREAMS_KEY, json.dumps(doc, separators=(",", ":"))),
+                    )
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
         self._tighten()
 
     def delete_setting(self, key: str) -> None:
