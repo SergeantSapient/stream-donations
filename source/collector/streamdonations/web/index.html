@@ -958,7 +958,26 @@
     </div>
     <label>Extra on chat line <textarea id="chat-extra" rows="2" maxlength="500" placeholder="Optional note appended to the paste"></textarea></label>
     <label class="check"><input id="show-top-donors" type="checkbox" checked> Show top donors</label>
-    <p class="hint">Kick coins convert at 100 coins = $1. Under $5 is a Super Sticker. $5 and above is a Super Chat. Export times use this computer’s time zone. The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</p>
+    <div class="help-lead">
+      <p class="hint">Kick coins convert at 100 coins = $1.</p>
+      <button type="button" class="help-toggle" data-help="settings-kicks-export" aria-expanded="false" aria-controls="help-settings-kicks-export" aria-label="Kicks and export help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-settings-kicks-export" class="help-block" role="region" aria-label="Kicks and export help" hidden>
+      <section class="help-block-section">
+        <h3>Kicks</h3>
+        <ul>
+          <li>Under $5 is a Super Sticker.</li>
+          <li>$5 and above is a Super Chat.</li>
+        </ul>
+      </section>
+      <section class="help-block-section">
+        <h3>Exports</h3>
+        <ul>
+          <li>Export times use this computer’s time zone.</li>
+          <li>The CSV columns are Date, Time, Donor, Amount, Platform, Type, Currency, Amount USD, and Message.</li>
+        </ul>
+      </section>
+    </div>
     <div class="row">
       <button type="submit" class="primary">Save</button>
     </div>
@@ -967,20 +986,68 @@
       <button type="button" id="settings-import">Import settings</button>
       <input id="settings-import-file" type="file" accept="application/json,.json" hidden>
     </div>
-    <p class="hint">The file holds this ledger's membership price, extra chat note, and top donors, plus the shared ledger page size. API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first. A newer file still applies the settings this version understands. Settings the file leaves out stay as they are.</p>
+    <div class="help-lead">
+      <p class="hint">API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first.</p>
+      <button type="button" class="help-toggle" data-help="settings-file" aria-expanded="false" aria-controls="help-settings-file" aria-label="Settings file help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-settings-file" class="help-block" role="region" aria-label="Settings file help" hidden>
+      <section class="help-block-section">
+        <h3>What the file holds</h3>
+        <ul>
+          <li>This ledger's membership price, extra chat note, and top donors, plus the shared ledger page size.</li>
+        </ul>
+      </section>
+      <section class="help-block-section">
+        <h3>Import</h3>
+        <ul>
+          <li>A newer file still applies the settings this version understands.</li>
+          <li>Settings the file leaves out stay as they are.</li>
+        </ul>
+      </section>
+    </div>
     <p id="fx-status" class="status">Exchange rates have not been downloaded yet.</p>
     <div class="row">
       <button type="button" id="fx-refresh">Update exchange rates</button>
     </div>
+    <div class="help-lead">
+      <p class="hint">Saved rates are reused for up to an hour. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
+      <button type="button" class="help-toggle" data-help="settings-rates" aria-expanded="false" aria-controls="help-settings-rates" aria-label="Exchange rate help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+    </div>
+    <div id="help-settings-rates" class="help-block" role="region" aria-label="Exchange rate help" hidden>
+      <section class="help-block-section">
+        <h3>How often</h3>
+        <ul>
+          <li>The saved response from open.er-api.com is reused until the last check is more than an hour old.</li>
+          <li>Their open endpoint allows about one request an hour, and the table itself changes about once a day.</li>
+        </ul>
+      </section>
+    </div>
     <section id="browser-mode" hidden>
       <h3>Browser mode</h3>
-      <p class="hint">SuperBerry is open in a web browser instead of the desktop app. Collection, the ledger, and exports work the same. Sign-in and chat buttons open the platform in a new browser window. Sending to Rumble chat and the chats embedded beside the stream need the SuperBerry desktop app. Quit, in the menu, stops SuperBerry on this computer.</p>
+      <div class="help-lead">
+        <p class="hint">SuperBerry is open in a web browser instead of the desktop app. Sending to Rumble chat and the chats embedded beside the stream need the SuperBerry desktop app.</p>
+        <button type="button" class="help-toggle" data-help="browser-mode" aria-expanded="false" aria-controls="help-browser-mode" aria-label="Browser mode help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
+      </div>
+      <div id="help-browser-mode" class="help-block" role="region" aria-label="Browser mode help" hidden>
+        <section class="help-block-section">
+          <h3>The same as the app</h3>
+          <ul>
+            <li>Collection, the ledger, and exports work the same.</li>
+            <li>Sign-in and chat buttons open the platform in a new browser window.</li>
+          </ul>
+        </section>
+        <section class="help-block-section">
+          <h3>Quit</h3>
+          <ul>
+            <li>Quit, in the menu, stops SuperBerry on this computer.</li>
+          </ul>
+        </section>
+      </div>
       <div id="browser-notify-row" class="row" hidden>
         <button type="button" id="browser-notify">Turn on browser notifications</button>
       </div>
       <p id="browser-notify-status" class="hint" hidden></p>
     </section>
-    <p class="hint">The saved response from open.er-api.com is reused until the last check is more than an hour old. Their open endpoint allows about one request an hour, and the table itself changes about once a day. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates By Exchange Rate API</a></p>
     <p id="about-line" class="hint about-line">SuperBerry <span id="app-version"></span> · <a href="https://github.com/SergeantSapient/stream-donations/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licensed GPL-3.0-or-later</a></p>
   </form>
 </dialog>
