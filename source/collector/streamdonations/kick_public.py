@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import socket
 import ssl
 import threading
@@ -42,6 +43,26 @@ KICK_UA = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 StreamDonations/1.0"
 )
 _RESERVED = {"api", "settings", "dashboard", "browse", "categories", "following"}
+
+# A socket can go silent without closing, for example after the computer
+# changes networks. Silence is only trusted for as long as the provider
+# promises to speak, then the socket is dropped and the chat reconnects.
+STALE_MESSAGE = "Kick chat stopped responding; reconnecting."
+_MAX_WAIT = 50.0  # longest single read, so stop and the watchdog are checked
+_IDLE_CAP = 150.0  # no byte at all for this long is fatal on any provider
+_PUSHER_ACTIVITY_DEFAULT = 120.0
+_PUSHER_ACTIVITY_MIN = 10.0
+_PUSHER_ACTIVITY_MAX = 120.0
+_PUSHER_PONG_TIMEOUT = 30.0
+_PUSHER_PONG_SLOW = 10.0  # an unanswered ping this old is reported, not yet fatal
+_CENTRIFUGO_PING_GRACE = 10.0
+_BACKOFF_START = 2.0
+_BACKOFF_MAX = 60.0
+_GOOD_CONNECTION = 30.0  # a connection up this long resets the backoff
+_KEEPALIVE_IDLE = 30
+_KEEPALIVE_INTERVAL = 10
+_KEEPALIVE_COUNT = 3
+_now = time.monotonic
 
 
 def realtime_endpoints(payload: object) -> list[tuple[str, str, str]]:
@@ -122,10 +143,29 @@ def interpret_pusher(message: object) -> dict:
     if event == "pusher:ping":
         return {"op": "ping"}
     if event == "pusher:connection_established":
-        return {"op": "ready"}
+        ready: dict = {"op": "ready"}
+        activity = _pusher_activity_timeout(message.get("data"))
+        if activity is not None:
+            ready["activity_timeout"] = activity
+        return ready
     if event.startswith("pusher:") or event.startswith("pusher_internal:"):
         return {"op": "ignore"}
     return {"op": "event"}
+
+
+def _pusher_activity_timeout(data: object) -> float | None:
+    """Seconds of silence Pusher allows before a ping, from connection_established."""
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("activity_timeout")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value)
 
 
 def interpret_centrifugo(item: object) -> dict:
@@ -489,21 +529,37 @@ def _object(data: object) -> dict | None:
 
 
 class _SocketBuffer:
+    """Bytes read from the socket. A read that times out keeps what arrived."""
+
     def __init__(self, sock: socket.socket):
         self._sock = sock
         self._buf = b""
+        self.last_rx = _now()
+        self.received = 0
 
-    def read_exact(self, size: int) -> bytes:
+    def fill(self, size: int) -> None:
         while len(self._buf) < size:
             chunk = self._sock.recv(max(4096, size - len(self._buf)))
             if not chunk:
                 raise ConnectionError("Kick chat socket closed")
             self._buf += chunk
+            self.last_rx = _now()
+            self.received += 1
+
+    def peek(self, size: int) -> bytes:
+        self.fill(size)
+        return self._buf[:size]
+
+    def read_exact(self, size: int) -> bytes:
+        self.fill(size)
         out, self._buf = self._buf[:size], self._buf[size:]
         return out
 
     def feed(self, data: bytes) -> None:
-        self._buf += data
+        if data:
+            self._buf += data
+            self.last_rx = _now()
+            self.received += 1
 
 
 def _send_control(sock: socket.socket, opcode: int, payload: bytes) -> None:
@@ -532,27 +588,67 @@ def _send_text(sock: socket.socket, text: str) -> None:
 
 
 def _read_frame(buf: _SocketBuffer) -> tuple[int, bytes]:
-    first, second = buf.read_exact(2)
+    """One whole frame. Nothing is consumed until all of it has arrived,
+    so a read timeout part way through leaves the next read in step."""
+    first, second = buf.peek(2)
     opcode = first & 0x0F
     masked = bool(second & 0x80)
     length = second & 0x7F
+    offset = 2
     if length == 126:
-        length = int.from_bytes(buf.read_exact(2), "big")
+        length = int.from_bytes(buf.peek(4)[2:4], "big")
+        offset = 4
     elif length == 127:
-        length = int.from_bytes(buf.read_exact(8), "big")
+        length = int.from_bytes(buf.peek(10)[2:10], "big")
+        offset = 10
     if length > 2_000_000:
         raise ApiError("Kick chat frame was too large")
-    mask = buf.read_exact(4) if masked else b""
-    payload = buf.read_exact(length)
+    mask_size = 4 if masked else 0
+    frame = buf.read_exact(offset + mask_size + length)
+    mask = frame[offset:offset + mask_size]
+    payload = frame[offset + mask_size:]
     if mask:
         payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
     return opcode, payload
+
+
+def _keepalive(sock: socket.socket) -> None:
+    """Ask the OS to probe an idle connection. Options this OS lacks are skipped."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except (OSError, AttributeError):
+        return
+    if hasattr(socket, "SIO_KEEPALIVE_VALS") and hasattr(sock, "ioctl"):
+        # Windows: on, idle time and probe interval in milliseconds.
+        try:
+            sock.ioctl(
+                socket.SIO_KEEPALIVE_VALS,
+                (1, _KEEPALIVE_IDLE * 1000, _KEEPALIVE_INTERVAL * 1000),
+            )
+        except (OSError, ValueError):
+            pass
+        return
+    # Linux uses TCP_KEEPIDLE, macOS TCP_KEEPALIVE, both TCP_KEEPINTVL and TCP_KEEPCNT.
+    for name, value in (
+        ("TCP_KEEPIDLE", _KEEPALIVE_IDLE),
+        ("TCP_KEEPALIVE", _KEEPALIVE_IDLE),
+        ("TCP_KEEPINTVL", _KEEPALIVE_INTERVAL),
+        ("TCP_KEEPCNT", _KEEPALIVE_COUNT),
+    ):
+        option = getattr(socket, name, None)
+        if option is None:
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, option, value)
+        except OSError:
+            pass
 
 
 def _open_websocket(host: str, path: str) -> tuple[socket.socket, _SocketBuffer]:
     if any(ord(char) < 33 or ord(char) == 127 for char in f"{host}{path}"):
         raise ApiError("Kick did not offer a public chat connection")
     raw = socket.create_connection((host, 443), timeout=20)
+    _keepalive(raw)
     context = ssl.create_default_context()
     sock = context.wrap_socket(raw, server_hostname=host)
     key = base64.b64encode(os.urandom(16)).decode("ascii")
@@ -604,6 +700,11 @@ class _PublicSocket:
         self._connected = False
         self._refresh_at = float("inf")
         self._pong = False
+        self._activity = _PUSHER_ACTIVITY_DEFAULT
+        self._server_ping = 0.0
+        self._ping_sent_at: float | None = None
+        self._ping_mark = 0
+        self.opened_at = 0.0
 
     def close(self) -> None:
         sock = self.sock
@@ -625,6 +726,9 @@ class _PublicSocket:
             self._next_id = 0
             self._refresh_at = float("inf")
             self._pong = False
+            self._activity = _PUSHER_ACTIVITY_DEFAULT
+            self._server_ping = 0.0
+            self._ping_sent_at = None
             try:
                 sock, buf = _open_websocket(host, path)
                 self.sock = sock
@@ -636,6 +740,7 @@ class _PublicSocket:
                         "version": "1",
                     })
                 self._pump_until_connected()
+                self.opened_at = _now()
                 return
             except ApiError as exc:
                 last_error = exc
@@ -658,17 +763,73 @@ class _PublicSocket:
             return self._queue.pop(0)
         self._maybe_refresh()
         assert self.sock is not None
-        timeout = 50.0
+        timeout = min(_MAX_WAIT, self._watchdog())
         if self._refresh_at < float("inf"):
-            timeout = min(timeout, max(1.0, self._refresh_at - time.monotonic()))
+            timeout = min(timeout, max(0.05, self._refresh_at - _now()))
         self.sock.settimeout(timeout)
         try:
             self._read_once()
         except TimeoutError:
+            # Quiet is fine until the provider's promise runs out. Then this raises.
+            self._watchdog()
             return None
         if self._queue:
             return self._queue.pop(0)
         return None
+
+    def _watchdog(self) -> float:
+        """Raise when the socket has been silent too long; else seconds to the next check.
+
+        Pusher: after activity_timeout of silence send pusher:ping, and give up when
+        nothing arrives within the pong timeout. Centrifugo: the server pings every
+        `ping` seconds, so silence past that plus a grace is fatal. Any provider:
+        no byte at all for the idle cap is fatal.
+        """
+        assert self._buf is not None
+        now = _now()
+        last = self._buf.last_rx
+        if now - last >= _IDLE_CAP:
+            raise ApiError(STALE_MESSAGE)
+        deadlines = [last + _IDLE_CAP]
+        if self.provider == "pusher":
+            if self._ping_sent_at is not None and self._buf.received != self._ping_mark:
+                self._ping_sent_at = None
+            if self._ping_sent_at is not None:
+                if now - self._ping_sent_at >= _PUSHER_PONG_TIMEOUT:
+                    raise ApiError(STALE_MESSAGE)
+                deadlines.append(self._ping_sent_at + _PUSHER_PONG_TIMEOUT)
+            elif now - last >= self._activity:
+                assert self.sock is not None
+                _send_text(self.sock, json.dumps({"event": "pusher:ping", "data": {}}))
+                self._ping_sent_at = now
+                self._ping_mark = self._buf.received
+                deadlines.append(now + _PUSHER_PONG_TIMEOUT)
+            else:
+                deadlines.append(last + self._activity)
+        elif self._server_ping > 0:
+            limit = self._server_ping + _CENTRIFUGO_PING_GRACE
+            if now - last >= limit:
+                raise ApiError(STALE_MESSAGE)
+            deadlines.append(last + limit)
+        return max(0.05, min(deadlines) - now)
+
+    def responsive(self) -> bool:
+        """False once the socket is quiet past what its provider promises."""
+        buf = self._buf
+        if self.sock is None or buf is None or not self._connected:
+            return False
+        now = _now()
+        idle = now - buf.last_rx
+        if idle >= _IDLE_CAP:
+            return False
+        if self.provider == "pusher":
+            pending = self._ping_sent_at
+            if pending is not None and buf.received == self._ping_mark and now - pending >= _PUSHER_PONG_SLOW:
+                return False
+            return idle < self._activity + _PUSHER_PONG_TIMEOUT
+        if self._server_ping > 0:
+            return idle < self._server_ping + _CENTRIFUGO_PING_GRACE
+        return True
 
     def _negotiate(self) -> list[tuple[str, str, str]]:
         body = {
@@ -773,6 +934,9 @@ class _PublicSocket:
             return
         if action["op"] == "ready":
             self._connected = True
+            activity = action.get("activity_timeout")
+            if isinstance(activity, float):
+                self._activity = min(max(activity, _PUSHER_ACTIVITY_MIN), _PUSHER_ACTIVITY_MAX)
             return
         if action["op"] == "event":
             self._queue.append(payload)
@@ -812,12 +976,15 @@ class _PublicSocket:
             ttl = as_int(result.get("ttl")) or 0
             if ttl < 1:
                 raise ApiError("Kick closed the public chat connection")
-            self._refresh_at = time.monotonic() + max(ttl * 0.8, 1.0)
+            self._refresh_at = _now() + max(ttl * 0.8, 1.0)
         if result.get("pong") is True:
             self._pong = True
+        ping = result.get("ping")
+        if isinstance(ping, (int, float)) and not isinstance(ping, bool) and ping > 0:
+            self._server_ping = float(ping)
 
     def _maybe_refresh(self) -> None:
-        if self.provider != "centrifugo" or time.monotonic() < self._refresh_at:
+        if self.provider != "centrifugo" or _now() < self._refresh_at:
             return
         self._refresh_at = float("inf")
         self._command("refresh", {"token": self._connection_token()})
@@ -836,6 +1003,12 @@ class PublicKickChat:
         self._thread: threading.Thread | None = None
         self._sock: socket.socket | None = None
         self._sock_lock = threading.Lock()
+        self._session: _PublicSocket | None = None
+
+    def stale(self) -> bool:
+        """True while a connected chat socket has gone quiet past its provider's promise."""
+        session = self._session
+        return session is not None and session._connected and not session.responsive()
 
     def rest(self) -> None:
         """Stop reading chat. The saved channel stays in settings."""
@@ -846,6 +1019,7 @@ class PublicKickChat:
         with self._sock_lock:
             sock = self._sock
             self._sock = None
+            self._session = None
         if sock is not None:
             try:
                 sock.close()
@@ -881,6 +1055,7 @@ class PublicKickChat:
     def _loop(self, target: str, stop: threading.Event) -> None:
         follow_flag, source = target.split("\n", 1)
         follow = follow_flag == "1"
+        backoff = _BACKOFF_START
         while not stop.is_set() and not self.store.collection_paused():
             session: _PublicSocket | None = None
             try:
@@ -896,6 +1071,7 @@ class PublicKickChat:
                     if stop.is_set() or self.store.collection_paused():
                         return
                     self._sock = session.sock
+                    self._session = session
                 session.subscribe(self._channel_names(info))
                 if stop.is_set() or self.store.collection_paused():
                     return
@@ -906,7 +1082,7 @@ class PublicKickChat:
                 while not stop.is_set() and not self.store.collection_paused():
                     if follow and time.monotonic() >= next_live:
                         next_live = time.monotonic() + 60
-                        fresh = self._refresh_live(slug, info)
+                        fresh = self._refresh_live(slug, info, session)
                         if stop.is_set() or self.store.collection_paused():
                             return
                         if fresh is not None and (
@@ -919,6 +1095,8 @@ class PublicKickChat:
                     payload = session.read_event()
                     if stop.is_set() or self.store.collection_paused():
                         return
+                    if backoff != _BACKOFF_START and _now() - session.opened_at >= _GOOD_CONNECTION:
+                        backoff = _BACKOFF_START
                     if payload and session.sock is not None:
                         self._on_message(session.sock, payload, info["slug"], stop)
             except Exception as exc:
@@ -928,12 +1106,15 @@ class PublicKickChat:
                 self.detail = ""
                 self.store.log("kick", "error", self.error)
                 self.store.set_status("kick", "error", self.error, error=self.error)
-                stop.wait(15)
+                stop.wait(min(_BACKOFF_MAX, backoff * random.uniform(0.8, 1.2)))
+                backoff = min(_BACKOFF_MAX, backoff * 2)
             finally:
                 sock = session.sock if session is not None else None
                 with self._sock_lock:
                     if self._sock is sock:
                         self._sock = None
+                    if self._session is session:
+                        self._session = None
                 if session is not None:
                     session.close()
 
@@ -993,8 +1174,12 @@ class PublicKickChat:
             "title": title,
         }
 
-    def _refresh_live(self, slug: str, info: dict) -> dict | None:
-        """Re-read live or offline from the same channel lookup. Chat stays up."""
+    def _refresh_live(self, slug: str, info: dict, session: _PublicSocket | None = None) -> dict | None:
+        """Re-read live or offline from the same channel lookup. Chat stays up.
+
+        The lookup is plain HTTP, so it says nothing about the chat socket. A socket
+        that has gone quiet keeps its status until the watchdog reconnects it.
+        """
         try:
             fresh = self._lookup(slug)
         except (ApiError, OSError, TimeoutError, ValueError):
@@ -1002,6 +1187,8 @@ class PublicKickChat:
         if fresh["chatroom_id"] != info["chatroom_id"] or fresh["channel_id"] != info["channel_id"]:
             return fresh
         self.detail = public_kick_detail(fresh, True)
+        if session is not None and not session.responsive():
+            return fresh
         self.store.set_status("kick", "ok", self.detail)
         return fresh
 

@@ -2,7 +2,7 @@
 
 Organic list. It will grow and shrink. This file is the shared focus for what to build next. Do not treat it as a commitment to start every item in one pass.
 
-Current app version is `1.10.0` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
+Current app version is `1.10.1` (`source/collector/streamdonations/__init__.py` and `source/electron/package.json`). Change it with `python3 scripts/version.py`. A peripheral fix does not raise the number. Wishlist work raises the middle number unless the request says it is major.
 
 The 2026-09-30 resume reminder has fired. Do not put that timer back.
 
@@ -27,6 +27,8 @@ The 2026-09-30 resume reminder has fired. Do not put that timer back.
 9. **Chat commands.** `!total` and `!top`, per ledger and per platform, off by default. The first word only, any case. One 2-minute cooldown per chat, shared by both commands and every ledger reading that chat, in memory, started when a reply is attempted. History, repeats, the signed-in account, and the app's own replies never answer. `!top` skips anonymous donors, has no `@`, and is off while top donors are hidden. YouTube and Kick post as the signed-in account (YouTube 21 units each); Rumble is typed by the desktop window and is not available in browser mode. See README, Chat commands. Not tried on a real live stream yet.
 
 10. **BLUE PLATFORM, raw amount, and chat lines.** `SEND CHAT TO PLATFORM` answers in the chat the gift came from (on a goal, the gift that reached the tier; a syntax error on a timer). It skips manual and pasted entries, Other rows, a chat that cannot post right now, and a signed-in YouTube, Kick webhook, or Rumble owner-API gift that is not this ledger's chat, each logged once per script start. `RAW AMOUNT` and `{RAWAMOUNT}` are the amount as sent (Kicks as coins, ISO 4217 decimals), `CURRENCY` and `{CURRENCY}` the code (`KICKS` for Kicks), `{MENTION}` is `@name` or empty, and `{TOTALLINE}`/`{TOPLINE}` are the chat-command lines fitted to each chat. `ON DONATION` skips gifts over 2 minutes old or from before the script started. One thank-you per gift per line and chat in 2 minutes, and at most 6 BLUE chat lines per chat per minute. See README, BLUE. Not tried on a real live stream yet; signed-in YouTube Super Chats polled every 15 minutes are mostly past the 2-minute window, so the public reader is what thanks them.
+
+11. **Kick chat reconnects after a network change.** A public Kick chat socket that went silent without closing was read forever while the status said connected; only a soft disconnect fixed it. The socket now has a watchdog: a Pusher ping after Kick's `activity_timeout` with a 30-second answer window, a Centrifugo server-ping check, and a 150-second cap on silence for any provider, then a reconnect with 2-to-60-second backoff. TCP keepalive is on, a frame split by a read timeout stays in step, and the status (including the webhook status) says "Kick chat stopped responding; reconnecting." while it is quiet. Covered by tests with a fake silent server; not yet tried by switching Wi-Fi on Windows.
 
 ## To do
 

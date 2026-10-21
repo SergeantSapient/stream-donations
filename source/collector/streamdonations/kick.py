@@ -27,7 +27,7 @@ from .kick_sig import (
     verify_rsa_sha256,
     webhook_is_fresh,
 )
-from .kick_public import PublicKickChat, kick_slug
+from .kick_public import STALE_MESSAGE, PublicKickChat, kick_slug
 from .normalize import normalize_kick_event
 from .store import Store
 from .transport import HttpResult, Transport, api_error_message
@@ -227,15 +227,19 @@ class KickClient:
             detail += " Kick cannot deliver to loopback unless you forward this port or set the listen host to 0.0.0.0."
         if self._public.detail:
             detail += " " + self._public.detail
-        if self._public.error:
-            detail += " Public chat: " + self._public.error
-            self.store.set_status("kick", "error", detail, error=self._public.error)
+        public_error = self._public.error or (STALE_MESSAGE if self._public.stale() else "")
+        if public_error:
+            # Webhooks can be fine while the public chat socket is not. Say so.
+            detail += " Public chat: " + public_error
+            self.store.set_status("kick", "error", detail, error=public_error)
             return
         self.store.set_status("kick", state, detail)
 
     def _report_public(self) -> None:
         if self._public.error:
             self.store.set_status("kick", "error", self._public.error, error=self._public.error)
+        elif self._public.stale():
+            self.store.set_status("kick", "error", STALE_MESSAGE, error=STALE_MESSAGE)
         elif self._public.detail:
             self.store.set_status("kick", "ok", self._public.detail)
         else:
