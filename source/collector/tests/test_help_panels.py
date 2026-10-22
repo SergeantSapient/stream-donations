@@ -92,7 +92,7 @@ class HelpPanelTests(unittest.TestCase):
         for sentence in (
             "One reply per chat every 2 minutes, and other commands in that time are ignored.",
             "Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden.",
-            "Off unless turned on here. This belongs to the open ledger.",
+            "Off unless turned on here. It saves as soon as it changes. This belongs to the open ledger, a new ledger copies it, and a streamer preset can set it.",
         ):
             self.assertIn(sentence, template)
         script = (WEB / "app.js").read_text(encoding="utf-8")
@@ -111,11 +111,11 @@ class HelpPanelTests(unittest.TestCase):
             "Replies post as the signed-in Kick account.",
             "Click Connect again after this update so the same account can post into that channel’s chat.",
             "Nothing is typed into chat. People enter by sending the keyword themselves.",
-            "Save before changing ledgers, or unsaved edits here are dropped.",
+            "Each change saves on its own: a box or list right away, a typed value when you leave the field.",
             "Leave it blank and those amounts stay empty.",
             "Rumble’s terms do not allow a script to type or send chat.",
             "Kick coins convert at 100 coins = $1.",
-            "API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first.",
+            "API keys, secrets, and platform addresses are not included. Export uses the saved values.",
             "Sending to Rumble chat and the chats embedded beside the stream need the SuperBerry desktop app.",
             "Rates By Exchange Rate API",
             "Exchange rates have not been downloaded yet.",
@@ -135,7 +135,7 @@ class HelpPanelTests(unittest.TestCase):
         settings = settings[:settings.index("</dialog>")]
         order = [settings.index(marker) for marker in (
             'id="help-settings-kicks-export"',
-            '<button type="submit" class="primary">Save</button>',
+            'id="settings-export"',
             'id="help-settings-file"',
             'id="fx-status"',
             'id="fx-refresh"',

@@ -72,19 +72,10 @@
           <textarea id="chat-compose" maxlength="2000" rows="2" placeholder="Message" aria-label="Message"></textarea>
           <button type="submit" id="chat-send" class="icon-button" aria-label="Send" title="Send"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
         </div>
-        <div class="watch-chat-rumble" role="group" aria-label="Pop-out chat">
-          <span class="watch-chat-site">
-            <button type="button" id="youtube-sign-in" class="icon-button" aria-label="YouTube sign-in" title="YouTube sign-in"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
-            <button type="button" id="youtube-popout" class="icon-button" aria-label="Open YouTube chat" title="Open YouTube chat"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
-          </span>
-          <span class="watch-chat-site">
-            <button type="button" id="kick-sign-in" class="icon-button" aria-label="Kick sign-in" title="Kick sign-in"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
-            <button type="button" id="kick-popout" class="icon-button" aria-label="Open Kick chat" title="Open Kick chat"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
-          </span>
-          <span class="watch-chat-site">
-            <button type="button" id="rumble-sign-in" class="icon-button" aria-label="Rumble sign-in" title="Rumble sign-in"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg></button>
-            <button type="button" id="rumble-popout" class="icon-button" aria-label="Open Rumble chat" title="Open Rumble chat"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
-          </span>
+        <div class="watch-chat-popouts" role="group" aria-label="Pop-out chat">
+          <button type="button" id="youtube-popout" class="icon-button" aria-label="Open YouTube chat" title="Open YouTube chat"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
+          <button type="button" id="kick-popout" class="icon-button" aria-label="Open Kick chat" title="Open Kick chat"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
+          <button type="button" id="rumble-popout" class="icon-button" aria-label="Open Rumble chat" title="Open Rumble chat"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"></path><path d="M19 5 11 13"></path><path d="M19 13v5H6V6h5"></path></svg></button>
         </div>
       </form>
     </div>
@@ -471,6 +462,7 @@
         <div>
           <h2 id="youtube-title"><span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span></h2>
           <p class="endpoint">Public live chat, or your own Super Chat history</p>
+        <p class="autosave-note" data-autosave-note role="status" aria-live="polite" hidden></p>
         </div>
         <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
@@ -524,13 +516,17 @@
       </div>
       <p id="youtube-commands-note" class="hint commands-note" hidden></p>
       <p class="hint">“The user is not enabled for live streaming” means that Google account cannot go live. Memberships on your own broadcast are skipped. A public video URL still works, and you do not need to enable live streaming to watch someone else’s chat.</p>
-      <p class="hint">YouTube sign-in, under the chat, opens YouTube’s own sign-in and keeps that website session on this computer. The password is not stored. Open YouTube chat is YouTube’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <p class="hint">Register this redirect URI on the Google client:</p>
       <input id="youtube-redirect" class="copy" readonly>
       <div class="row">
-        <button type="submit" class="primary">Save</button>
         <button type="button" id="youtube-connect">Connect</button>
         <button type="button" id="youtube-disconnect">Disconnect</button>
+      </div>
+      <div class="site-sign-in">
+        <p class="hint">Website sign-in opens YouTube’s own sign-in and keeps that website session on this computer, for the chat beside the stream. The password is not stored. It is separate from Connect. Open YouTube chat, in the Stream panel, is YouTube’s pop-out chat for this ledger. SuperBerry does not type into it.</p>
+        <div class="row">
+          <button type="button" id="youtube-sign-in" aria-label="YouTube sign-in" title="YouTube sign-in"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg>Website sign-in</button>
+        </div>
       </div>
       <p id="youtube-status" class="status" data-state="unconfigured">Not started</p>
       <input id="youtube-url" class="copy" readonly hidden>
@@ -543,6 +539,7 @@
         <div>
           <h2 id="rumble-title"><span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span></h2>
           <p class="endpoint">Public chat stream, or the owner API</p>
+        <p class="autosave-note" data-autosave-note role="status" aria-live="polite" hidden></p>
         </div>
         <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
@@ -554,7 +551,12 @@
       <label>Owner API URL, optional <input id="rumble-url" type="password" autocomplete="off" placeholder="Leave blank to keep the saved URL"></label>
       <label>Poll seconds <input id="rumble-poll" type="number" min="5" max="120" step="1" value="8"></label>
       <p class="hint">The URL from rumble.com/account/livestream-api only works for a channel you own. It adds subscriber dollar amounts the public chat does not include.</p>
-      <p class="hint">Rumble sign-in, under the chat, opens Rumble’s own login and keeps that website session on this computer. The password is not stored. Open Rumble chat is Rumble’s pop-out chat for this ledger.</p>
+      <div class="site-sign-in">
+        <p class="hint">Website sign-in opens Rumble’s own login and keeps that website session on this computer. The password is not stored. Rumble replies and combined chat type into that signed-in chat. Open Rumble chat, in the Stream panel, is Rumble’s pop-out chat for this ledger.</p>
+        <div class="row">
+          <button type="button" id="rumble-sign-in" aria-label="Rumble sign-in" title="Rumble sign-in"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg>Website sign-in</button>
+        </div>
+      </div>
       <p id="rumble-chat-warning" class="hint">Rumble’s terms do not allow a script to type or send chat. Using this can restrict the account. Continuing is your choice. After that, combined chat posts into the signed-in Rumble chat for this stream.</p>
       <p id="rumble-chat-ack" class="hint" hidden>Rumble chat posting is on for this computer.</p>
       <div class="row">
@@ -577,7 +579,6 @@
       </div>
       <p id="rumble-commands-note" class="hint commands-note" hidden></p>
       <div class="row">
-        <button type="submit" class="primary">Save</button>
         <button type="button" id="rumble-clear">Remove URL</button>
       </div>
       <p id="rumble-status" class="status" data-state="unconfigured">Not started</p>
@@ -590,6 +591,7 @@
         <div>
           <h2 id="kick-title"><span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span></h2>
           <p class="endpoint">Public chat, or your own webhooks</p>
+        <p class="autosave-note" data-autosave-note role="status" aria-live="polite" hidden></p>
         </div>
         <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
       </header>
@@ -609,7 +611,6 @@
           </ul>
         </section>
       </div>
-      <p class="hint">Kick sign-in, under the chat, opens Kick’s own login and keeps that website session on this computer. The password is not stored. Open Kick chat is Kick’s pop-out chat for this ledger. That window is separate from Connect. SuperBerry does not type into it.</p>
       <label class="check"><input id="kick-follow-live" type="checkbox"> Show whether this channel is live</label>
       <p class="hint">Chat is read either way. When this is on, the status also says whether a broadcast is live. That does not change the chat. This belongs to the open ledger.</p>
       <label class="check"><input id="kick-chat-commands" type="checkbox"> Answer !total and !top in this chat</label>
@@ -637,10 +638,15 @@
       <p class="hint">Webhook URL to enable on the Kick app:</p>
       <input id="kick-webhook" class="copy" readonly>
       <div class="row">
-        <button type="submit" class="primary">Save</button>
         <button type="button" id="kick-connect">Connect</button>
         <button type="button" id="kick-subscribe">Subscribe</button>
         <button type="button" id="kick-disconnect">Disconnect</button>
+      </div>
+      <div class="site-sign-in">
+        <p class="hint">Website sign-in opens Kick’s own login and keeps that website session on this computer, for the chat beside the stream. The password is not stored. It is separate from Connect. Open Kick chat, in the Stream panel, is Kick’s pop-out chat for this ledger. SuperBerry does not type into it.</p>
+        <div class="row">
+          <button type="button" id="kick-sign-in" aria-label="Kick sign-in" title="Kick sign-in"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 12h9"></path><path d="M15 8l4 4-4 4"></path></svg>Website sign-in</button>
+        </div>
       </div>
       <p id="kick-status" class="status" data-state="unconfigured">Not started</p>
       <input id="kick-url" class="copy" readonly hidden>
@@ -657,7 +663,7 @@
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
     <div class="help-lead">
-      <p class="hint">Save a streamer's channels, goal tiers, and an optional BLUE script, then choose it in a ledger's addresses or use Apply to open ledger.</p>
+      <p class="hint">Save a streamer's channels, !total and !top switches, goal tiers, and an optional BLUE script, then choose it in a ledger's addresses or use Apply to open ledger.</p>
       <button type="button" class="help-toggle" data-help="streamers" aria-expanded="false" aria-controls="help-streamers" aria-label="Streamer presets help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
     </div>
     <div id="help-streamers" class="help-block" role="region" aria-label="Streamer presets help" hidden>
@@ -687,6 +693,13 @@
       <label><span class="platform-phrase"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="kick">Kick</span> channel URL</span> <input id="preset-kick" autocomplete="off" spellcheck="false" placeholder="https://kick.com/channel"></label>
       <label>BLUE script <select id="preset-script"><option value="">None</option></select></label>
       <p class="hint">Optional. The script runs while a ledger that saved this preset is connected. None stores no script on the preset.</p>
+      <fieldset class="preset-commands">
+        <legend>Answer !total and !top</legend>
+        <label class="check"><input id="preset-youtube-commands" type="checkbox"> <span class="platform-phrase"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="youtube">YouTube</span></span></label>
+        <label class="check"><input id="preset-rumble-commands" type="checkbox"> <span class="platform-phrase"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="rumble">Rumble</span></span></label>
+        <label class="check"><input id="preset-kick-commands" type="checkbox"> <span class="platform-phrase"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true"><span class="platform-name" data-platform="kick">Kick</span></span></label>
+      </fieldset>
+      <p class="hint">Applying the preset turns each ledger switch on or off to match. Off means the ledger ignores that command in that chat.</p>
       <label class="check"><input id="tiers-enabled" type="checkbox"> Goal tiers on the stream total</label>
       <div id="goal-tiers"></div>
       <p class="hint">Up to five goals. The chat line names the next one that still has a name, and how many dollars are left. A cent short of a goal still counts as reached. Turn tiers off when this streamer has none. Goals alone do not save a preset; add at least one channel.</p>
@@ -907,11 +920,12 @@
       <div>
         <h2 id="settings-title">Settings</h2>
         <p class="endpoint">Ledger</p>
+        <p class="autosave-note" data-autosave-note role="status" aria-live="polite" hidden></p>
       </div>
       <button type="button" class="icon-button sheet-close" aria-label="Close" title="Close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
     </header>
     <div class="help-lead">
-      <p class="hint">Membership price, the extra chat note, and top donors belong to the open ledger. Save before changing ledgers, or unsaved edits here are dropped.</p>
+      <p class="hint">Membership price, the extra chat note, and top donors belong to the open ledger. Each change saves on its own: a box or list right away, a typed value when you leave the field.</p>
       <button type="button" class="help-toggle" data-help="settings-ledger" aria-expanded="false" aria-controls="help-settings-ledger" aria-label="Settings help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
     </div>
     <div id="help-settings-ledger" class="help-block" role="region" aria-label="Settings help" hidden>
@@ -979,15 +993,12 @@
       </section>
     </div>
     <div class="row">
-      <button type="submit" class="primary">Save</button>
-    </div>
-    <div class="row">
       <a id="settings-export" class="button" href="/api/settings/export" download="stream-donations-settings.json">Export settings</a>
       <button type="button" id="settings-import">Import settings</button>
       <input id="settings-import-file" type="file" accept="application/json,.json" hidden>
     </div>
     <div class="help-lead">
-      <p class="hint">API keys, secrets, and platform addresses are not included. Export uses the saved values, so save first.</p>
+      <p class="hint">API keys, secrets, and platform addresses are not included. Export uses the saved values.</p>
       <button type="button" class="help-toggle" data-help="settings-file" aria-expanded="false" aria-controls="help-settings-file" aria-label="Settings file help"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9.5 9a2.5 2.5 0 0 1 4.2 1.8c0 1.4-2.2 1.6-2.2 3.2"></path><path d="M12 17h.01"></path></svg>Help</button>
     </div>
     <div id="help-settings-file" class="help-block" role="region" aria-label="Settings file help" hidden>
@@ -1107,7 +1118,7 @@
     <h2 id="ledger-urls-title">Addresses for this ledger</h2>
     <p id="ledger-urls-intro" class="hint">This ledger starts with a blank name and no donations. Each ledger keeps its own <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span>, <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span>, and <span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span> address. API keys stay shared. For <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span> or <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span>, turn on Follow the live stream and that field asks for a channel URL instead of a video. <span class="platform-name" data-platform="kick"><img class="platform-mark" src="/icons/kick.svg" alt="" aria-hidden="true">Kick</span> is already a channel. Leave any of these blank and fill them in later.</p>
     <label>Streamer preset <select id="ledger-preset"><option value="">None</option></select></label>
-    <p class="hint">Choosing a preset fills the channel fields. None clears them. Saving while a preset is chosen writes its goals and BLUE script onto this ledger. None, then Save, leaves the ledger's goals and script as they are. Save presets from Streamers in the menu.</p>
+    <p class="hint">Choosing a preset fills the channel fields. None clears them. Saving while a preset is chosen writes its goals, !total and !top switches, and BLUE script onto this ledger. None, then Save, leaves the ledger's goals, switches, and script as they are. Save presets from Streamers in the menu.</p>
     <label class="check"><input id="ledger-youtube-follow" type="checkbox" aria-controls="ledger-youtube"> Follow the <span class="platform-name" data-platform="youtube"><img class="platform-mark" src="/icons/youtube.svg" alt="" aria-hidden="true">YouTube</span> live stream</label>
     <label><span id="ledger-youtube-label" class="platform-phrase"></span> <input id="ledger-youtube" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…" data-video-label="YouTube public video URL or id" data-channel-label="YouTube channel URL" data-video-placeholder="https://www.youtube.com/watch?v=…" data-channel-placeholder="https://www.youtube.com/@channel"></label>
     <label class="check"><input id="ledger-rumble-follow" type="checkbox" aria-controls="ledger-rumble"> Follow the <span class="platform-name" data-platform="rumble"><img class="platform-mark" src="/icons/rumble.svg" alt="" aria-hidden="true">Rumble</span> live stream</label>
@@ -1146,7 +1157,7 @@
       <li>A viewer who types !total or !top as the first word gets this ledger’s stream total line, or its top three named donors, in this chat.</li>
       <li>One reply per chat every 2 minutes, and other commands in that time are ignored.</li>
       <li>Anonymous donors are left out of !top, names have no @, and !top is ignored while top donors are hidden.</li>
-      <li>Off unless turned on here. This belongs to the open ledger.</li>
+      <li>Off unless turned on here. It saves as soon as it changes. This belongs to the open ledger, a new ledger copies it, and a streamer preset can set it.</li>
     </ul>
   </section>
 </template>

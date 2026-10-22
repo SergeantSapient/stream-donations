@@ -1666,7 +1666,10 @@ async function refresh(options) {
 }
 
 function enqueueStream(task) {
-  const run = streamChain.then(task, task);
+  // A settings edit saved from a dialog that just closed belongs to the ledger
+  // that was open then. Let it land before a ledger is switched, added, or closed.
+  const settle = () => autosave.chain;
+  const run = streamChain.then(settle, settle).then(task, task);
   streamChain = run.then(() => {}, () => {});
   return run;
 }
@@ -2221,6 +2224,7 @@ function renderPresetList(presets) {
     }
     const script = (state.blueScripts || []).find((item) => item.id === preset.script_id);
     if (script && script.name) channels.appendChild(document.createTextNode(" · " + script.name));
+    if (PRESET_COMMAND_KEYS.some(([key]) => preset[key])) channels.appendChild(document.createTextNode(" · !total/!top"));
     meta.appendChild(channels);
     const edit = el("button", null, "Edit");
     edit.type = "button";
@@ -2754,7 +2758,23 @@ function presetFormBody() {
     tiers_enabled: $("tiers-enabled").checked,
     goal_tiers: collectTiers(),
     script_id: ($("preset-script") && $("preset-script").value) || "",
+    ...presetCommandSwitches(),
   };
+}
+
+// !total and !top per platform. A preset writes them onto the ledger it is applied to.
+const PRESET_COMMAND_KEYS = [
+  ["youtube_chat_commands", "preset-youtube-commands"],
+  ["rumble_chat_commands", "preset-rumble-commands"],
+  ["kick_chat_commands", "preset-kick-commands"],
+];
+
+function presetCommandSwitches() {
+  const body = {};
+  PRESET_COMMAND_KEYS.forEach(([key, id]) => {
+    body[key] = Boolean($(id) && $(id).checked);
+  });
+  return body;
 }
 
 let presetBusy = false;
@@ -2882,6 +2902,9 @@ function editPreset(preset) {
   const script = $("preset-script");
   if (script) script.value = preset.script_id || "";
   if ($("tiers-enabled")) $("tiers-enabled").checked = Boolean(preset.tiers_enabled);
+  PRESET_COMMAND_KEYS.forEach(([key, id]) => {
+    if ($(id)) $(id).checked = Boolean(preset[key]);
+  });
   renderTierFields(preset.goal_tiers);
   const name = $("preset-name");
   if (name) name.focus();
@@ -2957,6 +2980,9 @@ function ledgerAddressPayload() {
     body.tiers_enabled = Boolean(preset.tiers_enabled);
     body.goal_tiers = Array.isArray(preset.goal_tiers) ? preset.goal_tiers : [];
     body.blue_script_id = preset.script_id || "";
+    PRESET_COMMAND_KEYS.forEach(([key]) => {
+      body[key] = Boolean(preset[key]);
+    });
   }
   return body;
 }
@@ -4584,43 +4610,285 @@ function ledgerPageSizeFromForm() {
   return number;
 }
 
-function applySettingsToForm(settings) {
+// Settings save on change -------------------------------------------------
+// A checkbox or select saves when it changes. A text or number field saves
+// when it is committed (change or blur), after a short pause, never per key.
+// Each field is its own request, so an invalid value is refused alone and the
+// rest still save. Closing a dialog saves whatever is still waiting.
+const AUTOSAVE_DELAY_MS = 500;
+const AUTOSAVE_NOTE_MS = 2000;
+const AUTOSAVE_FIELDS = [
+  { id: "youtube-watch", key: "youtube_watch", kind: "text", form: "youtube-form" },
+  { id: "youtube-follow-live", key: "youtube_follow_live", kind: "check", form: "youtube-form" },
+  { id: "youtube-channel", key: "youtube_channel", kind: "text", form: "youtube-form" },
+  { id: "youtube-client-id", key: "youtube_client_id", kind: "text", form: "youtube-form" },
+  { id: "youtube-secret", key: "youtube_client_secret", kind: "secret", form: "youtube-form" },
+  { id: "youtube-poll", key: "youtube_poll_seconds", kind: "number", form: "youtube-form" },
+  { id: "youtube-chat-commands", key: "youtube_chat_commands", kind: "check", form: "youtube-form" },
+  { id: "rumble-watch", key: "rumble_watch", kind: "text", form: "rumble-form" },
+  { id: "rumble-follow-live", key: "rumble_follow_live", kind: "check", form: "rumble-form" },
+  { id: "rumble-channel", key: "rumble_channel", kind: "text", form: "rumble-form" },
+  { id: "rumble-url", key: "rumble_api_url", kind: "secret", form: "rumble-form" },
+  { id: "rumble-poll", key: "rumble_poll_seconds", kind: "number", form: "rumble-form" },
+  { id: "rumble-chat-commands", key: "rumble_chat_commands", kind: "check", form: "rumble-form" },
+  { id: "kick-watch", key: "kick_watch", kind: "text", form: "kick-form" },
+  { id: "kick-follow-live", key: "kick_follow_live", kind: "check", form: "kick-form" },
+  { id: "kick-chat-commands", key: "kick_chat_commands", kind: "check", form: "kick-form" },
+  { id: "kick-client-id", key: "kick_client_id", kind: "text", form: "kick-form" },
+  { id: "kick-secret", key: "kick_client_secret", kind: "secret", form: "kick-form" },
+  { id: "kick-host", key: "kick_webhook_host", kind: "text", form: "kick-form" },
+  { id: "kick-port", key: "kick_webhook_port", kind: "number", form: "kick-form" },
+  { id: "kick-public", key: "kick_public_base", kind: "text", form: "kick-form" },
+  { id: "ledger-page-size", key: "ledger_page_size", kind: "page-size", form: "settings-form", also: ["ledger-page-custom"] },
+  { id: "membership-price", key: "membership_price", kind: "text", form: "settings-form" },
+  { id: "chat-extra", key: "chat_extra", kind: "raw", form: "settings-form" },
+  { id: "show-top-donors", key: "show_top_donors", kind: "check", form: "settings-form", saved: (s) => s.show_top_donors !== false },
+];
+const AUTOSAVE_FORMS = ["youtube-form", "rumble-form", "kick-form", "settings-form"];
+const autosave = { timers: {}, chain: Promise.resolve(), refused: {}, noteTimers: {} };
+
+function savedFieldValue(field, settings) {
+  if (field.saved) return field.saved(settings);
+  const value = settings[field.key];
+  if (field.kind === "check") return Boolean(value);
+  if (field.kind === "page-size") return normalizeLedgerPageSize(value);
+  if (field.key === "kick_webhook_host") return value || "127.0.0.1";
+  return value === undefined || value === null ? "" : String(value);
+}
+
+// { value } to send, null when the field matches what is saved, or { error }.
+function readAutosaveField(field, settings) {
+  const el = $(field.id);
+  if (!el) return null;
+  if (field.kind === "check") {
+    return el.checked === savedFieldValue(field, settings) ? null : { value: el.checked };
+  }
+  if (field.kind === "secret") {
+    const text = el.value.trim();
+    return text ? { value: text } : null;
+  }
+  if (field.kind === "page-size") {
+    const custom = $("ledger-page-custom");
+    // Choosing Custom waits for a number.
+    if (el.value === "custom" && custom && !custom.value.trim()) return null;
+    let size;
+    try {
+      size = ledgerPageSizeFromForm();
+    } catch (error) {
+      return { error: error.message };
+    }
+    return size === savedFieldValue(field, settings) ? null : { value: size };
+  }
+  const text = field.kind === "raw" ? el.value : el.value.trim();
+  return text === savedFieldValue(field, settings) ? null : { value: text };
+}
+
+function autosaveFieldsIn(formId) {
+  return AUTOSAVE_FIELDS.filter((field) => field.form === formId);
+}
+
+function markFieldInvalid(field, invalid) {
+  [field.id, ...(field.also || [])].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    if (invalid) el.setAttribute("aria-invalid", "true");
+    else el.removeAttribute("aria-invalid");
+  });
+}
+
+function unsavedFieldIds(settings, except) {
+  const ids = new Set();
+  AUTOSAVE_FIELDS.forEach((field) => {
+    if (except && except.has(field.id)) return;
+    const read = readAutosaveField(field, settings || {});
+    if (read) {
+      ids.add(field.id);
+      (field.also || []).forEach((id) => ids.add(id));
+    }
+  });
+  return ids;
+}
+
+function showAutosaveNote(formId, text, failed) {
+  const form = $(formId);
+  const note = form && form.querySelector("[data-autosave-note]");
+  if (!note) return;
+  clearTimeout(autosave.noteTimers[formId]);
+  note.textContent = text;
+  note.dataset.state = failed ? "error" : "ok";
+  note.hidden = false;
+  if (!failed && text === "Saved") {
+    autosave.noteTimers[formId] = setTimeout(() => {
+      note.hidden = true;
+      note.textContent = "";
+    }, AUTOSAVE_NOTE_MS);
+  }
+}
+
+function scheduleAutosave(formId, delay) {
+  clearTimeout(autosave.timers[formId]);
+  autosave.timers[formId] = setTimeout(() => {
+    delete autosave.timers[formId];
+    flushAutosave(formId).catch(() => {});
+  }, delay);
+}
+
+// Saves every changed field of one form, one request each, in order.
+// Resolves with the number of fields that could not be saved.
+function flushAutosave(formId, options) {
+  clearTimeout(autosave.timers[formId]);
+  delete autosave.timers[formId];
+  const closing = Boolean(options && options.closing);
+  const run = async () => {
+    let failed = 0;
+    let saved = 0;
+    for (const field of autosaveFieldsIn(formId)) {
+      const read = readAutosaveField(field, state.settings || {});
+      if (!read) {
+        markFieldInvalid(field, false);
+        delete autosave.refused[field.id];
+        continue;
+      }
+      const el = $(field.id);
+      const attempt = JSON.stringify(read.value === undefined ? read.error : read.value);
+      if (read.error) {
+        failed += 1;
+        markFieldInvalid(field, true);
+        if (closing || autosave.refused[field.id] !== attempt) toast(read.error, true);
+        autosave.refused[field.id] = attempt;
+        continue;
+      }
+      // The same refused value is not sent again until it changes.
+      if (!closing && autosave.refused[field.id] === attempt) {
+        failed += 1;
+        continue;
+      }
+      if (closing && autosave.refused[field.id] === attempt) {
+        failed += 1;
+        toast(el && el.dataset.refusal ? el.dataset.refusal : "That value was not saved.", true);
+        continue;
+      }
+      showAutosaveNote(formId, "Saving…");
+      try {
+        const settings = await api("/api/settings", {
+          method: "PUT",
+          body: JSON.stringify({ [field.key]: read.value }),
+        });
+        if (field.kind === "secret" && el && el.value.trim() === read.value) el.value = "";
+        delete autosave.refused[field.id];
+        if (el) delete el.dataset.refusal;
+        markFieldInvalid(field, false);
+        // Other fields the user is still editing keep what is on screen.
+        applySettingsToForm(settings, { keep: unsavedFieldIds(state.settings, new Set([field.id])) });
+        saved += 1;
+      } catch (error) {
+        failed += 1;
+        autosave.refused[field.id] = attempt;
+        if (el) el.dataset.refusal = error.message;
+        markFieldInvalid(field, true);
+        toast(error.message, true);
+      }
+    }
+    if (failed) showAutosaveNote(formId, "Not saved", true);
+    else if (saved) showAutosaveNote(formId, "Saved");
+    if (saved && formId === "settings-form") await refresh().catch(() => {});
+    return failed;
+  };
+  const next = autosave.chain.then(run, run);
+  autosave.chain = next.catch(() => {});
+  return next;
+}
+
+function flushAllAutosaves(options) {
+  return Promise.all(AUTOSAVE_FORMS.map((formId) => flushAutosave(formId, options)));
+}
+
+function bindAutosave() {
+  AUTOSAVE_FIELDS.forEach((field) => {
+    [field.id, ...(field.also || [])].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      const delay = el.type === "checkbox" || el.tagName === "SELECT" ? 0 : AUTOSAVE_DELAY_MS;
+      el.addEventListener("change", () => scheduleAutosave(field.form, delay));
+      if (el.type !== "checkbox" && el.tagName !== "SELECT") {
+        el.addEventListener("blur", () => scheduleAutosave(field.form, AUTOSAVE_DELAY_MS));
+      }
+    });
+  });
+  AUTOSAVE_FORMS.forEach((formId) => {
+    const form = $(formId);
+    if (!form) return;
+    // Enter in a field saves now. There is no Save button.
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      flushAutosave(formId).catch(() => {});
+    });
+    const dialog = form.closest("dialog");
+    if (!dialog) return;
+    dialog.addEventListener("close", () => {
+      flushAutosave(formId, { closing: true })
+        .then(() => api("/api/settings"))
+        .then((settings) => {
+          // A closed dialog shows only what is saved.
+          autosaveFieldsIn(formId).forEach((field) => {
+            delete autosave.refused[field.id];
+            const el = $(field.id);
+            if (field.kind === "secret" && el) el.value = "";
+          });
+          applySettingsToForm(settings, { keep: unsavedFieldIds(state.settings, new Set(autosaveFieldsIn(formId).map((field) => field.id))) });
+        })
+        .catch((error) => toast(error.message, true));
+    });
+  });
+}
+
+function applySettingsToForm(settings, options) {
+  // keep names fields with an edit that is not saved yet. A save response
+  // must not overwrite what the user is still typing in another field.
+  const keep = (options && options.keep) || new Set();
+  const put = (id, write) => {
+    const el = $(id);
+    if (el && !keep.has(id)) write(el);
+  };
   state.settings = settings;
-  $("youtube-client-id").value = settings.youtube_client_id || "";
-  $("youtube-watch").value = settings.youtube_watch || "";
-  $("youtube-channel").value = settings.youtube_channel || "";
-  $("youtube-follow-live").checked = Boolean(settings.youtube_follow_live);
-  $("youtube-chat-commands").checked = Boolean(settings.youtube_chat_commands);
-  $("youtube-poll").value = settings.youtube_poll_seconds;
+  put("youtube-client-id", (el) => { el.value = settings.youtube_client_id || ""; });
+  put("youtube-watch", (el) => { el.value = settings.youtube_watch || ""; });
+  put("youtube-channel", (el) => { el.value = settings.youtube_channel || ""; });
+  put("youtube-follow-live", (el) => { el.checked = Boolean(settings.youtube_follow_live); });
+  put("youtube-chat-commands", (el) => { el.checked = Boolean(settings.youtube_chat_commands); });
+  put("youtube-poll", (el) => { el.value = settings.youtube_poll_seconds; });
   $("youtube-redirect").value = settings.google_redirect_uri || "";
   $("youtube-secret").placeholder = settings.youtube_client_secret_set
     ? "Saved. Leave blank to keep it."
     : "Client secret";
-  $("rumble-poll").value = settings.rumble_poll_seconds;
-  $("rumble-watch").value = settings.rumble_watch || "";
-  $("rumble-channel").value = settings.rumble_channel || "";
-  $("rumble-follow-live").checked = Boolean(settings.rumble_follow_live);
-  $("rumble-chat-commands").checked = Boolean(settings.rumble_chat_commands);
+  put("rumble-poll", (el) => { el.value = settings.rumble_poll_seconds; });
+  put("rumble-watch", (el) => { el.value = settings.rumble_watch || ""; });
+  put("rumble-channel", (el) => { el.value = settings.rumble_channel || ""; });
+  put("rumble-follow-live", (el) => { el.checked = Boolean(settings.rumble_follow_live); });
+  put("rumble-chat-commands", (el) => { el.checked = Boolean(settings.rumble_chat_commands); });
   $("rumble-url").placeholder = settings.rumble_api_url_set
     ? "Saved. Leave blank to keep it."
     : "https://rumble.com/-livestream-api/get-data?key=…";
-  $("kick-watch").value = settings.kick_watch || "";
-  $("kick-follow-live").checked = Boolean(settings.kick_follow_live);
-  $("kick-chat-commands").checked = Boolean(settings.kick_chat_commands);
+  put("kick-watch", (el) => { el.value = settings.kick_watch || ""; });
+  put("kick-follow-live", (el) => { el.checked = Boolean(settings.kick_follow_live); });
+  put("kick-chat-commands", (el) => { el.checked = Boolean(settings.kick_chat_commands); });
   renderCommandNotes();
-  $("kick-client-id").value = settings.kick_client_id || "";
-  $("kick-host").value = settings.kick_webhook_host || "127.0.0.1";
-  $("kick-port").value = settings.kick_webhook_port;
-  $("kick-public").value = settings.kick_public_base || "";
+  put("kick-client-id", (el) => { el.value = settings.kick_client_id || ""; });
+  put("kick-host", (el) => { el.value = settings.kick_webhook_host || "127.0.0.1"; });
+  put("kick-port", (el) => { el.value = settings.kick_webhook_port; });
+  put("kick-public", (el) => { el.value = settings.kick_public_base || ""; });
   $("kick-redirect").value = settings.kick_redirect_uri || "";
   $("kick-webhook").value = settings.kick_webhook_hint || "";
   $("kick-secret").placeholder = settings.kick_client_secret_set
     ? "Saved. Leave blank to keep it."
     : "Client secret";
-  if ($("membership-price")) $("membership-price").value = settings.membership_price || "";
-  syncLedgerPageSize(settings.ledger_page_size);
-  if ($("show-top-donors")) $("show-top-donors").checked = settings.show_top_donors !== false;
-  if ($("chat-extra")) $("chat-extra").value = settings.chat_extra || "";
+  put("membership-price", (el) => { el.value = settings.membership_price || ""; });
+  if (!keep.has("ledger-page-size")) syncLedgerPageSize(settings.ledger_page_size);
+  put("show-top-donors", (el) => { el.checked = settings.show_top_donors !== false; });
+  put("chat-extra", (el) => { el.value = settings.chat_extra || ""; });
+  AUTOSAVE_FIELDS.forEach((field) => {
+    if (!keep.has(field.id)) markFieldInvalid(field, false);
+  });
   if (settings.fx) renderFx(settings.fx);
   const nextSignature = watchAddressSignature(settings);
   const addressesChanged = watchBound && nextSignature !== watchSignature;
@@ -4673,6 +4941,7 @@ function showOpenUrl(input, url, opened) {
 
 function bind() {
   renderTierFields([]);
+  bindAutosave();
   $("fx-refresh").addEventListener("click", () => {
     $("fx-refresh").disabled = true;
     api("/api/rates/refresh", { method: "POST" })
@@ -4688,24 +4957,6 @@ function bind() {
       .finally(() => {
         $("fx-refresh").disabled = false;
       });
-  });
-  $("settings-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    let ledgerPageSize;
-    try {
-      ledgerPageSize = ledgerPageSizeFromForm();
-    } catch (error) {
-      toast(error.message, true);
-      return;
-    }
-    saveSettings({
-      membership_price: $("membership-price").value.trim(),
-      show_top_donors: $("show-top-donors").checked,
-      chat_extra: $("chat-extra").value,
-      ledger_page_size: ledgerPageSize,
-    })
-      .then(() => refresh())
-      .catch((error) => toast(error.message, true));
   });
   const pageSize = $("ledger-page-size");
   if (pageSize) {
@@ -4919,20 +5170,6 @@ function bind() {
     observer.observe(scroller);
   }
   window.addEventListener("resize", updateStreamBumpers);
-  $("youtube-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const body = {
-      youtube_client_id: $("youtube-client-id").value.trim(),
-      youtube_watch: $("youtube-watch").value.trim(),
-      youtube_channel: $("youtube-channel").value.trim(),
-      youtube_follow_live: $("youtube-follow-live").checked,
-      youtube_chat_commands: $("youtube-chat-commands").checked,
-      youtube_poll_seconds: Number($("youtube-poll").value),
-    };
-    if ($("youtube-secret").value) body.youtube_client_secret = $("youtube-secret").value;
-    $("youtube-secret").value = "";
-    saveSettings(body).catch((error) => toast(error.message, true));
-  });
   $("youtube-connect").addEventListener("click", () => {
     api("/api/oauth/youtube/start", { method: "POST" })
       .then((result) => showOpenUrl($("youtube-url"), result.url, result.opened))
@@ -4945,38 +5182,10 @@ function bind() {
       .catch((error) => toast(error.message, true));
   });
 
-  $("rumble-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const body = {
-      rumble_poll_seconds: Number($("rumble-poll").value),
-      rumble_watch: $("rumble-watch").value.trim(),
-      rumble_channel: $("rumble-channel").value.trim(),
-      rumble_follow_live: $("rumble-follow-live").checked,
-      rumble_chat_commands: $("rumble-chat-commands").checked,
-    };
-    if ($("rumble-url").value) body.rumble_api_url = $("rumble-url").value.trim();
-    $("rumble-url").value = "";
-    saveSettings(body).catch((error) => toast(error.message, true));
-  });
   $("rumble-clear").addEventListener("click", () => {
     saveSettings({ rumble_api_url: "" }).catch((error) => toast(error.message, true));
   });
 
-  $("kick-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const body = {
-      kick_watch: $("kick-watch").value.trim(),
-      kick_follow_live: $("kick-follow-live").checked,
-      kick_chat_commands: $("kick-chat-commands").checked,
-      kick_client_id: $("kick-client-id").value.trim(),
-      kick_webhook_host: $("kick-host").value.trim(),
-      kick_webhook_port: Number($("kick-port").value),
-      kick_public_base: $("kick-public").value.trim(),
-    };
-    if ($("kick-secret").value) body.kick_client_secret = $("kick-secret").value;
-    $("kick-secret").value = "";
-    saveSettings(body).catch((error) => toast(error.message, true));
-  });
   $("kick-connect").addEventListener("click", () => {
     api("/api/oauth/kick/start", { method: "POST" })
       .then((result) => showOpenUrl($("kick-url"), result.url, result.opened))

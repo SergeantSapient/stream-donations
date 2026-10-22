@@ -852,20 +852,16 @@ button.primary:hover { border-color: var(--accent); background: #f7f6f1; }
   max-height: 7rem;
 }
 
-.watch-chat-rumble {
+/* Pop-out chats only. Website sign-in is in each platform's dialog. */
+.watch-chat-popouts {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem;
+  justify-content: flex-end;
+  gap: 0.3rem;
 }
 
-.watch-chat-site {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.watch-chat-rumble .icon-button {
+.watch-chat-popouts .icon-button {
   flex: none;
   gap: 0.15rem;
   padding: 0.4rem 0.45rem;
@@ -2256,3 +2252,42 @@ button.archive-day-toggle:hover {
 
 /* Settings: app version and license, at the end of the dialog. */
 .about-line { margin-top: 12px; color: var(--faint); }
+
+/* Settings save on change. A short note in the dialog head says so. */
+.autosave-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.autosave-note[data-state="error"] { color: var(--bad, #e06c6c); }
+.card [aria-invalid="true"] { border-color: var(--bad, #e06c6c); }
+
+.site-sign-in {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+.site-sign-in .row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.preset-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.1rem;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  border: 0;
+}
+.preset-commands legend {
+  width: 100%;
+  margin-bottom: 0.1rem;
+  padding: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.preset-commands .check { margin: 0.25rem 0; }
