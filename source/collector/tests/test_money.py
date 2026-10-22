@@ -47,7 +47,7 @@ class MoneyTests(unittest.TestCase):
                     "yt-chat",
                     "youtube",
                     "super_chat",
-                    "BakedBuddhist",
+                    "SampleBuddy",
                     "hello",
                     2,
                     "USD",
@@ -57,7 +57,7 @@ class MoneyTests(unittest.TestCase):
                     "yt-sticker",
                     "youtube",
                     "super_sticker",
-                    "predawncorpses",
+                    "latenightdonors",
                     "poop",
                     0.99,
                     "USD",
@@ -67,7 +67,7 @@ class MoneyTests(unittest.TestCase):
                     "yt-aud",
                     "youtube",
                     "super_chat",
-                    "Shadowalker13-w1r",
+                    "Testwalker13-w1r",
                     "censor",
                     10,
                     "AUD",
@@ -77,7 +77,7 @@ class MoneyTests(unittest.TestCase):
                     "kick-small",
                     "kick",
                     "kicks",
-                    "manikantan_r",
+                    "sample_r",
                     "Hell Yeah",
                     1,
                     "KICKS",
@@ -87,7 +87,7 @@ class MoneyTests(unittest.TestCase):
                     "kick-five",
                     "kick",
                     "kicks",
-                    "predawncorpse",
+                    "latenightdonor",
                     "five",
                     500,
                     "KICKS",
@@ -171,7 +171,7 @@ class MoneyTests(unittest.TestCase):
         first = parsed[0]
         self.assertEqual(first["Date"], "2026-09-14")
         self.assertEqual(first["Time"], "20:21:43")
-        self.assertEqual(first["Donor"], "BakedBuddhist")
+        self.assertEqual(first["Donor"], "SampleBuddy")
         self.assertEqual(first["Amount"], "2.00")
         self.assertEqual(first["Platform"], "YouTube")
         self.assertEqual(first["Type"], "Super Chat")
@@ -179,26 +179,26 @@ class MoneyTests(unittest.TestCase):
         self.assertEqual(first["Amount USD"], "2.00")
         self.assertEqual(first["Message"], "hello")
         by_donor = {item["Donor"]: item for item in parsed}
-        self.assertEqual(by_donor["manikantan_r"]["Type"], "Super Sticker")
-        self.assertEqual(by_donor["manikantan_r"]["Amount"], "0.01")
-        self.assertEqual(by_donor["manikantan_r"]["Currency"], "USD")
-        self.assertEqual(by_donor["predawncorpse"]["Type"], "Super Chat")
-        self.assertEqual(by_donor["predawncorpse"]["Amount"], "5.00")
+        self.assertEqual(by_donor["sample_r"]["Type"], "Super Sticker")
+        self.assertEqual(by_donor["sample_r"]["Amount"], "0.01")
+        self.assertEqual(by_donor["sample_r"]["Currency"], "USD")
+        self.assertEqual(by_donor["latenightdonor"]["Type"], "Super Chat")
+        self.assertEqual(by_donor["latenightdonor"]["Amount"], "5.00")
         self.assertEqual(by_donor["edge"]["Type"], "Super Sticker")
         self.assertEqual(by_donor["edge"]["Amount"], "4.99")
         self.assertEqual(by_donor["SergeantSapient"]["Platform"], "Rumble")
         self.assertEqual(by_donor["SergeantSapient"]["Type"], "Super Chat")
-        self.assertEqual(by_donor["predawncorpses"]["Type"], "Super Sticker")
-        self.assertEqual(by_donor["Shadowalker13-w1r"]["Currency"], "AUD")
-        self.assertEqual(by_donor["Shadowalker13-w1r"]["Amount"], "10.00")
-        self.assertEqual(by_donor["Shadowalker13-w1r"]["Amount USD"], "7.01")
+        self.assertEqual(by_donor["latenightdonors"]["Type"], "Super Sticker")
+        self.assertEqual(by_donor["Testwalker13-w1r"]["Currency"], "AUD")
+        self.assertEqual(by_donor["Testwalker13-w1r"]["Amount"], "10.00")
+        self.assertEqual(by_donor["Testwalker13-w1r"]["Amount USD"], "7.01")
         self.assertEqual(by_donor["peastri7804"]["Type"], "Membership")
         self.assertEqual(by_donor["peastri7804"]["Amount"], "4.99")
         self.assertEqual(by_donor["peastri7804"]["Amount USD"], "4.99")
         self.assertEqual(by_donor["gifter"]["Amount"], "14.99")
         self.assertIn("'=HYPERLINK", text)
         donors = [item["Donor"] for item in parsed]
-        self.assertLess(donors.index("BakedBuddhist"), donors.index("evil"))
+        self.assertLess(donors.index("SampleBuddy"), donors.index("evil"))
 
     def test_blank_membership_price_leaves_the_amount_empty(self):
         text = self.store.export_csv(rates=RATES, membership_price=None, zone=timezone.utc)
@@ -214,7 +214,7 @@ class MoneyTests(unittest.TestCase):
                 "youtube",
                 "member_milestone",
                 "samfisher2141",
-                "Member for 2 months · Smashers · HAIL Smash",
+                "Member for 2 months · Samplers · HAIL Sample",
                 None,
                 None,
                 "2026-09-30T05:47:36Z",
@@ -239,7 +239,7 @@ class MoneyTests(unittest.TestCase):
         stickers, sticker_total = self.store.list_donations(kind="super_sticker")
         members, member_total = self.store.list_donations(kind="membership")
         self.assertEqual(chat_total, 5)
-        self.assertEqual({row["author_name"] for row in chats}, {"BakedBuddhist", "Shadowalker13-w1r", "predawncorpse", "SergeantSapient", "evil"})
+        self.assertEqual({row["author_name"] for row in chats}, {"SampleBuddy", "Testwalker13-w1r", "latenightdonor", "SergeantSapient", "evil"})
         self.assertEqual(sticker_total, 3)
         self.assertEqual(member_total, 3)
 
@@ -280,7 +280,7 @@ class MoneyTests(unittest.TestCase):
                 "kind": "membership_gift",
                 "amount_value": None,
                 "currency": None,
-                "message": "Sent 5 Smash JT gift memberships",
+                "message": "Sent 5 Sample Show gift memberships",
                 "raw": {
                     "header": {
                         "liveChatSponsorshipsHeaderRenderer": {
@@ -288,7 +288,7 @@ class MoneyTests(unittest.TestCase):
                                 "runs": [
                                     {"text": "Sent "},
                                     {"text": "5"},
-                                    {"text": " Smash JT gift memberships"},
+                                    {"text": " Sample Show gift memberships"},
                                 ]
                             }
                         }
@@ -348,10 +348,10 @@ class MoneyTests(unittest.TestCase):
                 "kind": "membership",
                 "amount_value": None,
                 "currency": None,
-                "message": "Smashers",
+                "message": "Samplers",
                 "raw": {
                     "headerPrimaryText": {"runs": [{"text": "Member for 2 months"}]},
-                    "headerSubtext": {"simpleText": "Smashers"},
+                    "headerSubtext": {"simpleText": "Samplers"},
                 },
             },
             4.99,
@@ -396,8 +396,8 @@ class MoneyTests(unittest.TestCase):
                 "kind": "membership",
                 "amount_value": None,
                 "currency": None,
-                "message": "Smashers",
-                "raw": {"headerSubtext": {"simpleText": "Smashers"}},
+                "message": "Samplers",
+                "raw": {"headerSubtext": {"simpleText": "Samplers"}},
             },
             4.99,
             RATES,

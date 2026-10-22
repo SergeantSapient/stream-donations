@@ -154,7 +154,7 @@ class PresetStoreTests(unittest.TestCase):
     def test_presets_stay_shared_and_off_the_new_ledger(self):
         self.store.set_setting("youtube_watch", "abcdefghijk")
         saved = self.store.save_streamer_preset("Zed", YOUTUBE, RUMBLE, KICK)
-        first = self.store.save_streamer_preset("Ada", "", "", "https://kick.com/xqc")
+        first = self.store.save_streamer_preset("Ada", "", "", "https://kick.com/kickstar")
         listed = self.store.streamer_presets()
         self.assertEqual([item["name"] for item in listed], ["Ada", "Zed"])
         self.assertEqual(self.store.get_setting("youtube_channel"), "")

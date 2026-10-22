@@ -1248,7 +1248,7 @@ class ApiTests(unittest.TestCase):
 
     def test_manual_entry_keeps_php(self):
         status, _headers, body = self._request("/api/donations", method="POST", body={
-            "author_name": "kayeend",
+            "author_name": "testkaye",
             "platform": "youtube",
             "kind": "super_chat",
             "amount": "50.00",
@@ -1509,7 +1509,7 @@ class ApiTests(unittest.TestCase):
             kind="super_chat",
             external_id="verbose",
             channel="",
-            author_name="kayeend",
+            author_name="testkaye",
             author_id="",
             message="tip",
             amount_value=50.0,
@@ -1517,7 +1517,7 @@ class ApiTests(unittest.TestCase):
             currency="PHP",
             created_at="2026-10-01T04:40:52Z",
             raw={
-                "authorName": {"simpleText": "kayeend"},
+                "authorName": {"simpleText": "testkaye"},
                 "purchaseAmountText": {"simpleText": "₱50.00"},
                 "access_token": secret,
                 "authorPhoto": {"thumbnails": [{"url": "https://example.test/thumb.jpg"}]},
@@ -1528,7 +1528,7 @@ class ApiTests(unittest.TestCase):
         listed = json.loads(body)
         self.assertLessEqual(len(listed["log"]), 100)
         joined = "\n".join(row["message"] for row in listed["log"])
-        self.assertIn("kayeend", joined)
+        self.assertIn("testkaye", joined)
         self.assertIn("₱50.00", joined)
         self.assertNotIn(secret, joined)
         self.assertNotIn("thumb.jpg", joined)
@@ -1562,9 +1562,9 @@ class ApiTests(unittest.TestCase):
             body={
                 "youtube_watch": "abcdefghijk",
                 "youtube_follow_live": True,
-                "youtube_channel": "https://www.youtube.com/@nasa/videos",
+                "youtube_channel": "https://www.youtube.com/@samplechannel/videos",
                 "rumble_follow_live": True,
-                "rumble_channel": "https://rumble.com/c/NewsmaxTV/livestreams",
+                "rumble_channel": "https://rumble.com/c/SampleNewsTV/livestreams",
                 "kick_follow_live": True,
             },
         )
@@ -1572,13 +1572,13 @@ class ApiTests(unittest.TestCase):
         saved = json.loads(body)
         self.assertEqual(saved["youtube_watch"], "abcdefghijk")
         self.assertTrue(saved["youtube_follow_live"])
-        self.assertEqual(saved["youtube_channel"], "https://www.youtube.com/@nasa/videos")
-        self.assertEqual(saved["rumble_channel"], "https://rumble.com/c/NewsmaxTV/livestreams")
+        self.assertEqual(saved["youtube_channel"], "https://www.youtube.com/@samplechannel/videos")
+        self.assertEqual(saved["rumble_channel"], "https://rumble.com/c/SampleNewsTV/livestreams")
         self.assertTrue(saved["kick_follow_live"])
         status, _headers, exported = self._request("/api/settings/export")
         self.assertEqual(status, 200)
-        self.assertNotIn(b"@nasa", exported)
-        self.assertNotIn(b"NewsmaxTV", exported)
+        self.assertNotIn(b"@samplechannel", exported)
+        self.assertNotIn(b"SampleNewsTV", exported)
         self.assertNotIn(b"abcdefghijk", exported)
 
         status, _headers, body = self._request(
@@ -1588,7 +1588,7 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn(b"video", body.lower())
-        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@nasa/videos")
+        self.assertEqual(self.store.get_setting("youtube_channel"), "https://www.youtube.com/@samplechannel/videos")
         self.assertEqual(self.store.get_setting("youtube_watch"), "abcdefghijk")
 
         status, _headers, body = self._request(
@@ -1611,7 +1611,7 @@ class ApiTests(unittest.TestCase):
                 "youtube_follow_live": False,
                 "rumble_watch": "446413572",
                 "rumble_follow_live": False,
-                "kick_watch": "https://kick.com/xqc",
+                "kick_watch": "https://kick.com/kickstar",
             },
         )
         self.assertEqual(status, 200)
@@ -1622,7 +1622,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(first["rumble_watch"], "446413572")
         self.assertEqual(first["rumble_channel"], "")
         self.assertFalse(first["rumble_follow_live"])
-        self.assertEqual(first["kick_watch"], "https://kick.com/xqc")
+        self.assertEqual(first["kick_watch"], "https://kick.com/kickstar")
         self.assertFalse(first["kick_follow_live"])
 
         status, _headers, body = self._request("/api/streams", method="POST", body={"action": "add"})
@@ -1641,19 +1641,19 @@ class ApiTests(unittest.TestCase):
             "/api/settings",
             method="PUT",
             body={
-                "youtube_channel": "https://www.youtube.com/@nasa",
+                "youtube_channel": "https://www.youtube.com/@samplechannel",
                 "youtube_follow_live": True,
-                "rumble_channel": "https://rumble.com/c/NewsmaxTV",
+                "rumble_channel": "https://rumble.com/c/SampleNewsTV",
                 "rumble_follow_live": True,
                 "kick_watch": "https://kick.com/channel",
             },
         )
         self.assertEqual(status, 200)
         saved = json.loads(body)
-        self.assertEqual(saved["youtube_channel"], "https://www.youtube.com/@nasa")
+        self.assertEqual(saved["youtube_channel"], "https://www.youtube.com/@samplechannel")
         self.assertTrue(saved["youtube_follow_live"])
         self.assertEqual(saved["youtube_watch"], "")
-        self.assertEqual(saved["rumble_channel"], "https://rumble.com/c/NewsmaxTV")
+        self.assertEqual(saved["rumble_channel"], "https://rumble.com/c/SampleNewsTV")
         self.assertTrue(saved["rumble_follow_live"])
         self.assertEqual(saved["rumble_watch"], "")
         self.assertEqual(saved["kick_watch"], "https://kick.com/channel")
@@ -1669,7 +1669,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(back["youtube_watch"], "abcdefghijk")
         self.assertEqual(back["youtube_channel"], "")
         self.assertFalse(back["youtube_follow_live"])
-        self.assertEqual(back["kick_watch"], "https://kick.com/xqc")
+        self.assertEqual(back["kick_watch"], "https://kick.com/kickstar")
         self.assertFalse(back["kick_follow_live"])
 
     def test_streamer_presets_are_shared_and_left_out_of_the_export(self):
@@ -1727,7 +1727,7 @@ class ApiTests(unittest.TestCase):
         status, _headers, body = self._request("/api/presets", method="POST", body={
             "action": "save",
             "name": "ada",
-            "kick_watch": "https://kick.com/xqc",
+            "kick_watch": "https://kick.com/kickstar",
         })
         self.assertEqual(status, 200)
         listed = json.loads(body)["presets"]
@@ -2162,7 +2162,7 @@ class ApiTests(unittest.TestCase):
         self.store.set_setting("youtube_watch", "abcdefghijk")
         self.store.set_setting("rumble_follow_live", "0")
         self.store.set_setting("rumble_watch", "9604851")
-        self.store.set_setting("kick_watch", "https://kick.com/smashjt")
+        self.store.set_setting("kick_watch", "https://kick.com/sampleshow")
 
         status, _headers, body = self._request("/api/embed?platform=youtube")
         self.assertEqual(status, 200)
@@ -2178,12 +2178,12 @@ class ApiTests(unittest.TestCase):
 
         status, _headers, body = self._request("/api/embed?platform=kick")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["url"], "https://player.kick.com/smashjt")
+        self.assertEqual(json.loads(body)["url"], "https://player.kick.com/sampleshow")
         self.assertNotIn(b"autoplay=1", body)
 
         logged = "\n".join(row["message"] for row in self.store.recent_log())
         self.assertNotIn("abcdefghijk", logged)
-        self.assertNotIn("smashjt", logged)
+        self.assertNotIn("sampleshow", logged)
         self.assertNotIn("v5pv5f", logged)
 
         self.store.set_setting("kick_watch", "")
@@ -2200,15 +2200,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 401)
 
         self.store.set_setting("youtube_follow_live", "1")
-        self.store.set_setting("youtube_channel", "https://www.youtube.com/@SmashJT/")
+        self.store.set_setting("youtube_channel", "https://www.youtube.com/@SampleShow/")
 
         def down(_channel):
-            raise ApiError("HTTP 503: https://www.youtube.com/@SmashJT/", status=503)
+            raise ApiError("HTTP 503: https://www.youtube.com/@SampleShow/", status=503)
 
         self.app.service.youtube.public_live_video_id = down
         status, _headers, body = self._request("/api/embed?platform=youtube")
         self.assertEqual(status, 502)
-        self.assertNotIn(b"SmashJT", body)
+        self.assertNotIn(b"SampleShow", body)
         self.assertIn(b"That address could not be embedded.", body)
 
     def test_embed_panel_stays_beside_the_ledger(self):

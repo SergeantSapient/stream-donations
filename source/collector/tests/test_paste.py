@@ -17,8 +17,8 @@ from streamdonations.store import Store
 
 class YouTubeSuperChatTests(unittest.TestCase):
     def test_reads_donor_usd_amount_and_message(self):
-        parsed = parse_entry("predawncorpses\n$0.99\nKeep going brother")
-        self.assertEqual(parsed.donor, "predawncorpses")
+        parsed = parse_entry("latenightdonors\n$0.99\nKeep going brother")
+        self.assertEqual(parsed.donor, "latenightdonors")
         self.assertEqual(parsed.amount, "0.99")
         self.assertEqual(parsed.currency, "USD")
         self.assertEqual(parsed.donation_type, "Super Chat")
@@ -98,7 +98,7 @@ class YouTubeSuperChatTests(unittest.TestCase):
 
     def test_message_is_one_line_and_later_like_is_chrome(self):
         parsed = parse_entry("\n".join([
-            "@Proctophile",
+            "@SampleTipper",
             "Member (6 months)",
             "",
             "#2",
@@ -108,7 +108,7 @@ class YouTubeSuperChatTests(unittest.TestCase):
             "",
             "Like",
         ]))
-        self.assertEqual(parsed.donor, "Proctophile")
+        self.assertEqual(parsed.donor, "SampleTipper")
         self.assertEqual(parsed.amount, "2.00")
         self.assertEqual(parsed.currency, "USD")
         self.assertEqual(parsed.donation_type, "Super Chat")
@@ -127,29 +127,29 @@ class YouTubeSuperChatTests(unittest.TestCase):
 
     def test_keeps_a_message_that_includes_a_truncated_url(self):
         parsed = parse_entry("\n".join([
-            "@predawncorpses",
+            "@latenightdonors",
             "Member (1 year)",
             "$6.66",
             "",
-            'SMASH! "What a horrible night to have a CURSE!” PLOX PLAY (IT AGAIN) SUFFAH MR. MORROW!: https://youtu.be/J4tThOaeH34?si=XuH-O...',
+            'SAMPLE! "What a horrible night to have a CURSE!” PLOX PLAY (IT AGAIN) SUFFAH MR. EXAMPLE!: https://youtu.be/Xmpl3Vid0A1?si=XuH-O...',
             "",
             "Like",
             "",
             "Reply",
         ]))
-        self.assertEqual(parsed.donor, "predawncorpses")
+        self.assertEqual(parsed.donor, "latenightdonors")
         self.assertEqual(parsed.amount, "6.66")
         self.assertEqual(parsed.platform, "YouTube")
         self.assertEqual(parsed.donation_type, "Super Chat")
-        self.assertIn("SMASH!", parsed.message)
-        self.assertIn("https://youtu.be/J4tThOaeH34", parsed.message)
+        self.assertIn("SAMPLE!", parsed.message)
+        self.assertIn("https://youtu.be/Xmpl3Vid0A1", parsed.message)
         self.assertNotIn("Like", parsed.message)
         self.assertNotIn("Reply", parsed.message)
 
 
 class MembershipTests(unittest.TestCase):
     def test_youtube_gifts_use_price_times_count(self):
-        parsed = parse_entry("GenerousFan\nSent 5 Smashers gift memberships")
+        parsed = parse_entry("GenerousFan\nSent 5 Samplers gift memberships")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.platform, "YouTube")
         self.assertEqual(parsed.amount, "24.95")
@@ -158,21 +158,21 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(parsed.membership.count, 5)
 
     def test_paste_example_prices_five_smash_jt_memberships(self):
-        text = "@twilightdragon3\nSent 5 Smash JT gift memberships\n"
+        text = "@exampledragon3\nSent 5 Sample Show gift memberships\n"
         parsed = parse_entry(text, 4.99)
-        self.assertEqual(parsed.donor, "twilightdragon3")
+        self.assertEqual(parsed.donor, "exampledragon3")
         self.assertEqual(parsed.platform, "YouTube")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.amount, "24.95")
         self.assertEqual(parsed.membership.count, 5)
-        alone = parse_entry("Sent 5 Smash JT gift memberships", 4.99)
+        alone = parse_entry("Sent 5 Sample Show gift memberships", 4.99)
         self.assertEqual(alone.donation_type, "Membership")
         self.assertEqual(alone.amount, "24.95")
         self.assertEqual(alone.donor, "")
-        capital = parse_entry("Fan\nSent 5 Smash JT Memberships", 4.99)
+        capital = parse_entry("Fan\nSent 5 Sample Show Memberships", 4.99)
         self.assertEqual(capital.amount, "24.95")
-        wrapped = parse_entry("@twilightdragon3\nSent 5 Smash JT\ngift memberships", 4.99)
-        self.assertEqual(wrapped.donor, "twilightdragon3")
+        wrapped = parse_entry("@exampledragon3\nSent 5 Sample Show\ngift memberships", 4.99)
+        self.assertEqual(wrapped.donor, "exampledragon3")
         self.assertEqual(wrapped.amount, "24.95")
         self.assertEqual(wrapped.membership.count, 5)
 
@@ -183,13 +183,13 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(parsed.amount, "9.98")
 
     def test_rumble_gift_ladder_at_the_default_price(self):
-        parsed = parse_entry("RumbleFan\nGifted 3 subscriptions to SmashJT")
+        parsed = parse_entry("RumbleFan\nGifted 3 subscriptions to SampleShow")
         self.assertEqual(parsed.platform, "Rumble")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.amount, "14.99")
 
     def test_single_rumble_gift_uses_the_membership_price(self):
-        parsed = parse_entry("SergeantSapient\nGifted 1 subscription to SmashJT")
+        parsed = parse_entry("SergeantSapient\nGifted 1 subscription to SampleShow")
         self.assertEqual(parsed.donor, "SergeantSapient")
         self.assertEqual(parsed.platform, "Rumble")
         self.assertEqual(parsed.donation_type, "Membership")
@@ -201,8 +201,8 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(parsed.message, "")
 
     def test_welcome_is_a_new_youtube_membership(self):
-        parsed = parse_entry("@PhantomGB\nWelcome to Somebody!")
-        self.assertEqual(parsed.donor, "PhantomGB")
+        parsed = parse_entry("@SampleGB\nWelcome to Somebody!")
+        self.assertEqual(parsed.donor, "SampleGB")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.platform, "YouTube")
         self.assertEqual(parsed.amount, "4.99")
@@ -213,15 +213,15 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(parsed.membership.count, 1)
 
     def test_new_member_is_a_single_membership(self):
-        parsed = parse_entry("PhantomGB\nNew member")
+        parsed = parse_entry("SampleGB\nNew member")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.amount, "4.99")
         self.assertIsNotNone(parsed.membership)
         self.assertEqual(parsed.membership.type, "new")
 
     def test_member_badge_between_donor_and_welcome(self):
-        parsed = parse_entry("@PhantomGB\nMember\nWelcome to Somebody!")
-        self.assertEqual(parsed.donor, "PhantomGB")
+        parsed = parse_entry("@SampleGB\nMember\nWelcome to Somebody!")
+        self.assertEqual(parsed.donor, "SampleGB")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.amount, "4.99")
         self.assertEqual(parsed.message, "")
@@ -234,14 +234,14 @@ class MembershipTests(unittest.TestCase):
 
     def test_amount_below_welcome_stays_a_super_chat(self):
         parsed = parse_entry("\n".join([
-            "@Murvoth",
+            "@Testvoth",
             "Member (6 months)",
             "Welcome to Somebody!",
             "$5.00",
             "",
             "How u know getting old,sleep like that sounds good",
         ]))
-        self.assertEqual(parsed.donor, "Murvoth")
+        self.assertEqual(parsed.donor, "Testvoth")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "USD")
@@ -251,41 +251,41 @@ class MembershipTests(unittest.TestCase):
 
     def test_a_real_sentence_is_not_priced_as_a_membership(self):
         parsed = parse_entry("\n".join([
-            "@Murvoth",
+            "@Testvoth",
             "Member (6 months)",
             "Welcome to Somebody!",
             "",
             "How u know getting old,sleep like that sounds good",
         ]))
-        self.assertEqual(parsed.donor, "Murvoth")
+        self.assertEqual(parsed.donor, "Testvoth")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "")
         self.assertEqual(parsed.message, "How u know getting old,sleep like that sounds good")
         self.assertIsNone(parsed.membership)
 
     def test_one_word_channel_leftover_stays_a_membership(self):
-        parsed = parse_entry("@PhantomGB\nWelcome to Somebody!\nSomebody")
+        parsed = parse_entry("@SampleGB\nWelcome to Somebody!\nSomebody")
         self.assertEqual(parsed.donation_type, "Membership")
         self.assertEqual(parsed.amount, "4.99")
         self.assertEqual(parsed.message, "")
 
     def test_configured_price_follows_the_ledger_formula(self):
-        youtube = parse_entry("GenerousFan\nSent 3 Smashers gift memberships", membership_price=6)
+        youtube = parse_entry("GenerousFan\nSent 3 Samplers gift memberships", membership_price=6)
         self.assertEqual(youtube.amount, "18.00")
-        rumble = parse_entry("RumbleFan\nGifted 3 subscriptions to SmashJT", membership_price=6)
+        rumble = parse_entry("RumbleFan\nGifted 3 subscriptions to SampleShow", membership_price=6)
         self.assertEqual(rumble.amount, "16.00")
-        single = parse_entry("SergeantSapient\nGifted 1 subscription to SmashJT", membership_price=6)
+        single = parse_entry("SergeantSapient\nGifted 1 subscription to SampleShow", membership_price=6)
         self.assertEqual(single.amount, "6.00")
         kick = parse_entry("KickChatter\nGifted 2 subscriptions to the community!", membership_price=6)
         self.assertEqual(kick.amount, "12.00")
 
     def test_blank_membership_price_leaves_the_amount_blank(self):
-        gift = parse_entry("GenerousFan\nSent 5 Smashers gift memberships", membership_price=None)
+        gift = parse_entry("GenerousFan\nSent 5 Samplers gift memberships", membership_price=None)
         self.assertEqual(gift.donation_type, "Membership")
         self.assertEqual(gift.amount, "")
-        new = parse_entry("@PhantomGB\nWelcome to Somebody!", membership_price=None)
+        new = parse_entry("@SampleGB\nWelcome to Somebody!", membership_price=None)
         self.assertEqual(new.amount, "")
-        rumble = parse_entry("RumbleFan\nGifted 3 subscriptions to SmashJT", membership_price=None)
+        rumble = parse_entry("RumbleFan\nGifted 3 subscriptions to SampleShow", membership_price=None)
         self.assertEqual(rumble.amount, "")
         kick = parse_entry("KickChatter\nGifted 2 subscriptions to the community!", membership_price=None)
         self.assertEqual(kick.amount, "")
@@ -293,18 +293,18 @@ class MembershipTests(unittest.TestCase):
 
 class KickCoinTests(unittest.TestCase):
     def test_bare_sent_line_counts_the_coins(self):
-        parsed = parse_entry("Kit94\n sent\n500")
+        parsed = parse_entry("Tst94\n sent\n500")
         self.assertEqual(parsed.platform, "Kick")
-        self.assertEqual(parsed.donor, "Kit94")
+        self.assertEqual(parsed.donor, "Tst94")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "USD")
         self.assertEqual(parsed.message, "")
 
     def test_bare_sent_line_keeps_a_message_before_the_coins(self):
-        parsed = parse_entry("Kit94\n sent\nnice\n250")
+        parsed = parse_entry("Tst94\n sent\nnice\n250")
         self.assertEqual(parsed.platform, "Kick")
-        self.assertEqual(parsed.donor, "Kit94")
+        self.assertEqual(parsed.donor, "Tst94")
         self.assertEqual(parsed.donation_type, "Super Sticker")
         self.assertEqual(parsed.amount, "2.50")
         self.assertEqual(parsed.message, "nice")
@@ -326,19 +326,19 @@ class KickCoinTests(unittest.TestCase):
 
     def test_chat_line_between_sent_and_coins_is_the_message(self):
         parsed = parse_entry("\n".join([
-            "predawncorpse",
+            "latenightdonor",
             " sent Rage Quit",
-            "@SmashJT you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!",
+            "@SampleShow you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!",
             "500",
         ]))
         self.assertEqual(parsed.platform, "Kick")
-        self.assertEqual(parsed.donor, "predawncorpse")
+        self.assertEqual(parsed.donor, "latenightdonor")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "USD")
         self.assertEqual(
             parsed.message,
-            "@SmashJT you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!",
+            "@SampleShow you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!",
         )
 
     def test_blank_line_between_sent_and_coins(self):
@@ -356,13 +356,13 @@ class KickCoinTests(unittest.TestCase):
 
     def test_comma_grouped_coins(self):
         parsed = parse_entry("\n".join([
-            "manikantan_r",
+            "sample_r",
             " sent YAP",
             "MEMECOPIUM IS BEING A BLIZZARD REEEETARUDURO. SO HERE FOR YOUR STRUGGLEB US",
             "2,000",
         ]))
         self.assertEqual(parsed.platform, "Kick")
-        self.assertEqual(parsed.donor, "manikantan_r")
+        self.assertEqual(parsed.donor, "sample_r")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "20.00")
         self.assertEqual(parsed.currency, "USD")
@@ -375,12 +375,12 @@ class KickCoinTests(unittest.TestCase):
 class ExtensionTests(unittest.TestCase):
     def test_youtube_one_liner(self):
         parsed = parse_entry(
-            "[YouTube] @Wild_Man_of_Yavin: $5.00 - Here is five for the chat. "
+            "[YouTube] @Wild_Fan_of_Testing: $5.00 - Here is five for the chat. "
             "Spend a lil bit of time to caramelize onions. Just on low. Sit on low with some butter. "
             "Add that to your burger anyways, o7"
         )
         self.assertEqual(parsed.platform, "YouTube")
-        self.assertEqual(parsed.donor, "Wild_Man_of_Yavin")
+        self.assertEqual(parsed.donor, "Wild_Fan_of_Testing")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "USD")
@@ -400,11 +400,11 @@ class ExtensionTests(unittest.TestCase):
 
     def test_gbp_extension_line(self):
         parsed = parse_entry(
-            "[YouTube] @tamamotakamori5025: £5.00 - I know some elderly gay couples and my lord "
+            "[YouTube] @samplesupporter5025: £5.00 - I know some elderly gay couples and my lord "
             "they are the most chill people ever, they are so funny and have never once said they were"
         )
         self.assertEqual(parsed.platform, "YouTube")
-        self.assertEqual(parsed.donor, "tamamotakamori5025")
+        self.assertEqual(parsed.donor, "samplesupporter5025")
         self.assertEqual(parsed.donation_type, "Super Chat")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "GBP")
@@ -416,10 +416,10 @@ class ExtensionTests(unittest.TestCase):
 
     def test_wrapped_one_liner_is_joined(self):
         parsed = parse_entry("\n".join([
-            "[YouTube] @tamamotakamori5025: £5.00 - I know some elderly gay couples and my lord they are the most chill people ever, they",
+            "[YouTube] @samplesupporter5025: £5.00 - I know some elderly gay couples and my lord they are the most chill people ever, they",
             "are so funny and have never once said they were",
         ]))
-        self.assertEqual(parsed.donor, "tamamotakamori5025")
+        self.assertEqual(parsed.donor, "samplesupporter5025")
         self.assertEqual(parsed.amount, "5.00")
         self.assertEqual(parsed.currency, "GBP")
         self.assertIn("elderly gay couples", parsed.message)
@@ -464,23 +464,23 @@ class DefaultTests(unittest.TestCase):
     def test_paste_never_returns_other_donation_or_digest(self):
         samples = [
             "",
-            "predawncorpses\n$0.99\nKeep going brother",
+            "latenightdonors\n$0.99\nKeep going brother",
             "@MapleFan\nWelcome to Somebody!",
             "KickChatter\nGifted 1 subscription to the community!\n1",
             "KickChatter\nsent Cat Jam\n500",
-            "Kit94\n sent\n500",
-            "predawncorpse\n sent Rage Quit\n@SmashJT you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!\n500",
-            "manikantan_r\n sent YAP\nMEMECOPIUM IS BEING A BLIZZARD REEEETARUDURO. SO HERE FOR YOUR STRUGGLEB US\n2,000",
+            "Tst94\n sent\n500",
+            "latenightdonor\n sent Rage Quit\n@SampleShow you should co-stream with Channel 404 News when doing the MMN segment! Also...YOU'RE GAY!\n500",
+            "sample_r\n sent YAP\nMEMECOPIUM IS BEING A BLIZZARD REEEETARUDURO. SO HERE FOR YOUR STRUGGLEB US\n2,000",
             "RumbleFan\n\n$5.00 this is a rant",
             "just some leftover text",
-            "[YouTube] @tamamotakamori5025: £5.00 - I know some elderly gay couples",
+            "[YouTube] @samplesupporter5025: £5.00 - I know some elderly gay couples",
         ]
         for body in samples:
             parsed = parse_entry(body)
             self.assertNotEqual(parsed.platform, "Other", body)
             self.assertNotEqual(parsed.donation_type, "Donation", body)
             self.assertNotEqual(parsed.donation_type, "Digest", body)
-        compact = parse_entry("[YouTube] @Wild_Man_of_Yavin: $5.00 - Here is five for the chat.")
+        compact = parse_entry("[YouTube] @Wild_Fan_of_Testing: $5.00 - Here is five for the chat.")
         self.assertNotEqual(compact.platform, "Other")
         self.assertNotEqual(compact.donation_type, "Donation")
         self.assertNotEqual(compact.donation_type, "Digest")
@@ -488,8 +488,8 @@ class DefaultTests(unittest.TestCase):
 
 class FormFieldTests(unittest.TestCase):
     def test_usd_amount_is_copied_through(self):
-        fields = paste_for_form("predawncorpses\n$0.99\nKeep going brother", 4.99, {"USD": 1.0})
-        self.assertEqual(fields["donor"], "predawncorpses")
+        fields = paste_for_form("latenightdonors\n$0.99\nKeep going brother", 4.99, {"USD": 1.0})
+        self.assertEqual(fields["donor"], "latenightdonors")
         self.assertEqual(fields["platform"], "youtube")
         self.assertEqual(fields["kind"], "super_chat")
         self.assertEqual(fields["amount"], "0.99")
@@ -499,11 +499,11 @@ class FormFieldTests(unittest.TestCase):
 
     def test_peso_paste_keeps_php_and_converts_to_usd(self):
         fields = paste_for_form(
-            "@kayeend\n₱50.00\n\njuuuuuuuuuuuuicy tip\n\n1",
+            "@testkaye\n₱50.00\n\njuuuuuuuuuuuuicy tip\n\n1",
             4.99,
             {"USD": 1.0, "PHP": 62.5},
         )
-        self.assertEqual(fields["donor"], "kayeend")
+        self.assertEqual(fields["donor"], "testkaye")
         self.assertEqual(fields["amount"], "50.00")
         self.assertEqual(fields["currency"], "PHP")
         self.assertEqual(fields["amount_usd"], "0.80")
@@ -577,11 +577,11 @@ class PasteApiTests(unittest.TestCase):
     def test_paste_fills_fields_and_does_not_insert_a_row(self):
         self.store.set_setting("membership_price", "4.99")
         status, body = self.request("/api/paste", "POST", {
-            "text": "predawncorpses\n$0.99\nKeep going brother",
+            "text": "latenightdonors\n$0.99\nKeep going brother",
         })
         self.assertEqual(status, 200)
         payload = json.loads(body)
-        self.assertEqual(payload["donor"], "predawncorpses")
+        self.assertEqual(payload["donor"], "latenightdonors")
         self.assertEqual(payload["amount_usd"], "0.99")
         self.assertEqual(payload["platform"], "youtube")
         self.assertEqual(payload["kind"], "super_chat")
@@ -593,7 +593,7 @@ class PasteApiTests(unittest.TestCase):
     def test_saved_membership_price_and_a_higher_rumble_price(self):
         self.store.set_setting("membership_price", "6.00")
         status, body = self.request("/api/paste", "POST", {
-            "text": "RumbleFan\nGifted 3 subscriptions to SmashJT",
+            "text": "RumbleFan\nGifted 3 subscriptions to SampleShow",
         })
         self.assertEqual(status, 200)
         payload = json.loads(body)
@@ -601,14 +601,14 @@ class PasteApiTests(unittest.TestCase):
         self.assertEqual(payload["platform"], "rumble")
         self.assertEqual(payload["amount_usd"], "16.00")
         status, body = self.request("/api/paste", "POST", {
-            "text": "GenerousFan\nSent 3 Smashers gift memberships",
+            "text": "GenerousFan\nSent 3 Samplers gift memberships",
         })
         self.assertEqual(json.loads(body)["amount_usd"], "18.00")
 
     def test_empty_membership_price_leaves_dollars_blank(self):
         self.store.set_setting("membership_price", "")
         status, body = self.request("/api/paste", "POST", {
-            "text": "GenerousFan\nSent 5 Smashers gift memberships",
+            "text": "GenerousFan\nSent 5 Samplers gift memberships",
         })
         self.assertEqual(status, 200)
         payload = json.loads(body)

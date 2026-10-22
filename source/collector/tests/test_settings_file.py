@@ -38,16 +38,16 @@ class SettingsFileTests(unittest.TestCase):
             "youtube_client_id": "client-id-value",
             "rumble_api_url": "https://rumble.com/-livestream-api/get-data?key=SECRETKEY",
             "stream_title": "Friday",
-            "youtube_channel": "https://www.youtube.com/@nasa",
-            "rumble_channel": "https://rumble.com/c/NewsmaxTV",
+            "youtube_channel": "https://www.youtube.com/@samplechannel",
+            "rumble_channel": "https://rumble.com/c/SampleNewsTV",
         })
         self.assertNotIn(b" ", body)
         self.assertNotIn(b"super-secret-value", body)
         self.assertNotIn(b"client-id-value", body)
         self.assertNotIn(b"SECRETKEY", body)
         self.assertNotIn(b"Friday", body)
-        self.assertNotIn(b"youtube.com/@nasa", body)
-        self.assertNotIn(b"rumble.com/c/NewsmaxTV", body)
+        self.assertNotIn(b"youtube.com/@samplechannel", body)
+        self.assertNotIn(b"rumble.com/c/SampleNewsTV", body)
         self.assertNotIn(b"\\u00e9", body)
         self.assertNotIn(b"tiers_enabled", body)
         self.assertNotIn(b"goal_tiers", body)

@@ -35,8 +35,8 @@ class PlayerUrlTests(unittest.TestCase):
         self.assertEqual(rumble_player_url("446413572"), "https://rumble.com/embed/v7ds6x0/")
         self.assertEqual(embed_to_chat_id("v5pv5f"), "9604851")
         self.assertEqual(embed_to_chat_id("v7ds6x0"), "446413572")
-        self.assertEqual(kick_player_url("https://kick.com/smashjt"), "https://player.kick.com/smashjt")
-        self.assertEqual(kick_player_url("SmashJT"), "https://player.kick.com/smashjt")
+        self.assertEqual(kick_player_url("https://kick.com/sampleshow"), "https://player.kick.com/sampleshow")
+        self.assertEqual(kick_player_url("SampleShow"), "https://player.kick.com/sampleshow")
         with self.assertRaises(ValueError):
             youtube_player_url("https://www.youtube.com/watch?v=abcdefghijk")
         with self.assertRaises(ValueError):
@@ -50,7 +50,7 @@ class PlayerUrlTests(unittest.TestCase):
         self.assertTrue(allowed_player_url("https://www.youtube.com/embed/abcdefghijk"))
         self.assertTrue(allowed_player_url("https://www.youtube-nocookie.com/embed/abcdefghijk"))
         self.assertTrue(allowed_player_url("https://rumble.com/embed/v5pv5f/"))
-        self.assertTrue(allowed_player_url("https://player.kick.com/smashjt"))
+        self.assertTrue(allowed_player_url("https://player.kick.com/sampleshow"))
         self.assertFalse(allowed_player_url("https://www.youtube.com/embed/abcdefghijk?autoplay=1"))
         self.assertFalse(allowed_player_url("https://www.youtube.com/watch?v=abcdefghijk"))
         self.assertFalse(allowed_player_url("http://www.youtube.com/embed/abcdefghijk"))
@@ -130,7 +130,7 @@ class PlayerUrlTests(unittest.TestCase):
         self.assertNotIn("http", youtube["message"] + rumble["message"] + kick["message"])
 
     def test_a_lookup_error_does_not_repeat_the_saved_address(self):
-        channel = "https://www.youtube.com/@SmashJT/"
+        channel = "https://www.youtube.com/@SampleShow/"
 
         def live(_channel):
             raise ValueError(f"Could not read {channel}")
@@ -142,7 +142,7 @@ class PlayerUrlTests(unittest.TestCase):
         )
         self.assertEqual(result["url"], "")
         self.assertEqual(result["message"], "That address could not be embedded.")
-        self.assertNotIn("SmashJT", result["message"])
+        self.assertNotIn("SampleShow", result["message"])
 
         def down(_channel):
             raise ApiError(f"HTTP 503: {channel}", status=503)
@@ -155,7 +155,7 @@ class PlayerUrlTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.status, 503)
         self.assertEqual(str(caught.exception), "That address could not be embedded.")
-        self.assertNotIn("SmashJT", str(caught.exception))
+        self.assertNotIn("SampleShow", str(caught.exception))
 
     def test_rumble_chat_id_becomes_the_embed_and_an_unknown_source_is_rejected(self):
         def chat(target):

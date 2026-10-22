@@ -64,7 +64,7 @@ _EXCLUDE_PATTERNS = (
 )
 
 _EXCLUDE = re.compile(rf"^(?:{'|'.join(_EXCLUDE_PATTERNS)})$", re.ASCII)
-# "Sent 5 Smash JT gift memberships" or "Sent 5 Smash JT memberships".
+# "Sent 5 <channel> gift memberships" or "Sent 5 <channel> memberships".
 # The count is the number after Sent. Case does not matter, and "gift" is optional.
 _GIFT_MEMBERSHIP = re.compile(
     r"^Sent\s+(\d+)\s+.*\bmemberships?\b\s*$",

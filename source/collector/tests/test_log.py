@@ -20,7 +20,7 @@ def _donation(raw, key="youtube:test:1"):
         kind="super_chat",
         external_id=key.rsplit(":", 1)[-1],
         channel="",
-        author_name="kayeend",
+        author_name="testkaye",
         author_id="",
         message="tip",
         amount_value=50.0,
@@ -34,7 +34,7 @@ def _donation(raw, key="youtube:test:1"):
 class PayloadCompactTests(unittest.TestCase):
     def test_drops_presentation_fields_and_redacts_secrets(self):
         raw = {
-            "authorName": {"simpleText": "kayeend"},
+            "authorName": {"simpleText": "testkaye"},
             "purchaseAmountText": {"simpleText": "₱50.00"},
             "access_token": _SECRET,
             "authorization": f"Bearer {_SECRET}",
@@ -59,7 +59,7 @@ class PayloadCompactTests(unittest.TestCase):
         self.assertNotIn("track-me", encoded)
         self.assertNotIn("fire", encoded)
         self.assertNotIn("navigationEndpoint", encoded)
-        self.assertIn("kayeend", encoded)
+        self.assertIn("testkaye", encoded)
         self.assertIn("₱50.00", encoded)
         self.assertIn("juicy", encoded)
         self.assertIn('"count":0', encoded.replace(" ", ""))
@@ -105,7 +105,7 @@ class LogFileTests(unittest.TestCase):
     def test_manual_entry_logs_its_payload_only_when_verbose(self):
         self.store.set_verbose_logs(True)
         self.store.add_manual_entry(
-            author_name="kayeend",
+            author_name="testkaye",
             platform="youtube",
             kind="super_chat",
             amount="50.00",
@@ -113,7 +113,7 @@ class LogFileTests(unittest.TestCase):
             message="juicy tip",
         )
         messages = [row["message"] for row in self.store.recent_log()]
-        self.assertTrue(any(message.startswith("Manual super_chat from kayeend") for message in messages))
+        self.assertTrue(any(message.startswith("Manual super_chat from testkaye") for message in messages))
         self.assertTrue(any('"manual":true' in message for message in messages))
         self.assertNotIn(_SECRET, " ".join(messages))
 
