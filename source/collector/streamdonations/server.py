@@ -26,6 +26,7 @@ from .kinds import KIND_LABELS, PLATFORM_LABELS
 from .goals import load_tiers
 from .money import DISPLAY_LABELS, parse_membership_price
 from .paste import paste_for_form
+from .presets import COMMAND_FIELDS as PRESET_COMMAND_FIELDS
 from .service import Service, displayed_ledger_page_size
 from .ledger_file import parse_ledger_jsonl, present_archive
 from .settings_file import export_settings, parse_settings_file
@@ -286,6 +287,7 @@ class App:
                     payload.get("tiers_enabled", False),
                     payload.get("goal_tiers"),
                     payload.get("script_id", ""),
+                    {key: payload.get(key, False) for key in PRESET_COMMAND_FIELDS},
                 )
                 self.store.log("ledger", "info", f"Saved streamer preset {saved['name']}.")
                 return json_response(200, {

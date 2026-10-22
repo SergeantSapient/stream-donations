@@ -1,4 +1,4 @@
-"""Streamer presets: a shared list of channel addresses and goal tiers.
+"""Streamer presets: a shared list of channel addresses, goal tiers, and chat command switches.
 
 A preset is not a ledger. Saving one does not change the open ledger, and
 opening a ledger does not copy a preset until that ledger's address dialog
@@ -21,6 +21,8 @@ MAX_PRESETS = 40
 MAX_NAME = 80
 MAX_URL = 2000
 _ID_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+# !total and !top, per platform. Off unless the preset turns them on, so older presets read as off.
+COMMAND_FIELDS = ("youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands")
 
 
 def parse_presets(raw: str) -> list[dict]:
@@ -63,15 +65,19 @@ def upsert_preset(
     tiers_enabled: object = False,
     goal_tiers: object = None,
     script_id: object = "",
+    commands: object = None,
 ) -> tuple[list[dict], dict]:
     """Add a preset, or replace its channels and goals when the name already exists.
 
     Omitted goals mean tiers off and an empty list. A replace clears goals the
     same way an omitted channel clears that address. Goals alone are not enough.
+    commands maps youtube_chat_commands, rumble_chat_commands, and
+    kick_chat_commands to on or off. A missing switch is off, also on a replace.
     """
     fields = _preset_fields(name, youtube_channel, rumble_channel, kick_watch)
     fields.update(_goal_fields(tiers_enabled, goal_tiers))
     fields["script_id"] = _script_id(script_id)
+    fields.update(_command_fields(commands))
     key = fields["name"].casefold()
     for preset in presets:
         if preset["name"].casefold() == key:
@@ -105,7 +111,8 @@ def ledger_settings(preset: dict) -> dict:
 
     A YouTube or Rumble channel turns on follow live. A blank one turns it off
     and clears that video, the same as the dialog's empty field. Kick is the
-    channel as saved. Goals and the BLUE script are written as they are.
+    channel as saved. Goals, the BLUE script, and the !total and !top switches
+    are written as they are.
     """
     body: dict = {"kick_watch": str(preset.get("kick_watch") or "")}
     for platform in ("youtube", "rumble"):
@@ -120,6 +127,8 @@ def ledger_settings(preset: dict) -> dict:
     goals = preset.get("goal_tiers")
     body["goal_tiers"] = list(goals) if isinstance(goals, list) else []
     body["blue_script_id"] = str(preset.get("script_id") or "")
+    for key in COMMAND_FIELDS:
+        body[key] = _flag(preset.get(key))
     return body
 
 
@@ -163,6 +172,11 @@ def _goal_fields(tiers_enabled: object, goal_tiers: object) -> dict:
         "tiers_enabled": _flag(tiers_enabled),
         "goal_tiers": [tier.as_dict() for tier in tiers],
     }
+
+
+def _command_fields(commands: object) -> dict:
+    source = commands if isinstance(commands, dict) else {}
+    return {key: _flag(source.get(key)) for key in COMMAND_FIELDS}
 
 
 def _flag(value: object) -> bool:
@@ -209,6 +223,7 @@ def _stored_preset(item: object) -> dict | None:
         "tiers_enabled": goals["tiers_enabled"],
         "goal_tiers": goals["goal_tiers"],
         "script_id": _script_id(item.get("script_id")),
+        **_command_fields(item),
     }
 
 

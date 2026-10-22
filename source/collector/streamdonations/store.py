@@ -67,17 +67,22 @@ _BLUE_FIELDS = (
 )
 # BLUE's thank-you and chat-cap times, JSON, pruned by BlueHost. Longer is dropped.
 BLUE_CHAT_GUARD_MAX = 16000
-# A new ledger copies presentation only. Title, donations, addresses, follow-live,
-# goal tiers, and the pause are not copied. A new ledger starts paused, with tiers off.
+# A new ledger copies presentation and the !total and !top switches. Title,
+# donations, addresses, follow-live, goal tiers, and the pause are not copied.
+# A new ledger starts paused, with tiers off.
 _COPIED_ON_NEW_LEDGER = (
     "membership_price",
     "show_top_donors",
     "chat_extra",
+    "youtube_chat_commands",
+    "rumble_chat_commands",
+    "kick_chat_commands",
 )
 _WATCH_FIELDS = ("youtube_watch", "rumble_watch", "kick_watch")
 _CHANNEL_FIELDS = ("youtube_channel", "rumble_channel")
 _FOLLOW_FIELDS = ("youtube_follow_live", "rumble_follow_live", "kick_follow_live")
 # Chat commands are per ledger and per platform, and off unless turned on.
+# A new ledger copies the open ledger's switches.
 _COMMAND_FIELDS = ("youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands")
 _STREAM_ID_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
 LOG_NAME = "stream-donations.log"
@@ -641,8 +646,9 @@ class Store:
         tiers_enabled=False,
         goal_tiers=None,
         script_id="",
+        commands=None,
     ) -> dict:
-        """Store a shared preset. The open ledger's addresses and goals stay as they are."""
+        """Store a shared preset. The open ledger's addresses, goals, and switches stay as they are."""
         from .presets import PRESETS_KEY, dump_presets, parse_presets, upsert_preset
 
         chosen = str(script_id or "").strip()
@@ -658,6 +664,7 @@ class Store:
             tiers_enabled,
             goal_tiers,
             chosen,
+            commands,
         )
         self.set_setting(PRESETS_KEY, dump_presets(presets))
         return saved

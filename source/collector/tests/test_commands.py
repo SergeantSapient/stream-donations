@@ -181,6 +181,7 @@ class CommandTests(unittest.TestCase):
         self.commands.listen(platform, rows, stream_id=stream_id, chat=chat, fresh=fresh)
 
     def test_off_by_default(self):
+        self.store.set_setting("youtube_chat_commands", "0")
         tab = self.store.add_stream()
         snapshot = next(item for item in self.store.ledger_snapshots() if item["id"] == tab)
         self.assertIn(snapshot["youtube_chat_commands"], ("", "0"))
@@ -436,8 +437,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.store.get_setting("youtube_chat_commands"), "1")
         self.assertEqual(self.store.get_setting("kick_chat_commands"), "0")
         second = self.store.add_stream()
-        self.assertNotEqual(self.store.get_setting("youtube_chat_commands"), "1")
-        self.service.apply_settings({"rumble_chat_commands": True})
+        # A new ledger copies the open ledger's switches.
+        self.assertEqual(self.store.get_setting("youtube_chat_commands"), "1")
+        self.assertEqual(self.store.get_setting("kick_chat_commands"), "0")
+        self.service.apply_settings({"rumble_chat_commands": True, "youtube_chat_commands": False})
         tabs = {tab["id"]: tab for tab in self.store.ledger_snapshots()}
         self.assertEqual(tabs[first]["youtube_chat_commands"], "1")
         self.assertNotEqual(tabs[first]["rumble_chat_commands"], "1")
@@ -446,6 +449,35 @@ class SettingsTests(unittest.TestCase):
         self.store.switch_stream(first)
         self.assertEqual(self.store.get_setting("youtube_chat_commands"), "1")
         self.assertNotEqual(self.store.get_setting("rumble_chat_commands"), "1")
+
+    def test_a_fresh_store_starts_with_every_switch_off(self):
+        tab = self.store.ledger_snapshots()[0]
+        for key in ("youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands"):
+            self.assertIn(tab[key], ("", "0"))
+            self.assertIs(self.service_settings()[key], False)
+
+    def service_settings(self):
+        from streamdonations.server import App
+        return App(self.store, "t" * 32, 47321, service=self.service)._public_settings()
+
+    def test_new_and_replacement_ledgers_copy_the_switches(self):
+        self.service.apply_settings({"youtube_chat_commands": True, "rumble_chat_commands": True})
+        second = self.store.add_stream()
+        tab = next(item for item in self.store.ledger_snapshots() if item["id"] == second)
+        self.assertEqual(tab["youtube_chat_commands"], "1")
+        self.assertEqual(tab["rumble_chat_commands"], "1")
+        self.assertEqual(tab["kick_chat_commands"], "0")
+        # Closing every ledger leaves a blank one, which copies from the ledger being closed.
+        for item in list(self.store.stream_tabs()["tabs"]):
+            if item["id"] != second:
+                self.store.close_stream(item["id"])
+        self.store.close_stream(second)
+        tabs = self.store.ledger_snapshots()
+        self.assertEqual(len(tabs), 1)
+        self.assertNotEqual(tabs[0]["id"], second)
+        self.assertEqual(tabs[0]["youtube_chat_commands"], "1")
+        self.assertEqual(tabs[0]["rumble_chat_commands"], "1")
+        self.assertEqual(self.store.get_setting("youtube_chat_commands"), "1")
 
     def test_page_has_a_toggle_and_note_for_each_platform(self):
         page = (Path(__file__).resolve().parents[1] / "streamdonations/web/index.html").read_text(encoding="utf-8")

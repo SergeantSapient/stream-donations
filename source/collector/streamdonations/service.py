@@ -760,17 +760,33 @@ class Service:
                     updates[key] = text
                 else:
                     clears.append(key)
+        # The dialogs save one field at a time. Only a value that really changed
+        # restarts the webhook listener or moves a platform's next check up.
+        before = {key: self.store.get_setting(key) for key in [*updates, *clears]}
         # One transaction: every value is checked above, then all of them are saved together.
         self.store.set_settings(updates, clears)
+        changed = {key for key in updates if updates[key] != before.get(key)}
+        changed.update(key for key in clears if before.get(key))
         if "blue_script_id" in payload:
             self.blue.note_script(self.store._active_stream_id(), previous_script)
+        webhook_changed = webhook_changed and bool(changed & {"kick_webhook_host", "kick_webhook_port"})
         if webhook_changed and self.on_listen_change is not None:
             self.on_listen_change()
-        # Pick up new credentials on the next loop instead of waiting out the interval.
-        self.youtube._next_super = 0
-        self.youtube._next_broadcast = 0
-        self.rumble._next_poll = 0
-        self.kick._next_status = 0
+        self._poll_soon(changed)
+
+    # A chat command switch changes no request. Everything else for a platform can.
+    _NO_POLL_KEYS = frozenset({"youtube_chat_commands", "rumble_chat_commands", "kick_chat_commands"})
+
+    def _poll_soon(self, changed: set[str]) -> None:
+        """Pick up new credentials or addresses on the next loop instead of waiting out the interval."""
+        touched = {key.split("_", 1)[0] for key in changed if key not in self._NO_POLL_KEYS}
+        if "youtube" in touched:
+            self.youtube._next_super = 0
+            self.youtube._next_broadcast = 0
+        if "rumble" in touched:
+            self.rumble._next_poll = 0
+        if "kick" in touched:
+            self.kick._next_status = 0
 
     def apply_preset(self, preset_id: object) -> dict:
         """Write a saved preset onto the open ledger, the same way the address dialog does.
