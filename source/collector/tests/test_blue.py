@@ -204,10 +204,10 @@ class BlueLanguageTests:
             'On donation on if amount is above 49.98, then send chat to all '
             '"@{donor} LEGEND!".'
         )
-        run = evaluate(source, _event(donor="SmashJT", amount=50, amount_text="$50.00"))
+        run = evaluate(source, _event(donor="SampleShow", amount=50, amount_text="$50.00"))
         self.assertEqual(run.problems, [])
         self.assertEqual([item.target for item in run.actions], ["youtube", "rumble", "kick"])
-        self.assertEqual(run.actions[0].text, "@SmashJT LEGEND!")
+        self.assertEqual(run.actions[0].text, "@SampleShow LEGEND!")
         self.assertEqual(evaluate(source, _event(amount=49.98)).actions, [])
         plain = evaluate(
             "ON DONATION IF THE DONOR IS EQUAL mclovin THEN SEND NOTICE TO APP \"yes\"",

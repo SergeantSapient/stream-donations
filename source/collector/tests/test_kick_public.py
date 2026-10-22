@@ -29,12 +29,12 @@ from streamdonations.transport import HttpResult
 
 class PublicKickTests(unittest.TestCase):
     def test_slug_from_url(self):
-        self.assertEqual(kick_slug("xQc"), "xqc")
-        self.assertEqual(kick_slug("https://kick.com/xqc"), "xqc")
-        self.assertEqual(kick_slug("https://kick.com/xqc/chat"), "xqc")
-        self.assertEqual(validate_kick_watch("https://www.kick.com/xqc"), "https://www.kick.com/xqc")
+        self.assertEqual(kick_slug("KickStar"), "kickstar")
+        self.assertEqual(kick_slug("https://kick.com/kickstar"), "kickstar")
+        self.assertEqual(kick_slug("https://kick.com/kickstar/chat"), "kickstar")
+        self.assertEqual(validate_kick_watch("https://www.kick.com/kickstar"), "https://www.kick.com/kickstar")
         with self.assertRaises(ValueError):
-            validate_kick_watch("https://evil.example/xqc")
+            validate_kick_watch("https://evil.example/kickstar")
         with self.assertRaises(ValueError):
             kick_slug("https://kick.com/settings/developer")
 
@@ -84,7 +84,7 @@ class PublicKickTests(unittest.TestCase):
                 "type": "celebration",
                 "content": "Might as well let you know. Been around quite a while it looks like.",
                 "created_at": "2026-10-09T02:05:00Z",
-                "sender": {"id": 42, "username": "lightferret"},
+                "sender": {"id": 42, "username": "testferret"},
                 "metadata": {
                     "celebration": {
                         "id": "cel-15",
@@ -96,7 +96,7 @@ class PublicKickTests(unittest.TestCase):
             "creator",
         )[0]
         self.assertEqual(celebrated.kind, "member_milestone")
-        self.assertEqual(celebrated.author_name, "lightferret")
+        self.assertEqual(celebrated.author_name, "testferret")
         self.assertEqual(celebrated.amount_value, 0.0)
         self.assertEqual(celebrated.currency, "USD")
         self.assertEqual(
@@ -134,11 +134,11 @@ class PublicKickTests(unittest.TestCase):
         )
         subscribed = donations_from_kick_public(
             r"App\Events\ChannelSubscriptionEvent",
-            {"user_ids": [10466179], "username": "MaxResist", "channel_id": 35522671},
+            {"user_ids": [10466179], "username": "SampleViewer", "channel_id": 35522671},
             "creator",
         )[0]
         self.assertEqual(subscribed.kind, "subscription")
-        self.assertEqual(subscribed.author_name, "MaxResist")
+        self.assertEqual(subscribed.author_name, "SampleViewer")
         self.assertEqual(subscribed.message, "Subscribed")
         self.assertIsNone(subscribed.amount_value)
         self.assertIsNone(subscribed.currency)
@@ -161,19 +161,19 @@ class PublicKickTests(unittest.TestCase):
         self.assertEqual(
             donations_from_kick_public(
                 r"App\Events\FollowersUpdated",
-                {"username": "MaxResist", "followersCount": 12},
+                {"username": "SampleViewer", "followersCount": 12},
                 "creator",
             ),
             [],
         )
 
     def test_livestream_object_reports_live_without_changing_chat(self):
-        offline = {"id": 668, "slug": "xqc", "chatroom": {"id": 668}, "livestream": None}
+        offline = {"id": 668, "slug": "kickstar", "chatroom": {"id": 668}, "livestream": None}
         self.assertEqual(kick_live_status(offline), (False, ""))
         self.assertIsNone(kick_live_status({"chatroom": {"id": 1}}))
         live = {
             "id": 4911,
-            "slug": "classybeef",
+            "slug": "kickviewer",
             "chatroom": {"id": 4910},
             "livestream": {
                 "id": 130351980,
@@ -185,18 +185,18 @@ class PublicKickTests(unittest.TestCase):
         self.assertEqual(kick_live_status(live), (True, "Slot night"))
         self.assertEqual(kick_live_status({"livestream": {"is_live": False, "id": 9}}), (False, ""))
         quiet = public_kick_detail(
-            {"username": "classybeef", "slug": "classybeef", "live": False, "title": ""},
+            {"username": "kickviewer", "slug": "kickviewer", "live": False, "title": ""},
             follow=False,
         )
         self.assertNotIn("not live", quiet)
         shown = public_kick_detail(
-            {"username": "classybeef", "slug": "classybeef", "live": True, "title": "Slot night"},
+            {"username": "kickviewer", "slug": "kickviewer", "live": True, "title": "Slot night"},
             follow=True,
         )
         self.assertIn("The channel is live: Slot night.", shown)
-        self.assertIn("classybeef", shown)
+        self.assertIn("kickviewer", shown)
         waiting = public_kick_detail(
-            {"username": "xqc", "slug": "xqc", "live": False, "title": ""},
+            {"username": "kickstar", "slug": "kickstar", "live": False, "title": ""},
             follow=True,
         )
         self.assertIn("The channel is not live. Chat stays connected.", waiting)

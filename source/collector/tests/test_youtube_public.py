@@ -119,9 +119,9 @@ class PublicYouTubeTests(unittest.TestCase):
                         "item": {
                             "liveChatMembershipItemRenderer": {
                                 "id": "anniv-1",
-                                "authorName": {"simpleText": "@CFH"},
+                                "authorName": {"simpleText": "@TFH"},
                                 "headerPrimaryText": {"runs": [{"text": "Member for 2 months"}]},
-                                "headerSubtext": {"simpleText": "Smashers"},
+                                "headerSubtext": {"simpleText": "Samplers"},
                             }
                         }
                     }
@@ -130,7 +130,7 @@ class PublicYouTubeTests(unittest.TestCase):
         )
         self.assertEqual(len(donations), 1)
         self.assertEqual(donations[0].kind, "member_milestone")
-        self.assertEqual(donations[0].message, "Member for 2 months · Smashers")
+        self.assertEqual(donations[0].message, "Member for 2 months · Samplers")
         self.assertIsNone(donations[0].amount_value)
 
     def test_amount_formats(self):
@@ -149,7 +149,7 @@ class PublicYouTubeTests(unittest.TestCase):
                             "liveChatPaidMessageRenderer": {
                                 "id": "peso-1",
                                 "timestampUsec": "1700000000000000",
-                                "authorName": {"simpleText": "kayeend"},
+                                "authorName": {"simpleText": "testkaye"},
                                 "purchaseAmountText": {"simpleText": "₱50.00"},
                                 "message": {"simpleText": "juuuuuuuuuuuuicy tip"},
                             }
@@ -167,7 +167,7 @@ class PublicYouTubeTests(unittest.TestCase):
                         "item": {
                             "liveChatPaidMessageRenderer": {
                                 "id": "peso-2",
-                                "authorName": {"simpleText": "kayeend"},
+                                "authorName": {"simpleText": "testkaye"},
                                 "purchaseAmountText": {"simpleText": "$0.80"},
                                 "amountMicros": "50000000",
                                 "currency": "PHP",
@@ -187,16 +187,16 @@ class PublicYouTubeTests(unittest.TestCase):
         self.assertEqual(session["api_key"], "test-key")
         self.assertEqual(session["continuation"], "CONT")
         self.assertEqual(session["timeout_ms"], 4000)
-        self.assertEqual(video_id_from_target("dQw4w9WgXcQ"), "dQw4w9WgXcQ")
-        self.assertEqual(video_id_from_target("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ")
+        self.assertEqual(video_id_from_target("TestVideo01"), "TestVideo01")
+        self.assertEqual(video_id_from_target("https://youtu.be/TestVideo01"), "TestVideo01")
         self.assertEqual(
-            video_id_from_target("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            "dQw4w9WgXcQ",
+            video_id_from_target("https://www.youtube.com/watch?v=TestVideo01"),
+            "TestVideo01",
         )
-        self.assertEqual(video_id_from_target("https://www.youtube.com/live/dQw4w9WgXcQ"), "dQw4w9WgXcQ")
-        self.assertEqual(validate_youtube_watch("https://www.youtube.com/@nasa/live"), "https://www.youtube.com/@nasa/live")
+        self.assertEqual(video_id_from_target("https://www.youtube.com/live/TestVideo01"), "TestVideo01")
+        self.assertEqual(validate_youtube_watch("https://www.youtube.com/@samplechannel/live"), "https://www.youtube.com/@samplechannel/live")
         with self.assertRaises(ValueError):
-            validate_youtube_watch("https://evil.example/watch?v=dQw4w9WgXcQ")
+            validate_youtube_watch("https://evil.example/watch?v=TestVideo01")
         with self.assertRaises(ValueError):
             session_from_live_chat_html("<html>consent.youtube.com</html>")
 
@@ -210,7 +210,7 @@ class PublicYouTubeTests(unittest.TestCase):
         self.assertEqual(live_video_from_channel_html(live), "abcdefghijk")
         self.assertEqual(stream_title_from_youtube_html(live), "Desk")
         offline = """
-        <link rel="canonical" href="https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA">
+        <link rel="canonical" href="https://www.youtube.com/channel/UCa1b2c3d4e5f6g7h8i9j0kL">
         "videoId":"abcdefghijk"
         """
         self.assertIsNone(live_video_from_channel_html(offline))
@@ -224,12 +224,12 @@ class PublicYouTubeTests(unittest.TestCase):
         self.assertIsNone(live_video_from_channel_html(ended))
         self.assertEqual(stream_title_from_youtube_html(ended), "")
         upcoming = """
-        <link rel="canonical" href="https://www.youtube.com/watch?v=tL02RZwytU4">
-        "videoDetails":{"videoId":"tL02RZwytU4","title":"Soon","isUpcoming":true,"isLiveContent":true}
+        <link rel="canonical" href="https://www.youtube.com/watch?v=UpcomingVd1">
+        "videoDetails":{"videoId":"UpcomingVd1","title":"Soon","isUpcoming":true,"isLiveContent":true}
         "isLiveNow":false
         "videoId":"othervideo1"
         """
-        self.assertEqual(live_video_from_channel_html(upcoming), "tL02RZwytU4")
+        self.assertEqual(live_video_from_channel_html(upcoming), "UpcomingVd1")
         self.assertEqual(stream_title_from_youtube_html(upcoming), "Soon")
         quoted = live.replace('"title":"Desk"', '"title":"Tom \\u0026 Jerry"')
         self.assertEqual(stream_title_from_youtube_html(quoted), "Tom & Jerry")
@@ -242,20 +242,20 @@ class PublicYouTubeTests(unittest.TestCase):
         """
         self.assertIsNone(live_video_from_channel_html(other_upcoming))
         self.assertEqual(
-            youtube_channel_live_url("https://www.youtube.com/@NASA/streams"),
-            "https://www.youtube.com/@NASA/live",
+            youtube_channel_live_url("https://www.youtube.com/@SAMPLECHANNEL/streams"),
+            "https://www.youtube.com/@SAMPLECHANNEL/live",
         )
         self.assertEqual(
-            youtube_channel_live_url("https://m.youtube.com/channel/UCLA_DiR1FfKNvjuUpBHmylQ/live"),
-            "https://www.youtube.com/channel/UCLA_DiR1FfKNvjuUpBHmylQ/live",
+            youtube_channel_live_url("https://m.youtube.com/channel/UCExampleChannel000000_A/live"),
+            "https://www.youtube.com/channel/UCExampleChannel000000_A/live",
         )
-        self.assertEqual(validate_youtube_channel("https://www.youtube.com/@nasa"), "https://www.youtube.com/@nasa")
+        self.assertEqual(validate_youtube_channel("https://www.youtube.com/@samplechannel"), "https://www.youtube.com/@samplechannel")
         for bad in (
             "abcdefghijk",
             "https://youtu.be/abcdefghijk",
             "https://www.youtube.com/watch?v=abcdefghijk",
             "https://www.youtube.com/live/abcdefghijk",
-            "https://www.youtube.com/@nasa/playlist",
+            "https://www.youtube.com/@samplechannel/playlist",
         ):
             with self.assertRaises(ValueError):
                 validate_youtube_channel(bad)

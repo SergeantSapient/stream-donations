@@ -129,7 +129,7 @@ class StoreTests(unittest.TestCase):
             platform="kick",
             kind="membership",
             amount=4.99,
-            message="Smashers",
+            message="Samplers",
             created_at="2024-01-02T00:00:00Z",
         )
         self.store.add_manual_entry(
