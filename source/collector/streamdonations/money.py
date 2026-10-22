@@ -37,7 +37,7 @@ _MEMBERSHIP_KINDS = {
     "gifted_subscriptions",
 }
 _GIFT_KINDS = {"membership_gift", "gifted_subscriptions"}
-# "Gifted 3 subscriptions" (Rumble, Kick) and "Sent 5 Smash JT gift memberships" (YouTube).
+# "Gifted 3 subscriptions" (Rumble, Kick) and "Sent 5 <channel> gift memberships" (YouTube).
 _GIFT_COUNT = re.compile(
     r"\b(?:gifted|sent)\s+(\d+)\b|\b(\d+)\s+(?:\S+\s+){0,6}gift memberships\b",
     re.IGNORECASE,

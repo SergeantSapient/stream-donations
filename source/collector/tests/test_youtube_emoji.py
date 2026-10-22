@@ -36,7 +36,7 @@ def _standard(char, *shortcuts):
 
 def _custom(shortcut, thumbnails=None, label=None):
     return {"emoji": {
-        "emojiId": "UCkszU2WH9gy1mb0dV-11UJg/G8AfY6yWGuKuhL0PlbiA2AE",
+        "emojiId": "UCTestEmojiOwner00000-0A/G8AfY6yWGuKuhL0PlbiA2AE",
         "shortcuts": [shortcut] if shortcut else [],
         "searchTerms": [shortcut.strip(":")] if shortcut else [],
         "image": {

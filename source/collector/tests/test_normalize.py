@@ -330,8 +330,8 @@ class NormalizeTests(unittest.TestCase):
             chat_id_from_html(directory)
         self.assertEqual(validate_rumble_watch("446413572"), "446413572")
         self.assertEqual(
-            validate_rumble_watch("https://rumble.com/v7fyjui-rt-de-live-tv.html"),
-            "https://rumble.com/v7fyjui-rt-de-live-tv.html",
+            validate_rumble_watch("https://rumble.com/v5abcde-sample-live-tv.html"),
+            "https://rumble.com/v5abcde-sample-live-tv.html",
         )
         with self.assertRaises(ValueError):
             validate_rumble_watch("https://evil.example/watch")
@@ -385,14 +385,14 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(stream_title_from_channel_html(live + second), "")
         self.assertEqual(stream_title_from_channel_html(two_upcoming), "")
         self.assertEqual(
-            rumble_channel_page_url("https://rumble.com/c/NewsmaxTV/livestreams"),
-            "https://rumble.com/c/NewsmaxTV",
+            rumble_channel_page_url("https://rumble.com/c/SampleNewsTV/livestreams"),
+            "https://rumble.com/c/SampleNewsTV",
         )
         self.assertEqual(validate_rumble_channel("https://www.rumble.com/user/Name"), "https://www.rumble.com/user/Name")
         for bad in (
             "446413572",
             "v7ds6x0",
-            "https://rumble.com/v7fyjui-rt-de-live-tv.html",
+            "https://rumble.com/v5abcde-sample-live-tv.html",
             "https://rumble.com/-livestream-api/get-data?key=abc",
         ):
             with self.assertRaises(ValueError):

@@ -381,7 +381,7 @@ YOUTUBE_LIVE = """
 """
 
 YOUTUBE_OFFLINE = """
-<link rel="canonical" href="https://www.youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA">
+<link rel="canonical" href="https://www.youtube.com/channel/UCa1b2c3d4e5f6g7h8i9j0kL">
 "videoId":"abcdefghijk"
 """
 
@@ -444,17 +444,17 @@ class StreamTitleTests(unittest.TestCase):
             service.stop()
 
     def test_each_live_platform_offers_its_title(self):
-        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
-        rumble = rumble_channel_page_url("https://rumble.com/c/News")
+        youtube = youtube_channel_live_url("https://www.youtube.com/@samplechannel")
+        rumble = rumble_channel_page_url("https://rumble.com/c/SampleNews")
         kick = "https://kick.com/api/v2/channels/slot"
         report = self._titles(
             {youtube: YOUTUBE_LIVE, rumble: RUMBLE_LIVE, kick: KICK_LIVE},
             youtube_follow_live="1",
-            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_channel="https://www.youtube.com/@samplechannel",
             youtube_watch="zzzzzzzzzzz",
             rumble_follow_live="1",
-            rumble_channel="https://rumble.com/c/News",
-            rumble_watch="https://rumble.com/v7fyjui-old.html",
+            rumble_channel="https://rumble.com/c/SampleNews",
+            rumble_watch="https://rumble.com/v5abcde-old.html",
             kick_watch="https://kick.com/slot",
         )
         self.assertEqual(
@@ -474,21 +474,21 @@ class StreamTitleTests(unittest.TestCase):
         report = self._titles(
             {"https://www.youtube.com/watch?v=abcdefghijk": YOUTUBE_LIVE},
             youtube_follow_live="0",
-            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_channel="https://www.youtube.com/@samplechannel",
             youtube_watch="abcdefghijk",
             rumble_follow_live="0",
-            rumble_channel="https://rumble.com/c/News",
+            rumble_channel="https://rumble.com/c/SampleNews",
             rumble_watch="446413572",
         )
         self.assertEqual(report, {"streams": [{"platform": "youtube", "title": "Desk"}]})
         self.assertEqual(self.transport.urls, ["https://www.youtube.com/watch?v=abcdefghijk"])
 
     def test_an_offline_channel_and_a_failed_lookup_are_left_out(self):
-        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
+        youtube = youtube_channel_live_url("https://www.youtube.com/@samplechannel")
         report = self._titles(
             {youtube: YOUTUBE_OFFLINE},
             youtube_follow_live="1",
-            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_channel="https://www.youtube.com/@samplechannel",
             kick_watch="https://kick.com/missing",
         )
         self.assertEqual(report, {"streams": []})
@@ -499,17 +499,17 @@ class StreamTitleTests(unittest.TestCase):
         self.assertEqual(self.store.get_setting("stream_title"), "")
 
     def test_a_failed_lookup_leaves_the_other_titles(self):
-        youtube = youtube_channel_live_url("https://www.youtube.com/@nasa")
-        rumble = rumble_channel_page_url("https://rumble.com/c/News")
+        youtube = youtube_channel_live_url("https://www.youtube.com/@samplechannel")
+        rumble = rumble_channel_page_url("https://rumble.com/c/SampleNews")
         report = self._titles(
             {
                 youtube: YOUTUBE_LIVE,
                 "https://kick.com/api/v2/channels/slot": KICK_LIVE,
             },
             youtube_follow_live="1",
-            youtube_channel="https://www.youtube.com/@nasa",
+            youtube_channel="https://www.youtube.com/@samplechannel",
             rumble_follow_live="1",
-            rumble_channel="https://rumble.com/c/News",
+            rumble_channel="https://rumble.com/c/SampleNews",
             kick_watch="https://kick.com/slot",
         )
         self.assertEqual(

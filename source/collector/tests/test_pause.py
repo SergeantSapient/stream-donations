@@ -195,7 +195,7 @@ class PauseTests(unittest.TestCase):
                 kind="subscription",
                 external_id="other-ledger",
                 channel="other-channel",
-                author_name="MaxResist",
+                author_name="SampleViewer",
                 author_id="10466179",
                 message="Subscribed",
                 amount_value=None,
@@ -212,7 +212,7 @@ class PauseTests(unittest.TestCase):
                 ("kick:public:sub:other-ledger",),
             ).fetchone()
         self.assertEqual(row["stream_id"], second)
-        self.assertEqual(row["author_name"], "MaxResist")
+        self.assertEqual(row["author_name"], "SampleViewer")
         _rows, total = self.store.list_donations(include_hidden=True)
         self.assertEqual(total, 0)
 
