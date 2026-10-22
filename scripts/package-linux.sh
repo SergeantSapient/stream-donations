@@ -65,6 +65,39 @@ cp -a "$ROOT/source/collector/streamdonations" "$DIST/collector/streamdonations"
 find "$DIST/collector" -depth -name '__pycache__' -exec rm -rf {} + || true
 find "$DIST/collector" -name '*.pyc' -delete || true
 cp -a "$PYTHON_CACHE" "$DIST/python"
+# Running the cached CPython leaves bytecode in build/ that records this
+# checkout's full path (for example /home/<you>/...). Recompile each of those
+# files in place so it records only its path inside the package. The same
+# files ship with the same contents otherwise, and Python still loads them.
+PYTHONDONTWRITEBYTECODE=1 "$DIST/python/bin/python3" -B -I - "$DIST" <<'PY'
+import importlib.util
+import pathlib
+import py_compile
+import sys
+
+dist = pathlib.Path(sys.argv[1])
+for cached in sorted((dist / "python").rglob("*.pyc")):
+    try:
+        source = pathlib.Path(importlib.util.source_from_cache(str(cached)))
+    except ValueError:
+        source = None
+    if source is None or not source.is_file():
+        cached.unlink()
+        continue
+    level = cached.name.split(".opt-")[1].split(".")[0] if ".opt-" in cached.name else ""
+    py_compile.compile(
+        str(source),
+        cfile=str(cached),
+        dfile=source.relative_to(dist).as_posix(),
+        doraise=True,
+        optimize={"": 0, "1": 1, "2": 2}[level],
+        invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP,
+    )
+PY
+if grep -rlF "$ROOT" --include='*.pyc' "$DIST" >&2; then
+  echo "Bytecode above still records $ROOT." >&2
+  exit 1
+fi
 cp "$ROOT/scripts/stream-donations" "$DIST/SuperBerry"
 chmod 755 "$DIST/SuperBerry"
 
